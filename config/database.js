@@ -3,12 +3,36 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'habit_tracker',
-  port: process.env.DB_PORT || 5432,
+// Конфигурация для Railway (production) и локальной разработки
+const config = process.env.DATABASE_URL 
+  ? {
+      // Production (Railway)
+      connectionString: process.env.DATABASE_URL,
+      ssl: {
+        rejectUnauthorized: false
+      }
+    }
+  : {
+      // Development (local)
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      database: process.env.DB_NAME || 'habit_tracker',
+      port: process.env.DB_PORT || 5432,
+    };
+
+const pool = new Pool(config);
+
+// Проверяем подключение при запуске
+pool.connect((err, client, release) => {
+  if (err) {
+    console.error('❌ Database connection failed:', err.message);
+    console.error('Config used:', process.env.DATABASE_URL ? 'DATABASE_URL' : 'Individual params');
+  } else {
+    console.log('✅ Database connected successfully');
+    console.log('Database:', client.database);
+    release();
+  }
 });
 
 // Вспомогательная функция для выполнения запросов
