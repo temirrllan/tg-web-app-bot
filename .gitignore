@@ -1,0 +1,12 @@
+# Test files
+test/
+*.test.js
+# tg-web-app-bot/.gitignore
+.env
+
+# Temporary files
+temp/
+tmp/
+
+# Development scripts
+scripts/cleanup-*.js
