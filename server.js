@@ -13,13 +13,18 @@ const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBAPP_URL = process.env.WEBAPP_URL || 'https://eventmate.asia';
+const BOT_SECRET = process.env.BOT_SECRET; // ← обязательно
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не найден в переменных окружения!');
   process.exit(1);
 }
+if (!BOT_SECRET) {
+  console.error('❌ BOT_SECRET не найден в переменных окружения!');
+  process.exit(1);
+}
 
-/** ВАЖНО: чтобы rate-limit и IP работали за nginx */
+/** чтобы rate-limit и IP работали за nginx */
 app.set('trust proxy', 1);
 
 app.use(cors({
@@ -60,15 +65,15 @@ console.log('\n🤖 Запуск Telegram бота (webhook)...');
 /** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-/** единый путь webhook — включаем токен в путь, чтобы никто не угадал его случайно */
+/** единый путь webhook — включаем токен в путь */
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
-/** публичный URL (за nginx) */
-const PUBLIC_BASE = 'https://eventmate.asia';
-const WEBHOOK_URL = `${PUBLIC_BASE}${WEBHOOK_PATH}`;
+const PUBLIC_BASE  = 'https://eventmate.asia';
+const WEBHOOK_URL  = `${PUBLIC_BASE}${WEBHOOK_PATH}`;
 
-/** endpoint, который будет вызываться Telegram */
+/** endpoint, который вызывает Telegram */
 app.post(WEBHOOK_PATH, (req, res) => {
   try {
+    // authMiddleware должен пропускать этот путь, проверяя именно секретный заголовок
     bot.processUpdate(req.body);
     res.sendStatus(200);
   } catch (e) {
@@ -100,12 +105,10 @@ bot.on('message', async (msg) => {
 
     await bot.sendMessage(chatId, 'Откройте приложение для управления привычками:', {
       reply_markup: {
-        inline_keyboard: [
-          [{
-            text: '📱 Открыть Habit Tracker',
-            web_app: { url: WEBAPP_URL }
-          }]
-        ]
+        inline_keyboard: [[{
+          text: '📱 Открыть Habit Tracker',
+          web_app: { url: WEBAPP_URL }
+        }]]
       }
     });
     return;
@@ -114,12 +117,10 @@ bot.on('message', async (msg) => {
   if (text === '📊 Мои привычки') {
     await bot.sendMessage(chatId, 'Откройте приложение для просмотра ваших привычек:', {
       reply_markup: {
-        inline_keyboard: [
-          [{
-            text: '📱 Открыть приложение',
-            web_app: { url: WEBAPP_URL }
-          }]
-        ]
+        inline_keyboard: [[{
+          text: '📱 Открыть приложение',
+          web_app: { url: WEBAPP_URL }
+        }]]
       }
     });
     return;
@@ -169,22 +170,12 @@ const server = app.listen(PORT, async () => {
   console.log(`🔗 API URL: http://localhost:${PORT}/api`);
 
   try {
-    // сбрасываем старый polling/hook (на всякий)
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`);
-    // ставим новый webhook
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: WEBHOOK_URL, drop_pending_updates: true })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      console.log(`✅ Webhook установлен: ${WEBHOOK_URL}`);
-    } else {
-      console.error('❌ Не удалось установить webhook:', data);
-    }
+    // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом:
+    await bot.setWebHook(WEBHOOK_URL, { secret_token: BOT_SECRET, drop_pending_updates: true });
+    console.log(`✅ Webhook установлен: ${WEBHOOK_URL}`);
   } catch (e) {
     console.error('❌ Ошибка установки webhook:', e);
+    process.exit(1);
   }
 });
 

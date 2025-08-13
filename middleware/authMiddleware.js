@@ -1,114 +1,104 @@
-
+// middleware/authMiddleware.js
 const db = require('../config/database');
 
-const authMiddleware = async (req, res, next) => {
-  console.log('🔐 Auth middleware called for:', req.path);
-  
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_SECRET = process.env.BOT_SECRET;
+
+module.exports = async function authMiddleware(req, res, next) {
   try {
-    // Пропускаем для эндпоинта категорий (временно для отладки)
-    if (req.path === '/categories' && req.method === 'GET') {
-      console.log('⚡ Skipping auth for categories endpoint');
-      return next();
+    const url = req.originalUrl || req.url; // полный путь (включая /api)
+    const path = req.path;                  // путь без префикса родительского роутера
+
+    // -------- 1) Пропуск Telegram Webhook по секрету --------
+    // Поддерживаем оба варианта (с /api и без) из-за mounted router'ов
+    const webhookPathFull = `/api/telegram/webhook/${BOT_TOKEN}`;
+    const webhookPathTrim = `/telegram/webhook/${BOT_TOKEN}`;
+    const isWebhookCall = url.startsWith(webhookPathFull) || path.startsWith(webhookPathTrim);
+
+    if (isWebhookCall) {
+      const secretHdr = req.get('x-telegram-bot-api-secret-token');
+      if (!BOT_SECRET) {
+        // Если по ошибке не задан секрет — лучше явно не пускать
+        return res.status(401).json({ success: false, error: 'Webhook secret is not configured' });
+      }
+      if (secretHdr !== BOT_SECRET) {
+        return res.status(401).json({ success: false, error: 'Unauthorized webhook' });
+      }
+      return next(); // секрет верный — пропускаем обновление к боту
     }
 
-    const initData = req.headers['x-telegram-init-data'];
-    const userId = req.headers['x-user-id'];
-    
-    console.log('Auth headers:', { 
-      hasInitData: !!initData, 
-      userId,
-      origin: req.headers.origin 
-    });
-    
-    // Проверяем, есть ли user_id в заголовках
+    // -------- 2) Остальные запросы: строгая аутентификация --------
+    // В проде никаких обходов: нужен либо валидный userId (наш jwt/сессия/…),
+    // либо валидные заголовки от Telegram WebApp (которые вы проверяете в других местах).
+    const initData = req.headers['x-telegram-init-data'] || req.headers['telegram-init-data'];
+    const userId   = req.headers['x-user-id'];
+
+    // Быстрый путь: авторизация по userId (серверная доверенная сессия/токен вашего приложения)
     if (userId) {
-      const result = await db.query(
-        'SELECT * FROM users WHERE id = $1',
-        [userId]
-      );
-      
+      const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
       if (result.rows.length > 0) {
         req.user = result.rows[0];
-        console.log('✅ User authenticated by ID:', req.user.id, req.user.username);
         return next();
       }
+      return res.status(401).json({ success: false, error: 'Invalid user' });
     }
-    
-    // Для разработки: парсим initData чтобы получить данные пользователя
+
+    // В DEV/QA можно принять initData и создать/найти пользователя по telegram_id
     if (initData && process.env.NODE_ENV !== 'production') {
       try {
-        // Декодируем initData
-        const decodedData = decodeURIComponent(initData);
-        console.log('Decoded initData:', decodedData);
-        
-        // Извлекаем user из initData
-        const userMatch = decodedData.match(/user=([^&]+)/);
-        if (userMatch) {
-          const userJson = decodeURIComponent(userMatch[1]);
-          const userData = JSON.parse(userJson);
-          
-          console.log('Extracted user data:', userData);
-          
-          // Проверяем, есть ли пользователь в БД по telegram_id
-          const existingUser = await db.query(
+        const decoded = decodeURIComponent(initData);
+        const m = decoded.match(/user=([^&]+)/);
+        if (m) {
+          const userJson = decodeURIComponent(m[1]);
+          const tgUser = JSON.parse(userJson);
+
+          // Ищем по telegram_id
+          const existing = await db.query(
             'SELECT * FROM users WHERE telegram_id = $1',
-            [userData.id.toString()]
+            [String(tgUser.id)]
           );
-          
-          if (existingUser.rows.length > 0) {
-            req.user = existingUser.rows[0];
-            console.log('✅ Existing user found:', req.user.id);
-          } else {
-            console.log('📝 Creating new user from Telegram data');
-            
-            // Создаем нового пользователя
-            const newUser = await db.query(
-              `INSERT INTO users (
-                telegram_id, 
-                username, 
-                first_name, 
-                last_name, 
-                language, 
-                is_premium,
-                photo_url
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7) 
-              RETURNING *`,
-              [
-                userData.id.toString(),
-                userData.username || null,
-                userData.first_name || '',
-                userData.last_name || '',
-                userData.language_code || 'en',
-                userData.is_premium || false,
-                userData.photo_url || null
-              ]
-            );
-            
-            req.user = newUser.rows[0];
-            console.log('✅ New user created:', req.user.id);
+
+          if (existing.rows.length > 0) {
+            req.user = existing.rows[0];
+            return next();
           }
-          
+
+          // Создаём пользователя на лету в деве
+          const ins = await db.query(
+            `INSERT INTO users (
+               telegram_id, username, first_name, last_name,
+               language, is_premium, photo_url
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+             RETURNING *`,
+            [
+              String(tgUser.id),
+              tgUser.username || null,
+              tgUser.first_name || '',
+              tgUser.last_name || '',
+              tgUser.language_code || 'en',
+              Boolean(tgUser.is_premium),
+              tgUser.photo_url || null,
+            ]
+          );
+          req.user = ins.rows[0];
           return next();
         }
-      } catch (error) {
-        console.error('Error parsing initData:', error);
+      } catch (e) {
+        // Не палим детали в ответ — только логируем на сервере
+        console.error('initData parse error:', e.message);
       }
     }
-    
-    console.log('❌ Authentication failed - no valid user data');
-    return res.status(401).json({ 
-      success: false, 
-      error: 'Authentication required. Please open the app through Telegram.' 
+
+    // Прод: без валидной сессии — запрет
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Please open the app through Telegram.',
     });
-    
-  } catch (error) {
-    console.error('💥 Auth middleware error:', error);
-    return res.status(500).json({ 
-      success: false, 
+  } catch (err) {
+    console.error('Auth middleware error:', err);
+    return res.status(500).json({
+      success: false,
       error: 'Authentication failed',
-      details: error.message
     });
   }
 };
-
-module.exports = authMiddleware;
