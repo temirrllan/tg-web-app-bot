@@ -12,8 +12,7 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBAPP_URL = process.env.WEBAPP_URL || 'https://eventmate.asia';
-const BOT_SECRET = process.env.BOT_SECRET; // ← обязательно
+const WEBAPP_URL = process.env.WEBAPP_URL || 'https://habit-tracker-tma.vercel.app';const BOT_SECRET = process.env.BOT_SECRET; // ← обязательно
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не найден в переменных окружения!');
