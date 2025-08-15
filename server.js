@@ -12,7 +12,9 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBAPP_URL = process.env.WEBAPP_URL || 'https://habit-tracker-tma.vercel.app';const BOT_SECRET = process.env.BOT_SECRET; // ← обязательно
+const BOT_SECRET = process.env.BOT_SECRET;
+const FRONTEND_URL = process.env.FRONTEND_URL;
+const WEBAPP_URL = process.env.WEBAPP_URL || FRONTEND_URL;
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не найден в переменных окружения!');
@@ -23,18 +25,35 @@ if (!BOT_SECRET) {
   process.exit(1);
 }
 
-/** чтобы rate-limit и IP работали за nginx */
+/** чтобы rate-limit и IP работали за nginx/render */
 app.set('trust proxy', 1);
 
-app.use(cors({
-  origin: [
-    'https://eventmate.asia',
-    'https://web.telegram.org',
-    'http://localhost:5173',
-    'http://localhost:5174'
-  ],
-  credentials: true
-}));
+/** CORS */
+const extraOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const allowedOrigins = [
+  FRONTEND_URL,
+  WEBAPP_URL,
+  'https://web.telegram.org',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  ...extraOrigins
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // mobile apps / curl
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      // Мягкий CORS (не роняем запросы из незнакомых ориджинов, но не выдаём креды)
+      return cb(null, false);
+    },
+    credentials: true
+  })
+);
 
 app.use(express.json());
 app.use(logger);
@@ -66,13 +85,14 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 /** единый путь webhook — включаем токен в путь */
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
-const PUBLIC_BASE  = 'https://eventmate.asia';
-const WEBHOOK_URL  = `${PUBLIC_BASE}${WEBHOOK_PATH}`;
 
-/** endpoint, который вызывает Telegram */
+/** защита webhook секретом */
 app.post(WEBHOOK_PATH, (req, res) => {
   try {
-    // authMiddleware должен пропускать этот путь, проверяя именно секретный заголовок
+    const secretHdr = req.get('x-telegram-bot-api-secret-token');
+    if (secretHdr !== BOT_SECRET) {
+      return res.sendStatus(401);
+    }
     bot.processUpdate(req.body);
     res.sendStatus(200);
   } catch (e) {
@@ -169,12 +189,17 @@ const server = app.listen(PORT, async () => {
   console.log(`🔗 API URL: http://localhost:${PORT}/api`);
 
   try {
-    // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом:
-    await bot.setWebHook(WEBHOOK_URL, { secret_token: BOT_SECRET, drop_pending_updates: true });
-    console.log(`✅ Webhook установлен: ${WEBHOOK_URL}`);
+    // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом
+    const publicBase = process.env.BACKEND_PUBLIC_URL || ''; // если зададите — поставим отсюда
+    if (publicBase) {
+      const webhookUrl = `${publicBase}${WEBHOOK_PATH}`;
+      await bot.setWebHook(webhookUrl, { secret_token: BOT_SECRET, drop_pending_updates: true });
+      console.log(`✅ Webhook установлен: ${webhookUrl}`);
+    } else {
+      console.log('ℹ️ BACKEND_PUBLIC_URL не задан — webhook не переустанавливаем на старте (используйте setWebhook вручную).');
+    }
   } catch (e) {
     console.error('❌ Ошибка установки webhook:', e);
-    process.exit(1);
   }
 });
 

@@ -12,39 +12,27 @@ class Habit {
       reminder_enabled = true,
       is_bad_habit = false
     } = habitData;
-console.log('Habit.create called with:', {
-      userId,
-      category_id,
-      title,
-      goal,
-      schedule_type,
-      schedule_days,
-      reminder_time,
-      reminder_enabled,
-      is_bad_habit
-    });
 
-     try {
+    try {
       const result = await db.query(
-        `INSERT INTO habits 
-         (user_id, category_id, title, goal, schedule_type, schedule_days, 
-          reminder_time, reminder_enabled, is_bad_habit) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+        `INSERT INTO habits
+         (user_id, category_id, title, goal, schedule_type, schedule_days,
+          reminder_time, reminder_enabled, is_bad_habit)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
         [
-          userId, 
-          category_id || null, 
-          title, 
-          goal, 
-          schedule_type, 
-          schedule_days, 
-          reminder_time || null, 
-          reminder_enabled, 
+          userId,
+          category_id || null,
+          title,
+          goal,
+          schedule_type,
+          schedule_days,
+          reminder_time || null,
+          reminder_enabled,
           is_bad_habit
         ]
       );
-
-    return result.rows[0];
+      return result.rows[0];
     } catch (error) {
       console.error('Database error in Habit.create:', error);
       throw error;
@@ -60,7 +48,6 @@ console.log('Habit.create called with:', {
        ORDER BY h.created_at DESC`,
       [userId]
     );
-
     return result.rows;
   }
 
@@ -72,7 +59,6 @@ console.log('Habit.create called with:', {
        WHERE h.id = $1 AND h.user_id = $2`,
       [id, userId]
     );
-
     return result.rows[0];
   }
 
@@ -81,19 +67,19 @@ console.log('Habit.create called with:', {
 
     const result = await db.query(
       `SELECT 
-        h.*,
-        c.name_ru, c.name_en, c.icon, c.color,
-        COALESCE(m.status, 'pending') as today_status,
-        m.id as mark_id
-      FROM habits h
-      LEFT JOIN categories c ON h.category_id = c.id
-      LEFT JOIN habit_marks m ON h.id = m.habit_id 
-        AND m.date = CURRENT_DATE
-      WHERE 
-        h.user_id = $1 
-        AND h.is_active = true
-        AND $2 = ANY(h.schedule_days)
-      ORDER BY h.created_at DESC`,
+         h.*,
+         c.name_ru, c.name_en, c.icon, c.color,
+         COALESCE(m.status, 'pending') AS today_status,
+         m.id AS mark_id
+       FROM habits h
+       LEFT JOIN categories c ON h.category_id = c.id
+       LEFT JOIN habit_marks m ON h.id = m.habit_id 
+         AND m.date = CURRENT_DATE
+       WHERE 
+         h.user_id = $1 
+         AND h.is_active = true
+         AND $2 = ANY(h.schedule_days)
+       ORDER BY h.created_at DESC`,
       [userId, dayOfWeek]
     );
 
@@ -101,25 +87,38 @@ console.log('Habit.create called with:', {
   }
 
   static async update(id, userId, updates) {
+    const allowed = new Set([
+      'category_id','title','goal','schedule_type','schedule_days',
+      'reminder_time','reminder_enabled','is_bad_habit','is_active',
+      'streak_current','streak_best'
+    ]);
+
     const fields = [];
     const values = [];
-    let index = 1;
+    let i = 1;
 
-    // Динамически строим запрос
     Object.entries(updates).forEach(([key, value]) => {
-      if (value !== undefined) {
-        fields.push(`${key} = $${index}`);
+      if (value !== undefined && allowed.has(key)) {
+        fields.push(`${key} = $${i++}`);
         values.push(value);
-        index++;
       }
     });
+
+    if (fields.length === 0) {
+      // нечего обновлять
+      const existing = await db.query(
+        'SELECT * FROM habits WHERE id = $1 AND user_id = $2',
+        [id, userId]
+      );
+      return existing.rows[0] || null;
+    }
 
     values.push(id, userId);
 
     const result = await db.query(
       `UPDATE habits 
        SET ${fields.join(', ')}
-       WHERE id = $${index} AND user_id = $${index + 1}
+       WHERE id = $${i++} AND user_id = $${i}
        RETURNING *`,
       values
     );
@@ -132,7 +131,6 @@ console.log('Habit.create called with:', {
       'DELETE FROM habits WHERE id = $1 AND user_id = $2 RETURNING id',
       [id, userId]
     );
-
     return result.rowCount > 0;
   }
 
@@ -141,8 +139,7 @@ console.log('Habit.create called with:', {
       'SELECT COUNT(*) FROM habits WHERE user_id = $1 AND is_active = true',
       [userId]
     );
-
-    return parseInt(result.rows[0].count);
+    return parseInt(result.rows[0].count, 10);
   }
 }
 
