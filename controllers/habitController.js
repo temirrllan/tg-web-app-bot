@@ -1,6 +1,7 @@
 const Habit = require('../models/Habit');
 const HabitMark = require('../models/HabitMark');
 const Phrase = require('../models/Phrase');
+const db = require('../config/database');
 
 const habitController = {
   async create(req, res) {
@@ -205,7 +206,7 @@ const habitController = {
       const language = req.user.language || 'en';
       console.log('Getting motivational phrase for language:', language);
       
-      const phrase = await Phrase.getRandom(completedCount, language);
+const phrase = await getRandomPhrase(language, completedCount);
       console.log('Selected phrase:', phrase);
 
       res.json({
@@ -342,5 +343,28 @@ const habitController = {
     }
   }
 };
+async function getRandomPhrase(language = 'en', minCompleted = 0) {
+  const lang = String(language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+  try {
+    const { rows } = await db.query(
+      `SELECT phrase_${lang} AS text, emoji, type
+       FROM motivational_phrases
+       WHERE min_completed <= $1
+       ORDER BY RANDOM()
+       LIMIT 1`,
+      [minCompleted]
+    );
+    if (rows.length) {
+      const r = rows[0];
+      return { text: r.text, emoji: r.emoji || '', type: r.type || 'encouragement' };
+    }
+  } catch (e) {
+    console.error('getRandomPhrase error:', e);
+  }
+  // запасной вариант, чтобы никогда не падать
+  return lang === 'ru'
+    ? { text: 'Продолжай!', emoji: '💪', type: 'encouragement' }
+    : { text: 'Keep going!', emoji: '💪', type: 'encouragement' };
+}
 
 module.exports = habitController;
