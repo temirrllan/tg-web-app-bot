@@ -7,6 +7,7 @@ const logger = require('./middleware/logger');
 const authRoutes = require('./routes/authRoutes');
 const habitRoutes = require('./routes/habitRoutes');
 const { generalLimiter } = require('./middleware/rateLimit');
+const keepAliveService = require('./services/keepAlive');
 
 const app = express();
 
@@ -187,7 +188,7 @@ const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API URL: http://localhost:${PORT}/api`);
-
+  keepAliveService.start();
   try {
     // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом
     const publicBase = process.env.BACKEND_PUBLIC_URL || ''; // если зададите — поставим отсюда
@@ -206,10 +207,12 @@ const server = app.listen(PORT, async () => {
 /** Грейсфул шатдаун */
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
+  keepAliveService.stop();
   server.close(() => process.exit(0));
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT signal received: closing HTTP server');
+  keepAliveService.stop();
   server.close(() => process.exit(0));
 });

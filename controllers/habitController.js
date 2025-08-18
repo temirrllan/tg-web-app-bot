@@ -1,6 +1,7 @@
+const Phrase = require('../models/Phrase');
 const Habit = require('../models/Habit');
 const HabitMark = require('../models/HabitMark');
-const Phrase = require('../models/Phrase');
+// const Phrase = require('../models/Phrase');
 const db = require('../config/database');
 
 const habitController = {
@@ -206,7 +207,7 @@ const habitController = {
       const language = req.user.language || 'en';
       console.log('Getting motivational phrase for language:', language);
       
-const phrase = await getRandomPhrase(language, completedCount);
+const phrase = await Phrase.getRandomPhrase(language, completedCount);
       console.log('Selected phrase:', phrase);
 
       res.json({
