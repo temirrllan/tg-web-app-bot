@@ -186,6 +186,33 @@ bot.on('message', async (msg) => {
     );
     return;
   }
+  // Команда для тестирования напоминаний
+  if (text === '/testreminder') {
+    try {
+      // Получаем user_id из базы данных
+      const userResult = await db.query(
+        'SELECT id FROM users WHERE telegram_id = $1',
+        [chatId.toString()]
+      );
+      
+      if (userResult.rows.length > 0 && reminderService) {
+        const userId = userResult.rows[0].id;
+        const sent = await reminderService.testReminder(userId);
+        
+        if (sent) {
+          await bot.sendMessage(chatId, '✅ Тестовое напоминание отправлено!');
+        } else {
+          await bot.sendMessage(chatId, '❌ Не удалось отправить напоминание. Убедитесь, что у вас есть активные привычки.');
+        }
+      } else {
+        await bot.sendMessage(chatId, '❌ Пользователь не найден или сервис напоминаний недоступен.');
+      }
+    } catch (error) {
+      console.error('Test reminder error:', error);
+      await bot.sendMessage(chatId, '❌ Ошибка при отправке тестового напоминания.');
+    }
+    return;
+  }
 });
 
 // Обработчик callback кнопок из напоминаний

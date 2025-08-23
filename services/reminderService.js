@@ -6,6 +6,7 @@ class ReminderService {
     this.bot = bot;
     this.tasks = new Map();
     this.isRunning = false;
+    console.log('🔔 ReminderService initialized');
   }
 
   start() {
@@ -23,7 +24,10 @@ class ReminderService {
     
     this.tasks.set('main', task);
     this.isRunning = true;
-    console.log('✅ Reminder service started');
+    console.log('✅ Reminder service started - checking every minute');
+    
+    // Сразу проверяем при запуске
+    this.checkAndSendReminders();
   }
 
   async checkAndSendReminders() {
@@ -36,31 +40,48 @@ class ReminderService {
       
       // Получаем все привычки с напоминаниями на текущее время
       const result = await db.query(
-        `SELECT h.*, u.telegram_id, u.first_name, u.language
+        `SELECT 
+          h.id,
+          h.title,
+          h.goal,
+          h.reminder_time,
+          h.schedule_days,
+          u.telegram_id,
+          u.first_name,
+          u.language
          FROM habits h
          JOIN users u ON h.user_id = u.id
          WHERE h.reminder_enabled = true
          AND h.reminder_time = $1
          AND h.is_active = true
-         AND $2 = ANY(h.schedule_days)
-         AND NOT EXISTS (
-           SELECT 1 FROM reminder_history rh 
-           WHERE rh.habit_id = h.id 
-           AND DATE(rh.sent_at) = CURRENT_DATE
-         )`,
+         AND $2 = ANY(h.schedule_days)`,
         [currentTime, currentDay]
       );
       
       if (result.rows.length > 0) {
-        console.log(`📨 Found ${result.rows.length} habits to remind`);
+        console.log(`📨 Found ${result.rows.length} habits to remind about`);
         
-        // Отправляем напоминания
         for (const habit of result.rows) {
-          await this.sendReminder(habit);
+          // Проверяем, не отправляли ли уже сегодня
+          const sentToday = await db.query(
+            `SELECT id FROM reminder_history 
+             WHERE habit_id = $1 
+             AND DATE(sent_at) = CURRENT_DATE`,
+            [habit.id]
+          );
+          
+          if (sentToday.rows.length === 0) {
+            await this.sendReminder(habit);
+          } else {
+            console.log(`⏭ Already sent reminder for habit ${habit.id} today`);
+          }
         }
+      } else {
+        console.log('📭 No reminders to send at this time');
       }
     } catch (error) {
-      console.error('❌ Error checking reminders:', error);
+      console.error('❌ Error checking reminders:', error.message);
+      console.error(error.stack);
     }
   }
 
@@ -69,22 +90,42 @@ class ReminderService {
       const chatId = habit.telegram_id;
       const lang = habit.language || 'en';
       
+      console.log(`📤 Sending reminder for habit "${habit.title}" to user ${chatId}`);
+      
       // Формируем сообщение
       const message = lang === 'ru' 
-        ? `🔔 <b>Напоминание!</b>\n\n⏰ Время для: <b>${habit.title}</b>\n💪 Цель: ${habit.goal}\n\nОтметьте выполнение привычки:`
-        : `🔔 <b>Reminder!</b>\n\n⏰ Time for: <b>${habit.title}</b>\n💪 Goal: ${habit.goal}\n\nMark your habit:`;
+        ? `🔔 <b>Напоминание!</b>
+
+⏰ Время для: <b>${habit.title}</b>
+💪 Цель: ${habit.goal}
+
+Отметьте выполнение привычки:`
+        : `🔔 <b>Reminder!</b>
+
+⏰ Time for: <b>${habit.title}</b>
+💪 Goal: ${habit.goal}
+
+Mark your habit:`;
       
       // Кнопки для отметки
       const keyboard = {
-        inline_keyboard: [[
-          { text: '✅ Done', callback_data: `mark_done_${habit.id}` },
-          { text: '⏭ Skip', callback_data: `mark_skip_${habit.id}` }
-        ], [
-          { text: '📱 Open App', web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } }
-        ]]
+        inline_keyboard: [
+          [
+            { text: '✅ Done', callback_data: `mark_done_${habit.id}` },
+            { text: '⏭ Skip', callback_data: `mark_skip_${habit.id}` }
+          ],
+          [
+            { 
+              text: '📱 Open App', 
+              web_app: { 
+                url: process.env.WEBAPP_URL || process.env.FRONTEND_URL || 'https://lighthearted-phoenix-e42a4f.netlify.app'
+              } 
+            }
+          ]
+        ]
       };
       
-      await this.bot.sendMessage(chatId, message, {
+      const sentMessage = await this.bot.sendMessage(chatId, message, {
         reply_markup: keyboard,
         parse_mode: 'HTML'
       });
@@ -95,9 +136,43 @@ class ReminderService {
         [habit.id]
       );
       
-      console.log(`✅ Reminder sent for habit "${habit.title}" to user ${chatId}`);
+      console.log(`✅ Reminder sent successfully for habit ${habit.id}`);
     } catch (error) {
       console.error(`❌ Failed to send reminder for habit ${habit.id}:`, error.message);
+      
+      // Если ошибка связана с тем, что бот не может отправить сообщение пользователю
+      if (error.response && error.response.statusCode === 403) {
+        console.log(`⚠️ User ${habit.telegram_id} has blocked the bot`);
+      }
+    }
+  }
+
+  // Метод для тестирования - отправить напоминание прямо сейчас
+  async testReminder(userId) {
+    try {
+      console.log(`🧪 Testing reminder for user ${userId}`);
+      
+      // Получаем первую активную привычку пользователя
+      const result = await db.query(
+        `SELECT h.*, u.telegram_id, u.language
+         FROM habits h
+         JOIN users u ON h.user_id = u.id
+         WHERE u.id = $1
+         AND h.is_active = true
+         LIMIT 1`,
+        [userId]
+      );
+      
+      if (result.rows.length > 0) {
+        await this.sendReminder(result.rows[0]);
+        return true;
+      } else {
+        console.log('❌ No active habits found for user');
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Test reminder failed:', error);
+      return false;
     }
   }
 
