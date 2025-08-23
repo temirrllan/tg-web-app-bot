@@ -83,7 +83,10 @@ console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
 /** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-
+// Запускаем сервис напоминаний
+const ReminderService = require('./services/reminderService');
+const reminderService = new ReminderService(bot);
+reminderService.start();
 /** единый путь webhook — включаем токен в путь */
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
@@ -182,7 +185,67 @@ bot.on('message', async (msg) => {
     return;
   }
 });
-
+// Обработчик callback кнопок из напоминаний
+bot.on('callback_query', async (callbackQuery) => {
+  const chatId = callbackQuery.message.chat.id;
+  const data = callbackQuery.data;
+  const messageId = callbackQuery.message.message_id;
+  
+  if (data.startsWith('mark_done_')) {
+    const habitId = data.replace('mark_done_', '');
+    
+    try {
+      // Отмечаем привычку как выполненную
+      await db.query(
+        `INSERT INTO habit_marks (habit_id, date, status) 
+         VALUES ($1, CURRENT_DATE, 'completed')
+         ON CONFLICT (habit_id, date) 
+         DO UPDATE SET status = 'completed'`,
+        [habitId]
+      );
+      
+      await bot.editMessageText('✅ Отлично! Привычка отмечена как выполненная.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '✅ Выполнено!'
+      });
+    } catch (error) {
+      console.error('Error marking habit done:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Ошибка'
+      });
+    }
+  } else if (data.startsWith('mark_skip_')) {
+    const habitId = data.replace('mark_skip_', '');
+    
+    try {
+      await db.query(
+        `INSERT INTO habit_marks (habit_id, date, status) 
+         VALUES ($1, CURRENT_DATE, 'skipped')
+         ON CONFLICT (habit_id, date) 
+         DO UPDATE SET status = 'skipped'`,
+        [habitId]
+      );
+      
+      await bot.editMessageText('⏭ Привычка пропущена на сегодня.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '⏭ Пропущено'
+      });
+    } catch (error) {
+      console.error('Error marking habit skipped:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Ошибка'
+      });
+    }
+  }
+});
 /** ---------- Запуск HTTP и установка webhook ---------- */
 const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
@@ -207,6 +270,7 @@ const server = app.listen(PORT, async () => {
 /** Грейсфул шатдаун */
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
+  reminderService.stop();
   keepAliveService.stop();
   server.close(() => process.exit(0));
 });
