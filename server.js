@@ -8,6 +8,7 @@ const authRoutes = require('./routes/authRoutes');
 const habitRoutes = require('./routes/habitRoutes');
 const { generalLimiter } = require('./middleware/rateLimit');
 const keepAliveService = require('./services/keepAlive');
+const db = require('./config/database');
 
 const app = express();
 
@@ -83,10 +84,11 @@ console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
 /** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-// Запускаем сервис напоминаний
+
+// Подготавливаем сервис напоминаний (запустим после старта сервера)
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
-reminderService.start();
+
 /** единый путь webhook — включаем токен в путь */
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
@@ -185,11 +187,14 @@ bot.on('message', async (msg) => {
     return;
   }
 });
+
 // Обработчик callback кнопок из напоминаний
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
+  
+  console.log(`📲 Callback received: ${data} from chat ${chatId}`);
   
   if (data.startsWith('mark_done_')) {
     const habitId = data.replace('mark_done_', '');
@@ -200,18 +205,34 @@ bot.on('callback_query', async (callbackQuery) => {
         `INSERT INTO habit_marks (habit_id, date, status) 
          VALUES ($1, CURRENT_DATE, 'completed')
          ON CONFLICT (habit_id, date) 
-         DO UPDATE SET status = 'completed'`,
+         DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
+        [habitId]
+      );
+      
+      // Обновляем streak
+      await db.query(
+        `UPDATE habits 
+         SET streak_current = streak_current + 1,
+             streak_best = GREATEST(streak_current + 1, streak_best)
+         WHERE id = $1`,
         [habitId]
       );
       
       await bot.editMessageText('✅ Отлично! Привычка отмечена как выполненная.', {
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📱 Открыть приложение', web_app: { url: WEBAPP_URL } }
+          ]]
+        }
       });
       
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: '✅ Выполнено!'
       });
+      
+      console.log(`✅ Habit ${habitId} marked as done`);
     } catch (error) {
       console.error('Error marking habit done:', error);
       await bot.answerCallbackQuery(callbackQuery.id, {
@@ -226,18 +247,31 @@ bot.on('callback_query', async (callbackQuery) => {
         `INSERT INTO habit_marks (habit_id, date, status) 
          VALUES ($1, CURRENT_DATE, 'skipped')
          ON CONFLICT (habit_id, date) 
-         DO UPDATE SET status = 'skipped'`,
+         DO UPDATE SET status = 'skipped', marked_at = CURRENT_TIMESTAMP`,
+        [habitId]
+      );
+      
+      // Сбрасываем streak при пропуске
+      await db.query(
+        'UPDATE habits SET streak_current = 0 WHERE id = $1',
         [habitId]
       );
       
       await bot.editMessageText('⏭ Привычка пропущена на сегодня.', {
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📱 Открыть приложение', web_app: { url: WEBAPP_URL } }
+          ]]
+        }
       });
       
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: '⏭ Пропущено'
       });
+      
+      console.log(`⏭ Habit ${habitId} marked as skipped`);
     } catch (error) {
       console.error('Error marking habit skipped:', error);
       await bot.answerCallbackQuery(callbackQuery.id, {
@@ -246,12 +280,19 @@ bot.on('callback_query', async (callbackQuery) => {
     }
   }
 });
+
 /** ---------- Запуск HTTP и установка webhook ---------- */
 const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API URL: http://localhost:${PORT}/api`);
+  
+  // Запускаем фоновые сервисы
   keepAliveService.start();
+  
+  // Запускаем сервис напоминаний после старта сервера
+  reminderService.start();
+  
   try {
     // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом
     const publicBase = process.env.BACKEND_PUBLIC_URL || ''; // если зададите — поставим отсюда
@@ -277,6 +318,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT signal received: closing HTTP server');
+  reminderService.stop();
   keepAliveService.stop();
   server.close(() => process.exit(0));
 });
