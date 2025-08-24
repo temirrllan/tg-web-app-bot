@@ -187,7 +187,7 @@ bot.on('message', async (msg) => {
     return;
   }
   // Команда для тестирования напоминаний
-  if (text === '/testreminder') {
+ if (text === '/testreminder') {
     try {
       // Получаем user_id из базы данных
       const userResult = await db.query(
@@ -197,19 +197,53 @@ bot.on('message', async (msg) => {
       
       if (userResult.rows.length > 0 && reminderService) {
         const userId = userResult.rows[0].id;
-        const sent = await reminderService.testReminder(userId);
+        const count = await reminderService.testReminder(userId, chatId);
         
-        if (sent) {
-          await bot.sendMessage(chatId, '✅ Тестовое напоминание отправлено!');
+        if (count > 0) {
+          await bot.sendMessage(
+            chatId, 
+            `✅ Отправлено ${count} тестовых напоминаний.\n\nРеальные напоминания будут приходить автоматически в указанное время.`
+          );
         } else {
-          await bot.sendMessage(chatId, '❌ Не удалось отправить напоминание. Убедитесь, что у вас есть активные привычки.');
+          await bot.sendMessage(
+            chatId, 
+            '❌ У вас нет активных привычек с включенными напоминаниями.\n\nСоздайте привычку и установите время напоминания в приложении.'
+          );
         }
       } else {
-        await bot.sendMessage(chatId, '❌ Пользователь не найден или сервис напоминаний недоступен.');
+        await bot.sendMessage(
+          chatId, 
+          '❌ Пользователь не найден или сервис напоминаний недоступен.'
+        );
       }
     } catch (error) {
       console.error('Test reminder error:', error);
       await bot.sendMessage(chatId, '❌ Ошибка при отправке тестового напоминания.');
+    }
+    return;
+  }
+  // Команда для проверки статуса напоминаний
+  if (text === '/reminderstatus') {
+    try {
+      if (reminderService) {
+        const next = await reminderService.getNextReminder();
+        if (next) {
+          await bot.sendMessage(
+            chatId,
+            `📅 Следующее напоминание:\n\n` +
+            `📝 Привычка: ${next.title}\n` +
+            `⏰ Время: ${next.reminder_time.substring(0, 5)}\n` +
+            `👤 Пользователь: ${next.first_name}`
+          );
+        } else {
+          await bot.sendMessage(chatId, '📭 Нет запланированных напоминаний на сегодня.');
+        }
+      } else {
+        await bot.sendMessage(chatId, '❌ Сервис напоминаний недоступен.');
+      }
+    } catch (error) {
+      console.error('Status error:', error);
+      await bot.sendMessage(chatId, '❌ Ошибка при проверке статуса.');
     }
     return;
   }
