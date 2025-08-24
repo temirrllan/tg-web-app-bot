@@ -8,6 +8,7 @@ const markController = require('../controllers/markController');
 const authMiddleware = require('../middleware/authMiddleware');
 const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
+const subscriptionController = require('../controllers/subscriptionController');
 
 // Категории - временно без авторизации для отладки
 router.get('/categories', categoryController.getAll);
@@ -26,4 +27,8 @@ router.delete('/habits/:id', habitController.delete);
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
 
+
+// Subscription routes
+router.post('/subscription/check-promo', subscriptionController.checkPromoCode);
+router.post('/subscription/create', subscriptionController.createSubscription);
 module.exports = router;
