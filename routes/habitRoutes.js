@@ -71,6 +71,7 @@ router.get('/habits/marks', async (req, res) => {
 });
 
 // Получение привычек для конкретной даты
+// Получение привычек для конкретной даты с их актуальными статусами
 router.get('/habits/date/:date', async (req, res) => {
   try {
     const { date } = req.params;
@@ -81,27 +82,40 @@ router.get('/habits/date/:date', async (req, res) => {
     const targetDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
     const dayOfWeek = targetDate.getDay() || 7;
     
-    console.log(`Getting habits for date ${date}, day of week: ${dayOfWeek}`);
+    console.log(`Getting habits for user ${userId} on date ${date}, day of week: ${dayOfWeek}`);
     
-    // Получаем привычки для этого дня недели
+    // Получаем привычки для этого дня недели со статусами
     const result = await db.query(
       `SELECT 
-        h.*,
+        h.id,
+        h.user_id,
+        h.category_id,
+        h.title,
+        h.goal,
+        h.schedule_type,
+        h.schedule_days,
+        h.reminder_time,
+        h.reminder_enabled,
+        h.is_bad_habit,
+        h.streak_current,
+        h.streak_best,
+        h.is_active,
+        h.created_at,
+        h.updated_at,
         c.name_ru, 
         c.name_en, 
-        c.icon, 
+        c.icon as category_icon, 
         c.color,
-        -- Получаем статус ТОЛЬКО для запрошенной даты
-        (SELECT status FROM habit_marks 
-         WHERE habit_id = h.id 
-         AND date = $3::date
-         LIMIT 1) as today_status,
-        (SELECT id FROM habit_marks 
-         WHERE habit_id = h.id 
-         AND date = $3::date
-         LIMIT 1) as mark_id
+        -- Получаем актуальный статус из habit_marks
+        COALESCE(hm.status, 'pending') as today_status,
+        hm.id as mark_id,
+        hm.marked_at
        FROM habits h
        LEFT JOIN categories c ON h.category_id = c.id
+       LEFT JOIN habit_marks hm ON (
+         hm.habit_id = h.id 
+         AND hm.date = $3::date
+       )
        WHERE 
          h.user_id = $1 
          AND h.is_active = true
@@ -110,21 +124,28 @@ router.get('/habits/date/:date', async (req, res) => {
       [userId, dayOfWeek, date]
     );
     
-    const habitsWithStatus = result.rows.map(h => ({
-      ...h,
-      today_status: h.today_status || 'pending'
-    }));
+    // Логируем статусы для отладки
+    console.log(`Found ${result.rows.length} habits for ${date}:`);
+    result.rows.forEach(h => {
+      console.log(`- "${h.title}" (ID: ${h.id}): ${h.today_status}`);
+    });
     
-    const completedCount = habitsWithStatus.filter(h => h.today_status === 'completed').length;
+    const completedCount = result.rows.filter(h => h.today_status === 'completed').length;
+    const failedCount = result.rows.filter(h => h.today_status === 'failed').length;
+    const skippedCount = result.rows.filter(h => h.today_status === 'skipped').length;
+    const pendingCount = result.rows.filter(h => h.today_status === 'pending').length;
     
-    console.log(`Found ${habitsWithStatus.length} habits for ${date}, completed: ${completedCount}`);
+    console.log(`Stats: completed=${completedCount}, failed=${failedCount}, skipped=${skippedCount}, pending=${pendingCount}`);
     
     res.json({
       success: true,
-      habits: habitsWithStatus,
+      habits: result.rows,
       stats: {
         completed: completedCount,
-        total: habitsWithStatus.length
+        total: result.rows.length,
+        failed: failedCount,
+        skipped: skippedCount,
+        pending: pendingCount
       }
     });
   } catch (error) {
@@ -132,6 +153,56 @@ router.get('/habits/date/:date', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to get habits for date'
+    });
+  }
+});
+
+// Проверочный эндпоинт для отладки отметок
+router.get('/habits/:id/marks', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    // Проверяем, что привычка принадлежит пользователю
+    const habitCheck = await db.query(
+      'SELECT id, title FROM habits WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    
+    if (habitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
+    
+    // Получаем все отметки для этой привычки
+    const marks = await db.query(
+      `SELECT 
+        id,
+        habit_id,
+        date,
+        status,
+        marked_at
+       FROM habit_marks 
+       WHERE habit_id = $1
+       ORDER BY date DESC
+       LIMIT 30`,
+      [id]
+    );
+    
+    console.log(`Found ${marks.rows.length} marks for habit ${id} (${habitCheck.rows[0].title})`);
+    
+    res.json({
+      success: true,
+      habit: habitCheck.rows[0],
+      marks: marks.rows
+    });
+  } catch (error) {
+    console.error('Get habit marks error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get habit marks'
     });
   }
 });

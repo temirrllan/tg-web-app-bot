@@ -191,25 +191,38 @@ async getTodayHabits(req, res) {
       dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()]
     });
     
-    // Получаем привычки на сегодня по расписанию
-    const habits = await db.query(
+    // Получаем привычки на сегодня по расписанию с их статусами
+    const result = await db.query(
       `SELECT 
-        h.*,
+        h.id,
+        h.user_id,
+        h.category_id,
+        h.title,
+        h.goal,
+        h.schedule_type,
+        h.schedule_days,
+        h.reminder_time,
+        h.reminder_enabled,
+        h.is_bad_habit,
+        h.streak_current,
+        h.streak_best,
+        h.is_active,
+        h.created_at,
+        h.updated_at,
         c.name_ru, 
         c.name_en, 
-        c.icon, 
+        c.icon as category_icon, 
         c.color,
-        -- Получаем статус ТОЛЬКО для сегодняшнего дня
-        (SELECT status FROM habit_marks 
-         WHERE habit_id = h.id 
-         AND date = $3
-         LIMIT 1) as today_status,
-        (SELECT id FROM habit_marks 
-         WHERE habit_id = h.id 
-         AND date = $3
-         LIMIT 1) as mark_id
+        -- Получаем актуальный статус из habit_marks
+        COALESCE(hm.status, 'pending') as today_status,
+        hm.id as mark_id,
+        hm.marked_at
        FROM habits h
        LEFT JOIN categories c ON h.category_id = c.id
+       LEFT JOIN habit_marks hm ON (
+         hm.habit_id = h.id 
+         AND hm.date = $3::date
+       )
        WHERE 
          h.user_id = $1 
          AND h.is_active = true
@@ -218,22 +231,26 @@ async getTodayHabits(req, res) {
       [userId, dayOfWeek, todayDate]
     );
     
-    console.log(`✅ Found ${habits.rows.length} habits for today`);
+    console.log(`✅ Found ${result.rows.length} habits for today`);
     
-    // Обрабатываем статусы
-    const habitsWithStatus = habits.rows.map(h => ({
-      ...h,
-      today_status: h.today_status || 'pending'
-    }));
+    // Логируем статусы для отладки
+    result.rows.forEach(h => {
+      console.log(`Habit "${h.title}" (ID: ${h.id}) - Status: ${h.today_status}, Mark ID: ${h.mark_id}`);
+    });
     
     // Считаем статистику
-    const completedCount = habitsWithStatus.filter(h => h.today_status === 'completed').length;
-    const totalCount = habitsWithStatus.length;
+    const completedCount = result.rows.filter(h => h.today_status === 'completed').length;
+    const failedCount = result.rows.filter(h => h.today_status === 'failed').length;
+    const skippedCount = result.rows.filter(h => h.today_status === 'skipped').length;
+    const pendingCount = result.rows.filter(h => h.today_status === 'pending').length;
+    const totalCount = result.rows.length;
     
     console.log('Statistics:', {
       total: totalCount,
       completed: completedCount,
-      pending: totalCount - completedCount
+      failed: failedCount,
+      skipped: skippedCount,
+      pending: pendingCount
     });
 
     // Получаем мотивационную фразу
@@ -242,10 +259,13 @@ async getTodayHabits(req, res) {
 
     res.json({
       success: true,
-      habits: habitsWithStatus,
+      habits: result.rows,
       stats: {
         completed: completedCount,
-        total: totalCount
+        total: totalCount,
+        failed: failedCount,
+        skipped: skippedCount,
+        pending: pendingCount
       },
       phrase
     });
