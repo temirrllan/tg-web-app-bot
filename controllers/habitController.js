@@ -167,69 +167,99 @@ const habitController = {
     }
   },
 
-  async getTodayHabits(req, res) {
-    console.log('🎯 habitController.getTodayHabits called');
-    
-    try {
-      if (!req.user) {
-        console.error('❌ No user in request');
-        return res.status(401).json({
-          success: false,
-          error: 'User not authenticated'
-        });
-      }
-
-      const userId = req.user.id;
-      const today = new Date();
-      const dayOfWeek = today.getDay() || 7; // 0 (Sunday) becomes 7
-      
-      console.log('Getting today habits for user:', userId);
-      console.log('Today is:', {
-        date: today.toISOString().split('T')[0],
-        dayOfWeek: dayOfWeek,
-        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()]
-      });
-      
-      const habits = await Habit.getTodayHabits(userId);
-      console.log(`✅ Found ${habits.length} habits for today`);
-      
-      // Считаем статистику
-      const completedCount = habits.filter(h => h.today_status === 'completed').length;
-      const totalCount = habits.length;
-      
-      console.log('Statistics:', {
-        total: totalCount,
-        completed: completedCount,
-        pending: totalCount - completedCount
-      });
-
-      // Получаем мотивационную фразу
-      const language = req.user.language || 'en';
-      console.log('Getting motivational phrase for language:', language);
-      
-const phrase = await Phrase.getRandomPhrase(language, completedCount);
-      console.log('Selected phrase:', phrase);
-
-      res.json({
-        success: true,
-        habits,
-        stats: {
-          completed: completedCount,
-          total: totalCount
-        },
-        phrase
-      });
-    } catch (error) {
-      console.error('💥 Get today habits error:', error.message);
-      console.error('Error stack:', error.stack);
-      
-      res.status(500).json({ 
-        success: false, 
-        error: 'Failed to load today habits',
-        details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+async getTodayHabits(req, res) {
+  console.log('🎯 habitController.getTodayHabits called');
+  
+  try {
+    if (!req.user) {
+      console.error('❌ No user in request');
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
       });
     }
-  },
+
+    const userId = req.user.id;
+    const today = new Date();
+    const dayOfWeek = today.getDay() || 7; // 0 (Sunday) becomes 7
+    const todayDate = today.toISOString().split('T')[0];
+    
+    console.log('Getting today habits for user:', userId);
+    console.log('Today is:', {
+      date: todayDate,
+      dayOfWeek: dayOfWeek,
+      dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()]
+    });
+    
+    // Получаем привычки на сегодня по расписанию
+    const habits = await db.query(
+      `SELECT 
+        h.*,
+        c.name_ru, 
+        c.name_en, 
+        c.icon, 
+        c.color,
+        -- Получаем статус ТОЛЬКО для сегодняшнего дня
+        (SELECT status FROM habit_marks 
+         WHERE habit_id = h.id 
+         AND date = $3
+         LIMIT 1) as today_status,
+        (SELECT id FROM habit_marks 
+         WHERE habit_id = h.id 
+         AND date = $3
+         LIMIT 1) as mark_id
+       FROM habits h
+       LEFT JOIN categories c ON h.category_id = c.id
+       WHERE 
+         h.user_id = $1 
+         AND h.is_active = true
+         AND $2 = ANY(h.schedule_days)
+       ORDER BY h.created_at DESC`,
+      [userId, dayOfWeek, todayDate]
+    );
+    
+    console.log(`✅ Found ${habits.rows.length} habits for today`);
+    
+    // Обрабатываем статусы
+    const habitsWithStatus = habits.rows.map(h => ({
+      ...h,
+      today_status: h.today_status || 'pending'
+    }));
+    
+    // Считаем статистику
+    const completedCount = habitsWithStatus.filter(h => h.today_status === 'completed').length;
+    const totalCount = habitsWithStatus.length;
+    
+    console.log('Statistics:', {
+      total: totalCount,
+      completed: completedCount,
+      pending: totalCount - completedCount
+    });
+
+    // Получаем мотивационную фразу
+    const language = req.user.language || 'en';
+    const phrase = await Phrase.getRandomPhrase(language, completedCount);
+
+    res.json({
+      success: true,
+      habits: habitsWithStatus,
+      stats: {
+        completed: completedCount,
+        total: totalCount
+      },
+      phrase
+    });
+  } catch (error) {
+    console.error('💥 Get today habits error:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to load today habits',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+},
 
   async update(req, res) {
     console.log('🎯 habitController.update called');

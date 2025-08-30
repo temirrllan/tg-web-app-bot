@@ -49,9 +49,14 @@ const markController = {
 
       console.log('✅ Date validation passed');
 
-      // Отмечаем привычку
+      // Отмечаем привычку для конкретной даты
       const mark = await HabitMark.mark(id, markDate, status);
-      console.log('✅ Habit marked successfully:', mark);
+      console.log('✅ Habit marked successfully:', {
+        habitId: id,
+        date: markDate,
+        status: status,
+        markId: mark.id
+      });
 
       res.json({
         success: true,
@@ -96,7 +101,8 @@ const markController = {
 
       res.json({
         success: true,
-        deleted
+        deleted,
+        date: date
       });
     } catch (error) {
       console.error('💥 Unmark habit error:', error);
