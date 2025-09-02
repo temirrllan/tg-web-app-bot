@@ -207,22 +207,18 @@ router.get('/habits/:id/marks', authMiddleware, async (req, res) => {
   }
 });
 // Получение статистики привычки
-// Получение статистики привычки
 router.get('/habits/:id/statistics', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     
-    console.log(`Getting statistics for habit ${id}, user ${userId}`);
-    
     // Проверяем, что привычка принадлежит пользователю
     const habitCheck = await db.query(
-      'SELECT id, title, streak_current, created_at FROM habits WHERE id = $1 AND user_id = $2',
+      'SELECT id, title, streak_current FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
     );
     
     if (habitCheck.rows.length === 0) {
-      console.log('Habit not found');
       return res.status(404).json({
         success: false,
         error: 'Habit not found'
@@ -232,11 +228,9 @@ router.get('/habits/:id/statistics', async (req, res) => {
     const habit = habitCheck.rows[0];
     const now = new Date();
     
-    // Текущая неделя (понедельник - воскресенье)
+    // Текущая неделя
     const weekStart = new Date(now);
-    const day = weekStart.getDay();
-    const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
-    weekStart.setDate(diff);
+    weekStart.setDate(now.getDate() - now.getDay() + 1);
     weekStart.setHours(0, 0, 0, 0);
     
     const weekEnd = new Date(weekStart);
@@ -251,12 +245,6 @@ router.get('/habits/:id/statistics', async (req, res) => {
     const yearStart = new Date(now.getFullYear(), 0, 1);
     const yearEnd = new Date(now.getFullYear(), 11, 31);
     
-    console.log('Date ranges:', {
-      week: `${weekStart.toISOString().split('T')[0]} to ${weekEnd.toISOString().split('T')[0]}`,
-      month: `${monthStart.toISOString().split('T')[0]} to ${monthEnd.toISOString().split('T')[0]}`,
-      year: `${yearStart.toISOString().split('T')[0]} to ${yearEnd.toISOString().split('T')[0]}`
-    });
-    
     // Получаем статистику
     const weekStats = await db.query(
       `SELECT COUNT(*) as completed 
@@ -265,7 +253,7 @@ router.get('/habits/:id/statistics', async (req, res) => {
        AND status = 'completed'
        AND date >= $2::date 
        AND date <= $3::date`,
-      [id, weekStart.toISOString().split('T')[0], weekEnd.toISOString().split('T')[0]]
+      [id, weekStart, weekEnd]
     );
     
     const monthStats = await db.query(
@@ -275,7 +263,7 @@ router.get('/habits/:id/statistics', async (req, res) => {
        AND status = 'completed'
        AND date >= $2::date 
        AND date <= $3::date`,
-      [id, monthStart.toISOString().split('T')[0], monthEnd.toISOString().split('T')[0]]
+      [id, monthStart, monthEnd]
     );
     
     const yearStats = await db.query(
@@ -285,21 +273,17 @@ router.get('/habits/:id/statistics', async (req, res) => {
        AND status = 'completed'
        AND date >= $2::date 
        AND date <= $3::date`,
-      [id, yearStart.toISOString().split('T')[0], yearEnd.toISOString().split('T')[0]]
+      [id, yearStart, yearEnd]
     );
     
-    const response = {
+    res.json({
       success: true,
       currentStreak: habit.streak_current || 0,
-      weekCompleted: parseInt(weekStats.rows[0].completed) || 0,
-      monthCompleted: parseInt(monthStats.rows[0].completed) || 0,
+      weekCompleted: parseInt(weekStats.rows[0].completed),
+      monthCompleted: parseInt(monthStats.rows[0].completed),
       monthTotal: monthEnd.getDate(),
-      yearCompleted: parseInt(yearStats.rows[0].completed) || 0
-    };
-    
-    console.log('Statistics response:', response);
-    
-    res.json(response);
+      yearCompleted: parseInt(yearStats.rows[0].completed)
+    });
   } catch (error) {
     console.error('Get habit statistics error:', error);
     res.status(500).json({
