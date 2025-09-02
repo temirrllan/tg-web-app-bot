@@ -206,7 +206,92 @@ router.get('/habits/:id/marks', authMiddleware, async (req, res) => {
     });
   }
 });
-
+// Получение статистики привычки
+router.get('/habits/:id/statistics', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    // Проверяем, что привычка принадлежит пользователю
+    const habitCheck = await db.query(
+      'SELECT id, title, streak_current FROM habits WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    
+    if (habitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
+    
+    const habit = habitCheck.rows[0];
+    const now = new Date();
+    
+    // Текущая неделя
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay() + 1);
+    weekStart.setHours(0, 0, 0, 0);
+    
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+    
+    // Текущий месяц
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    
+    // Текущий год
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const yearEnd = new Date(now.getFullYear(), 11, 31);
+    
+    // Получаем статистику
+    const weekStats = await db.query(
+      `SELECT COUNT(*) as completed 
+       FROM habit_marks 
+       WHERE habit_id = $1 
+       AND status = 'completed'
+       AND date >= $2::date 
+       AND date <= $3::date`,
+      [id, weekStart, weekEnd]
+    );
+    
+    const monthStats = await db.query(
+      `SELECT COUNT(*) as completed 
+       FROM habit_marks 
+       WHERE habit_id = $1 
+       AND status = 'completed'
+       AND date >= $2::date 
+       AND date <= $3::date`,
+      [id, monthStart, monthEnd]
+    );
+    
+    const yearStats = await db.query(
+      `SELECT COUNT(*) as completed 
+       FROM habit_marks 
+       WHERE habit_id = $1 
+       AND status = 'completed'
+       AND date >= $2::date 
+       AND date <= $3::date`,
+      [id, yearStart, yearEnd]
+    );
+    
+    res.json({
+      success: true,
+      currentStreak: habit.streak_current || 0,
+      weekCompleted: parseInt(weekStats.rows[0].completed),
+      monthCompleted: parseInt(monthStats.rows[0].completed),
+      monthTotal: monthEnd.getDate(),
+      yearCompleted: parseInt(yearStats.rows[0].completed)
+    });
+  } catch (error) {
+    console.error('Get habit statistics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get statistics'
+    });
+  }
+});
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
