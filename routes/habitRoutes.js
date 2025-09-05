@@ -292,6 +292,104 @@ router.get('/habits/:id/statistics', async (req, res) => {
     });
   }
 });
+
+// Создать ссылку для шаринга
+router.post('/habits/:id/share', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    // Проверяем владельца
+    const habit = await db.query(
+      'SELECT * FROM habits WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    
+    if (habit.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Habit not found' });
+    }
+    
+    // Проверяем существующий share code
+    let shareResult = await db.query(
+      'SELECT share_code FROM shared_habits WHERE habit_id = $1',
+      [id]
+    );
+    
+    let shareCode;
+    if (shareResult.rows.length === 0) {
+      // Генерируем уникальный код
+      shareCode = `${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      await db.query(
+        'INSERT INTO shared_habits (habit_id, owner_user_id, share_code) VALUES ($1, $2, $3)',
+        [id, userId, shareCode]
+      );
+      
+      // Добавляем владельца как первого участника
+      await db.query(
+        'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [id, userId]
+      );
+    } else {
+      shareCode = shareResult.rows[0].share_code;
+    }
+    
+    res.json({ success: true, shareCode });
+  } catch (error) {
+    console.error('Create share link error:', error);
+    res.status(500).json({ success: false, error: 'Failed to create share link' });
+  }
+});
+
+// Получить участников привычки
+router.get('/habits/:id/members', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const members = await db.query(
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.photo_url
+       FROM habit_members hm
+       JOIN users u ON hm.user_id = u.id
+       WHERE hm.habit_id = $1 AND hm.is_active = true`,
+      [id]
+    );
+    
+    res.json({ success: true, members: members.rows });
+  } catch (error) {
+    console.error('Get members error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get members' });
+  }
+});
+
+// Punch друга
+router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
+  try {
+    const { habitId, userId: targetUserId } = req.params;
+    const fromUserId = req.user.id;
+    
+    // Сохраняем punch
+    await db.query(
+      'INSERT INTO habit_punches (habit_id, from_user_id, to_user_id) VALUES ($1, $2, $3)',
+      [habitId, fromUserId, targetUserId]
+    );
+    
+    // Отправляем уведомление через бота
+    const targetUser = await db.query(
+      'SELECT telegram_id FROM users WHERE id = $1',
+      [targetUserId]
+    );
+    
+    if (targetUser.rows.length > 0) {
+      // Здесь вызываем метод бота для отправки уведомления
+      // bot.sendMessage(targetUser.rows[0].telegram_id, '👊 Your friend reminded you to complete your habit!');
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Punch error:', error);
+    res.status(500).json({ success: false, error: 'Failed to send punch' });
+  }
+});
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
