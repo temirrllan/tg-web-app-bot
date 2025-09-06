@@ -292,7 +292,197 @@ router.get('/habits/:id/statistics', async (req, res) => {
     });
   }
 });
+// Присоединиться к привычке по коду
+router.post('/habits/join', authMiddleware, async (req, res) => {
+  try {
+    const { shareCode } = req.body;
+    const userId = req.user.id;
+    
+    if (!shareCode) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Share code is required' 
+      });
+    }
+    
+    // Получаем информацию о привычке по коду
+    const shareResult = await db.query(
+      `SELECT sh.*, h.* 
+       FROM shared_habits sh
+       JOIN habits h ON sh.habit_id = h.id
+       WHERE sh.share_code = $1`,
+      [shareCode]
+    );
+    
+    if (shareResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Invalid share code' 
+      });
+    }
+    
+    const originalHabit = shareResult.rows[0];
+    
+    // Проверяем, не является ли пользователь уже участником
+    const memberCheck = await db.query(
+      'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
+      [originalHabit.habit_id, userId]
+    );
+    
+    if (memberCheck.rows.length > 0) {
+      return res.json({ 
+        success: true, 
+        message: 'Already a member',
+        habitId: originalHabit.habit_id 
+      });
+    }
+    
+    // Создаем копию привычки для нового пользователя
+    const newHabitResult = await db.query(
+      `INSERT INTO habits (
+        user_id, category_id, title, goal, schedule_type, 
+        schedule_days, reminder_time, reminder_enabled, is_bad_habit,
+        parent_habit_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *`,
+      [
+        userId,
+        originalHabit.category_id,
+        originalHabit.title,
+        originalHabit.goal,
+        originalHabit.schedule_type,
+        originalHabit.schedule_days,
+        originalHabit.reminder_time,
+        originalHabit.reminder_enabled,
+        originalHabit.is_bad_habit,
+        originalHabit.habit_id // Ссылка на оригинальную привычку
+      ]
+    );
+    
+    const newHabit = newHabitResult.rows[0];
+    
+    // Добавляем пользователя как участника оригинальной привычки
+    await db.query(
+      'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
+      [originalHabit.habit_id, userId]
+    );
+    
+    // Добавляем владельца оригинальной привычки как участника новой привычки
+    await db.query(
+      'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
+      [newHabit.id, originalHabit.owner_user_id]
+    );
+    
+    res.json({ 
+      success: true, 
+      habit: newHabit,
+      message: 'Successfully joined habit' 
+    });
+  } catch (error) {
+    console.error('Join habit error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to join habit' 
+    });
+  }
+});
 
+// Удалить участника из привычки
+router.delete('/habits/:habitId/members/:userId', authMiddleware, async (req, res) => {
+  try {
+    const { habitId, userId: targetUserId } = req.params;
+    const requestUserId = req.user.id;
+    
+    // Проверяем права (только владелец или сам участник может удалить)
+    const habitOwnerCheck = await db.query(
+      'SELECT user_id FROM habits WHERE id = $1',
+      [habitId]
+    );
+    
+    if (habitOwnerCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Habit not found' });
+    }
+    
+    const isOwner = habitOwnerCheck.rows[0].user_id === requestUserId;
+    const isSelf = targetUserId === requestUserId.toString();
+    
+    if (!isOwner && !isSelf) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'No permission to remove this member' 
+      });
+    }
+    
+    // Удаляем участника
+    await db.query(
+      'UPDATE habit_members SET is_active = false WHERE habit_id = $1 AND user_id = $2',
+      [habitId, targetUserId]
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Remove member error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to remove member' 
+    });
+  }
+});
+
+// Обновляем эндпоинт для punch с отправкой уведомления
+router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
+  try {
+    const { habitId, userId: targetUserId } = req.params;
+    const fromUserId = req.user.id;
+    
+    // Получаем информацию для уведомления
+    const userData = await db.query(
+      `SELECT u.telegram_id, u2.first_name as from_name, h.title
+       FROM users u
+       JOIN users u2 ON u2.id = $2
+       JOIN habits h ON h.id = $3
+       WHERE u.id = $1`,
+      [targetUserId, fromUserId, habitId]
+    );
+    
+    if (userData.rows.length > 0) {
+      const { telegram_id, from_name, title } = userData.rows[0];
+      
+      // Отправляем уведомление через бота
+      const bot = require('../server').bot; // Получаем экземпляр бота
+      
+      await bot.sendMessage(
+        telegram_id,
+        `👊 **Reminder from ${from_name}!**\n\n` +
+        `Your friend reminded you to complete your habit:\n` +
+        `📝 *${title}*\n\n` +
+        `Don't forget to mark it as done! 💪`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              {
+                text: '📱 Open App',
+                web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
+              }
+            ]]
+          }
+        }
+      );
+      
+      // Сохраняем в историю
+      await db.query(
+        'INSERT INTO habit_punches (habit_id, from_user_id, to_user_id) VALUES ($1, $2, $3)',
+        [habitId, fromUserId, targetUserId]
+      );
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Punch error:', error);
+    res.status(500).json({ success: false, error: 'Failed to send punch' });
+  }
+});
 // Создать ссылку для шаринга
 router.post('/habits/:id/share', authMiddleware, async (req, res) => {
   try {

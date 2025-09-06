@@ -193,43 +193,44 @@ async getTodayHabits(req, res) {
     
     // Получаем привычки на сегодня по расписанию с их статусами
     const result = await db.query(
-      `SELECT 
-        h.id,
-        h.user_id,
-        h.category_id,
-        h.title,
-        h.goal,
-        h.schedule_type,
-        h.schedule_days,
-        h.reminder_time,
-        h.reminder_enabled,
-        h.is_bad_habit,
-        h.streak_current,
-        h.streak_best,
-        h.is_active,
-        h.created_at,
-        h.updated_at,
-        c.name_ru, 
-        c.name_en, 
-        c.icon as category_icon, 
-        c.color,
-        -- Получаем актуальный статус из habit_marks
-        COALESCE(hm.status, 'pending') as today_status,
-        hm.id as mark_id,
-        hm.marked_at
-       FROM habits h
-       LEFT JOIN categories c ON h.category_id = c.id
-       LEFT JOIN habit_marks hm ON (
-         hm.habit_id = h.id 
-         AND hm.date = $3::date
-       )
-       WHERE 
-         h.user_id = $1 
-         AND h.is_active = true
-         AND $2 = ANY(h.schedule_days)
-       ORDER BY h.created_at DESC`,
-      [userId, dayOfWeek, todayDate]
-    );
+  `SELECT 
+    h.id,
+    h.user_id,
+    h.category_id,
+    h.title,
+    h.goal,
+    h.schedule_type,
+    h.schedule_days,
+    h.reminder_time,
+    h.reminder_enabled,
+    h.is_bad_habit,
+    h.streak_current,
+    h.streak_best,
+    h.is_active,
+    h.created_at,
+    h.updated_at,
+    c.name_ru, 
+    c.name_en, 
+    c.icon as category_icon, 
+    c.color,
+    COALESCE(hm.status, 'pending') as today_status,
+    hm.id as mark_id,
+    hm.marked_at,
+    -- Добавляем количество участников
+    (SELECT COUNT(*) FROM habit_members WHERE habit_id = h.id AND is_active = true) as members_count
+   FROM habits h
+   LEFT JOIN categories c ON h.category_id = c.id
+   LEFT JOIN habit_marks hm ON (
+     hm.habit_id = h.id 
+     AND hm.date = $3::date
+   )
+   WHERE 
+     h.user_id = $1 
+     AND h.is_active = true
+     AND $2 = ANY(h.schedule_days)
+   ORDER BY h.created_at DESC`,
+  [userId, dayOfWeek, todayDate]
+);
     
     console.log(`✅ Found ${result.rows.length} habits for today`);
     

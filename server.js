@@ -112,7 +112,63 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
 
-  if (text === '/start') {
+  if (text.startsWith('/start')) {
+    // Проверяем, есть ли параметр после /start
+    const startParam = text.split(' ')[1];
+if (startParam && startParam.startsWith('join_')) {
+      // Это приглашение в совместную привычку
+      const shareCode = startParam.replace('join_', '');
+      
+      // Сохраняем код в базу для последующего использования
+      try {
+        // Проверяем/создаем пользователя
+        const userResult = await db.query(
+          'SELECT id FROM users WHERE telegram_id = $1',
+          [chatId.toString()]
+        );
+        
+        if (userResult.rows.length > 0) {
+          const userId = userResult.rows[0].id;
+          
+          // Проверяем существование share code
+          const shareResult = await db.query(
+            `SELECT sh.*, h.title, h.goal, u.first_name as owner_name
+             FROM shared_habits sh
+             JOIN habits h ON sh.habit_id = h.id
+             JOIN users u ON sh.owner_user_id = u.id
+             WHERE sh.share_code = $1`,
+            [shareCode]
+          );
+          
+          if (shareResult.rows.length > 0) {
+            const sharedHabit = shareResult.rows[0];
+            
+            await bot.sendMessage(
+              chatId,
+              `🎯 You've been invited to join a habit!\n\n` +
+              `📝 **${sharedHabit.title}**\n` +
+              `🎯 Goal: ${sharedHabit.goal}\n` +
+              `👤 Shared by: ${sharedHabit.owner_name}\n\n` +
+              `Click the button below to join this habit:`,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [[
+                    {
+                      text: '✅ Join Habit',
+                      web_app: { url: `${WEBAPP_URL}?action=join&code=${shareCode}` }
+                    }
+                  ]]
+                }
+              }
+            );
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error processing join code:', error);
+      }
+    }
     await bot.sendMessage(
       chatId,
       'Добро пожаловать в Habit Tracker! 🎯\n\nИспользуйте кнопки ниже для навигации:',
