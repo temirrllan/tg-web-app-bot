@@ -532,25 +532,56 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
 });
 
 // Получить участников привычки
+// Получить участников привычки (включая связанные привычки)
 router.get('/habits/:id/members', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     
-    const members = await db.query(
-      `SELECT u.id, u.first_name, u.last_name, u.username, u.photo_url
-       FROM habit_members hm
-       JOIN users u ON hm.user_id = u.id
-       WHERE hm.habit_id = $1 AND hm.is_active = true`,
-      [id]
+    // Получаем информацию о привычке и её связях
+    const habitInfo = await db.query(
+      'SELECT parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
+      [id, userId]
     );
     
-    res.json({ success: true, members: members.rows });
+    if (habitInfo.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Habit not found' 
+      });
+    }
+    
+    const parentHabitId = habitInfo.rows[0].parent_habit_id;
+    
+    // Определяем, какую привычку использовать для получения участников
+    const targetHabitId = parentHabitId || id;
+    
+    // Получаем всех участников связанной группы привычек
+    const members = await db.query(
+      `SELECT DISTINCT u.id, u.first_name, u.last_name, u.username, u.photo_url
+       FROM habit_members hm
+       JOIN users u ON hm.user_id = u.id
+       WHERE hm.habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = $1 OR id = $1
+       )
+       AND hm.is_active = true
+       AND u.id != $2`,  // Исключаем текущего пользователя из списка
+      [targetHabitId, userId]
+    );
+    
+    res.json({ 
+      success: true, 
+      members: members.rows 
+    });
   } catch (error) {
     console.error('Get members error:', error);
-    res.status(500).json({ success: false, error: 'Failed to get members' });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get members' 
+    });
   }
 });
-
 // Punch друга
 router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
   try {

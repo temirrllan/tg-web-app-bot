@@ -113,62 +113,177 @@ bot.on('message', async (msg) => {
   const text = msg.text || '';
 
   if (text.startsWith('/start')) {
-    // Проверяем, есть ли параметр после /start
     const startParam = text.split(' ')[1];
-if (startParam && startParam.startsWith('join_')) {
-      // Это приглашение в совместную привычку
+    
+    if (startParam && startParam.startsWith('join_')) {
       const shareCode = startParam.replace('join_', '');
       
-      // Сохраняем код в базу для последующего использования
       try {
-        // Проверяем/создаем пользователя
-        const userResult = await db.query(
-          'SELECT id FROM users WHERE telegram_id = $1',
+        // Получаем или создаем пользователя
+        let userResult = await db.query(
+          'SELECT id, telegram_id FROM users WHERE telegram_id = $1',
           [chatId.toString()]
         );
         
-        if (userResult.rows.length > 0) {
-          const userId = userResult.rows[0].id;
+        let userId;
+        
+        if (userResult.rows.length === 0) {
+          // Создаем нового пользователя
+          const tgUser = msg.from;
+          const newUserResult = await db.query(
+            `INSERT INTO users (
+              telegram_id, username, first_name, last_name, language
+            ) VALUES ($1, $2, $3, $4, $5)
+            RETURNING id`,
+            [
+              chatId.toString(),
+              tgUser.username || null,
+              tgUser.first_name || '',
+              tgUser.last_name || '',
+              tgUser.language_code || 'en'
+            ]
+          );
+          userId = newUserResult.rows[0].id;
+        } else {
+          userId = userResult.rows[0].id;
+        }
+        
+        // Проверяем существование share code и получаем данные привычки
+        const shareResult = await db.query(
+          `SELECT sh.*, h.*, u.first_name as owner_name
+           FROM shared_habits sh
+           JOIN habits h ON sh.habit_id = h.id
+           JOIN users u ON sh.owner_user_id = u.id
+           WHERE sh.share_code = $1`,
+          [shareCode]
+        );
+        
+        if (shareResult.rows.length > 0) {
+          const sharedHabit = shareResult.rows[0];
           
-          // Проверяем существование share code
-          const shareResult = await db.query(
-            `SELECT sh.*, h.title, h.goal, u.first_name as owner_name
-             FROM shared_habits sh
-             JOIN habits h ON sh.habit_id = h.id
-             JOIN users u ON sh.owner_user_id = u.id
-             WHERE sh.share_code = $1`,
-            [shareCode]
+          // Проверяем, не является ли пользователь уже участником
+          const memberCheck = await db.query(
+            'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
+            [sharedHabit.habit_id, userId]
           );
           
-          if (shareResult.rows.length > 0) {
-            const sharedHabit = shareResult.rows[0];
+          if (memberCheck.rows.length === 0) {
+            // АВТОМАТИЧЕСКИ добавляем пользователя к привычке
+            
+            // Создаем копию привычки для нового пользователя
+            const newHabitResult = await db.query(
+              `INSERT INTO habits (
+                user_id, category_id, title, goal, schedule_type, 
+                schedule_days, reminder_time, reminder_enabled, is_bad_habit,
+                parent_habit_id
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              RETURNING id`,
+              [
+                userId,
+                sharedHabit.category_id,
+                sharedHabit.title,
+                sharedHabit.goal,
+                sharedHabit.schedule_type,
+                sharedHabit.schedule_days,
+                sharedHabit.reminder_time,
+                sharedHabit.reminder_enabled,
+                sharedHabit.is_bad_habit,
+                sharedHabit.habit_id // Ссылка на оригинальную привычку
+              ]
+            );
+            
+            const newHabitId = newHabitResult.rows[0].id;
+            
+            // Добавляем пользователя как участника оригинальной привычки
+            await db.query(
+              'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
+              [sharedHabit.habit_id, userId]
+            );
+            
+            // Добавляем владельца как участника новой привычки пользователя
+            await db.query(
+              'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
+              [newHabitId, sharedHabit.owner_user_id]
+            );
+            
+            // Уведомляем владельца привычки о новом участнике
+            const ownerData = await db.query(
+              'SELECT telegram_id FROM users WHERE id = $1',
+              [sharedHabit.owner_user_id]
+            );
+            
+            if (ownerData.rows.length > 0) {
+              await bot.sendMessage(
+                ownerData.rows[0].telegram_id,
+                `🎉 ${msg.from.first_name} joined your habit "${sharedHabit.title}"!`,
+                { parse_mode: 'Markdown' }
+              );
+            }
             
             await bot.sendMessage(
               chatId,
-              `🎯 You've been invited to join a habit!\n\n` +
+              `✅ **Success!**\n\n` +
+              `You've joined the habit:\n` +
               `📝 **${sharedHabit.title}**\n` +
               `🎯 Goal: ${sharedHabit.goal}\n` +
               `👤 Shared by: ${sharedHabit.owner_name}\n\n` +
-              `Click the button below to join this habit:`,
+              `Open the app to start tracking this habit together!`,
               {
                 parse_mode: 'Markdown',
                 reply_markup: {
                   inline_keyboard: [[
                     {
-                      text: '✅ Join Habit',
-                      web_app: { url: `${WEBAPP_URL}?action=join&code=${shareCode}` }
+                      text: '📱 Open Habit Tracker',
+                      web_app: { url: WEBAPP_URL }
                     }
                   ]]
                 }
               }
             );
-            return;
+          } else {
+            // Пользователь уже участник
+            await bot.sendMessage(
+              chatId,
+              `ℹ️ You're already tracking this habit!\n\n` +
+              `📝 **${sharedHabit.title}**\n\n` +
+              `Open the app to continue:`,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [[
+                    {
+                      text: '📱 Open Habit Tracker',
+                      web_app: { url: WEBAPP_URL }
+                    }
+                  ]]
+                }
+              }
+            );
           }
+          
+          return;
+        } else {
+          await bot.sendMessage(
+            chatId,
+            '❌ Invalid or expired invitation link.\n\n' +
+            'Please ask your friend to share a new link.',
+            { parse_mode: 'Markdown' }
+          );
+          return;
         }
       } catch (error) {
         console.error('Error processing join code:', error);
+        await bot.sendMessage(
+          chatId,
+          '❌ An error occurred while joining the habit.\n' +
+          'Please try again later.',
+          { parse_mode: 'Markdown' }
+        );
+        return;
       }
     }
+    
+    // Обычный старт (без параметров)
     await bot.sendMessage(
       chatId,
       'Добро пожаловать в Habit Tracker! 🎯\n\nИспользуйте кнопки ниже для навигации:',
@@ -192,36 +307,9 @@ if (startParam && startParam.startsWith('join_')) {
         }]]
       }
     });
-    return;
   }
 
-  if (text === '📊 Мои привычки') {
-    await bot.sendMessage(chatId, 'Откройте приложение для просмотра ваших привычек:', {
-      reply_markup: {
-        inline_keyboard: [[{
-          text: '📱 Открыть приложение',
-          web_app: { url: WEBAPP_URL }
-        }]]
-      }
-    });
-    return;
-  }
-
-  if (text === 'ℹ️ Информация о боте' || text === 'Получите информацию о бота') {
-    await bot.sendMessage(
-      chatId,
-      '*Habit Tracker Bot* 🤖\n\n' +
-      'Этот бот поможет вам:\n' +
-      '• ✅ Создавать и отслеживать привычки\n' +
-      '• 📅 Устанавливать расписание\n' +
-      '• 🔔 Получать напоминания\n' +
-      '• 📊 Следить за прогрессом\n' +
-      '• 🔥 Поддерживать мотивацию\n\n' +
-      'Нажмите кнопку "Открыть Habit Tracker" для начала работы!',
-      { parse_mode: 'Markdown' }
-    );
-    return;
-  }
+  
 
   if (text === '⚙️ Настройки') {
     await bot.sendMessage(
@@ -439,3 +527,5 @@ process.on('SIGINT', () => {
   keepAliveService.stop();
   server.close(() => process.exit(0));
 });
+// Экспортируем бота для использования в других модулях
+module.exports.bot = bot;

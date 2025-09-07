@@ -192,7 +192,7 @@ async getTodayHabits(req, res) {
     });
     
     // Получаем привычки на сегодня по расписанию с их статусами
-    const result = await db.query(
+  const result = await db.query(
   `SELECT 
     h.id,
     h.user_id,
@@ -207,6 +207,7 @@ async getTodayHabits(req, res) {
     h.streak_current,
     h.streak_best,
     h.is_active,
+    h.parent_habit_id,
     h.created_at,
     h.updated_at,
     c.name_ru, 
@@ -216,8 +217,21 @@ async getTodayHabits(req, res) {
     COALESCE(hm.status, 'pending') as today_status,
     hm.id as mark_id,
     hm.marked_at,
-    -- Добавляем количество участников
-    (SELECT COUNT(*) FROM habit_members WHERE habit_id = h.id AND is_active = true) as members_count
+    -- Подсчитываем участников для связанных привычек
+    CASE 
+      WHEN h.parent_habit_id IS NOT NULL THEN
+        (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+         WHERE habit_id IN (
+           SELECT id FROM habits 
+           WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
+         ) AND is_active = true)
+      ELSE
+        (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+         WHERE habit_id IN (
+           SELECT id FROM habits 
+           WHERE parent_habit_id = h.id OR id = h.id
+         ) AND is_active = true)
+    END as members_count
    FROM habits h
    LEFT JOIN categories c ON h.category_id = c.id
    LEFT JOIN habit_marks hm ON (
