@@ -293,6 +293,7 @@ router.get('/habits/:id/statistics', async (req, res) => {
   }
 });
 // Присоединиться к привычке по коду
+// Присоединиться к привычке по коду
 router.post('/habits/join', authMiddleware, async (req, res) => {
   try {
     const { shareCode } = req.body;
@@ -323,18 +324,57 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
     
     const originalHabit = shareResult.rows[0];
     
-    // Проверяем, не является ли пользователь уже участником
+    // Проверяем, не является ли пользователь уже участником (включая неактивных)
     const memberCheck = await db.query(
       'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
       [originalHabit.habit_id, userId]
     );
     
     if (memberCheck.rows.length > 0) {
-      return res.json({ 
-        success: true, 
-        message: 'Already a member',
-        habitId: originalHabit.habit_id 
-      });
+      // Если запись существует но неактивна - реактивируем
+      if (!memberCheck.rows[0].is_active) {
+        await db.query(
+          'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
+          [originalHabit.habit_id, userId]
+        );
+        
+        // Проверяем привычку пользователя
+        const userHabitCheck = await db.query(
+          'SELECT * FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
+          [userId, originalHabit.habit_id]
+        );
+        
+        if (userHabitCheck.rows.length > 0) {
+          // Реактивируем привычку
+          const reactivatedHabit = await db.query(
+            'UPDATE habits SET is_active = true WHERE id = $1 RETURNING *',
+            [userHabitCheck.rows[0].id]
+          );
+          
+          // Восстанавливаем связь владельца с привычкой пользователя
+          await db.query(
+            `INSERT INTO habit_members (habit_id, user_id) 
+             VALUES ($1, $2) 
+             ON CONFLICT (habit_id, user_id) 
+             DO UPDATE SET is_active = true`,
+            [userHabitCheck.rows[0].id, originalHabit.owner_user_id]
+          );
+          
+          return res.json({ 
+            success: true, 
+            message: 'Successfully rejoined habit',
+            habit: reactivatedHabit.rows[0]
+          });
+        }
+        // Если привычки нет - продолжаем создание новой (код ниже выполнится)
+      } else {
+        // Пользователь уже активный участник
+        return res.json({ 
+          success: true, 
+          message: 'Already a member',
+          habitId: originalHabit.habit_id 
+        });
+      }
     }
     
     // Создаем копию привычки для нового пользователя
@@ -388,6 +428,7 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
 });
 
 // Удалить участника из привычки
+// Удалить участника из привычки
 router.delete('/habits/:habitId/members/:userId', authMiddleware, async (req, res) => {
   try {
     const { habitId, userId: targetUserId } = req.params;
@@ -413,11 +454,33 @@ router.delete('/habits/:habitId/members/:userId', authMiddleware, async (req, re
       });
     }
     
-    // Удаляем участника
+    // Удаляем участника (мягкое удаление)
     await db.query(
       'UPDATE habit_members SET is_active = false WHERE habit_id = $1 AND user_id = $2',
       [habitId, targetUserId]
     );
+    
+    // Также деактивируем привычку у удаляемого пользователя
+    await db.query(
+      `UPDATE habits 
+       SET is_active = false 
+       WHERE user_id = $1 
+       AND parent_habit_id = $2`,
+      [targetUserId, habitId]
+    );
+    
+    // Деактивируем связанные записи в habit_members для привычки пользователя
+    const userHabitResult = await db.query(
+      'SELECT id FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
+      [targetUserId, habitId]
+    );
+    
+    if (userHabitResult.rows.length > 0) {
+      await db.query(
+        'UPDATE habit_members SET is_active = false WHERE habit_id = $1',
+        [userHabitResult.rows[0].id]
+      );
+    }
     
     res.json({ success: true });
   } catch (error) {

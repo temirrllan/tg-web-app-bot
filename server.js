@@ -161,11 +161,114 @@ bot.on('message', async (msg) => {
         if (shareResult.rows.length > 0) {
           const sharedHabit = shareResult.rows[0];
           
-          // Проверяем, не является ли пользователь уже участником
+          // Проверяем, не является ли пользователь уже участником (включая неактивных)
           const memberCheck = await db.query(
             'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
             [sharedHabit.habit_id, userId]
           );
+          
+          // Если есть неактивная запись, активируем её
+          if (memberCheck.rows.length > 0 && !memberCheck.rows[0].is_active) {
+            await db.query(
+              'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
+              [sharedHabit.habit_id, userId]
+            );
+            
+            // Проверяем существование привычки у пользователя
+            const userHabitCheck = await db.query(
+              'SELECT * FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
+              [userId, sharedHabit.habit_id]
+            );
+            
+            let userHabitId;
+            
+            if (userHabitCheck.rows.length > 0) {
+              // Активируем существующую привычку
+              await db.query(
+                'UPDATE habits SET is_active = true WHERE id = $1',
+                [userHabitCheck.rows[0].id]
+              );
+              userHabitId = userHabitCheck.rows[0].id;
+            } else {
+              // Создаем новую копию привычки
+              const newHabitResult = await db.query(
+                `INSERT INTO habits (
+                  user_id, category_id, title, goal, schedule_type, 
+                  schedule_days, reminder_time, reminder_enabled, is_bad_habit,
+                  parent_habit_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING id`,
+                [
+                  userId,
+                  sharedHabit.category_id,
+                  sharedHabit.title,
+                  sharedHabit.goal,
+                  sharedHabit.schedule_type,
+                  sharedHabit.schedule_days,
+                  sharedHabit.reminder_time,
+                  sharedHabit.reminder_enabled,
+                  sharedHabit.is_bad_habit,
+                  sharedHabit.habit_id
+                ]
+              );
+              userHabitId = newHabitResult.rows[0].id;
+            }
+            
+            // Восстанавливаем связь владельца с привычкой пользователя
+            const ownerMemberCheck = await db.query(
+              'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
+              [userHabitId, sharedHabit.owner_user_id]
+            );
+            
+            if (ownerMemberCheck.rows.length > 0) {
+              await db.query(
+                'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
+                [userHabitId, sharedHabit.owner_user_id]
+              );
+            } else {
+              await db.query(
+                'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
+                [userHabitId, sharedHabit.owner_user_id]
+              );
+            }
+            
+            // Уведомляем владельца
+            const ownerData = await db.query(
+              'SELECT telegram_id FROM users WHERE id = $1',
+              [sharedHabit.owner_user_id]
+            );
+            
+            if (ownerData.rows.length > 0) {
+              await bot.sendMessage(
+                ownerData.rows[0].telegram_id,
+                `🎉 ${msg.from.first_name} rejoined your habit "${sharedHabit.title}"!`,
+                { parse_mode: 'Markdown' }
+              );
+            }
+            
+            await bot.sendMessage(
+              chatId,
+              `✅ **Welcome back!**\n\n` +
+              `You've rejoined the habit:\n` +
+              `📝 **${sharedHabit.title}**\n` +
+              `🎯 Goal: ${sharedHabit.goal}\n` +
+              `👤 Shared by: ${sharedHabit.owner_name}\n\n` +
+              `Open the app to continue tracking this habit!`,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                  inline_keyboard: [[
+                    {
+                      text: '📱 Open Habit Tracker',
+                      web_app: { url: WEBAPP_URL }
+                    }
+                  ]]
+                }
+              }
+            );
+            
+            return;
+          }
           
           if (memberCheck.rows.length === 0) {
             // АВТОМАТИЧЕСКИ добавляем пользователя к привычке
@@ -241,7 +344,7 @@ bot.on('message', async (msg) => {
               }
             );
           } else {
-            // Пользователь уже участник
+            // Пользователь уже активный участник
             await bot.sendMessage(
               chatId,
               `ℹ️ You're already tracking this habit!\n\n` +
@@ -309,8 +412,6 @@ bot.on('message', async (msg) => {
     });
   }
 
-  
-
   if (text === '⚙️ Настройки') {
     await bot.sendMessage(
       chatId,
@@ -330,8 +431,9 @@ bot.on('message', async (msg) => {
     );
     return;
   }
+
   // Команда для тестирования напоминаний
- if (text === '/testreminder') {
+  if (text === '/testreminder') {
     try {
       // Получаем user_id из базы данных
       const userResult = await db.query(
@@ -366,6 +468,7 @@ bot.on('message', async (msg) => {
     }
     return;
   }
+
   // Команда для проверки статуса напоминаний
   if (text === '/reminderstatus') {
     try {
@@ -527,5 +630,6 @@ process.on('SIGINT', () => {
   keepAliveService.stop();
   server.close(() => process.exit(0));
 });
+
 // Экспортируем бота для использования в других модулях
 module.exports.bot = bot;
