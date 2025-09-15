@@ -84,7 +84,7 @@ router.get('/habits/date/:date', async (req, res) => {
     
     console.log(`Getting habits for user ${userId} on date ${date}, day of week: ${dayOfWeek}`);
     
-    // Получаем привычки для этого дня недели со статусами
+    // Получаем привычки для этого дня недели со статусами и количеством участников
     const result = await db.query(
       `SELECT 
         h.id,
@@ -100,6 +100,7 @@ router.get('/habits/date/:date', async (req, res) => {
         h.streak_current,
         h.streak_best,
         h.is_active,
+        h.parent_habit_id,
         h.created_at,
         h.updated_at,
         c.name_ru, 
@@ -109,7 +110,22 @@ router.get('/habits/date/:date', async (req, res) => {
         -- Получаем актуальный статус из habit_marks
         COALESCE(hm.status, 'pending') as today_status,
         hm.id as mark_id,
-        hm.marked_at
+        hm.marked_at,
+        -- Подсчитываем участников для связанных привычек
+        CASE 
+          WHEN h.parent_habit_id IS NOT NULL THEN
+            (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+             WHERE habit_id IN (
+               SELECT id FROM habits 
+               WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
+             ) AND is_active = true)
+          ELSE
+            (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+             WHERE habit_id IN (
+               SELECT id FROM habits 
+               WHERE parent_habit_id = h.id OR id = h.id
+             ) AND is_active = true)
+        END as members_count
        FROM habits h
        LEFT JOIN categories c ON h.category_id = c.id
        LEFT JOIN habit_marks hm ON (
@@ -127,7 +143,7 @@ router.get('/habits/date/:date', async (req, res) => {
     // Логируем статусы для отладки
     console.log(`Found ${result.rows.length} habits for ${date}:`);
     result.rows.forEach(h => {
-      console.log(`- "${h.title}" (ID: ${h.id}): ${h.today_status}`);
+      console.log(`- "${h.title}" (ID: ${h.id}): ${h.today_status}, Members: ${h.members_count}`);
     });
     
     const completedCount = result.rows.filter(h => h.today_status === 'completed').length;
