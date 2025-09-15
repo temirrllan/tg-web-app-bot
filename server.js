@@ -497,6 +497,7 @@ bot.on('message', async (msg) => {
 });
 
 // Обработчик callback кнопок из напоминаний
+// Обработчик callback кнопок из напоминаний
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
@@ -584,6 +585,106 @@ bot.on('callback_query', async (callbackQuery) => {
       console.error('Error marking habit skipped:', error);
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: '❌ Ошибка'
+      });
+    }
+  } else if (data.startsWith('quick_done_')) {
+    // Новый обработчик для быстрой отметки из уведомления друга
+    const parts = data.split('_');
+    const habitId = parts[2];
+    const date = parts[3] || new Date().toISOString().split('T')[0];
+    
+    try {
+      // Получаем пользователя по telegram_id
+      const userResult = await db.query(
+        'SELECT id, first_name FROM users WHERE telegram_id = $1',
+        [chatId.toString()]
+      );
+      
+      if (userResult.rows.length === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ Пользователь не найден'
+        });
+        return;
+      }
+      
+      const userId = userResult.rows[0].id;
+      const userName = userResult.rows[0].first_name;
+      
+      // Находим привычку пользователя связанную с этой группой
+      const userHabitResult = await db.query(
+        `SELECT h.id, h.title 
+         FROM habits h
+         WHERE h.user_id = $1
+         AND (h.parent_habit_id = $2 OR h.id = $2 OR h.parent_habit_id = (
+           SELECT parent_habit_id FROM habits WHERE id = $2
+         ))
+         AND h.is_active = true
+         LIMIT 1`,
+        [userId, habitId]
+      );
+      
+      if (userHabitResult.rows.length === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ Привычка не найдена'
+        });
+        return;
+      }
+      
+      const userHabitId = userHabitResult.rows[0].id;
+      const habitTitle = userHabitResult.rows[0].title;
+      
+      // Отмечаем привычку как выполненную
+      await db.query(
+        `INSERT INTO habit_marks (habit_id, date, status) 
+         VALUES ($1, $2::date, 'completed')
+         ON CONFLICT (habit_id, date) 
+         DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
+        [userHabitId, date]
+      );
+      
+      // Обновляем streak
+      await db.query(
+        `UPDATE habits 
+         SET streak_current = streak_current + 1,
+             streak_best = GREATEST(streak_current + 1, streak_best)
+         WHERE id = $1`,
+        [userHabitId]
+      );
+      
+      await bot.editMessageText(
+        `✅ <b>Отлично, ${userName}!</b>\n\nПривычка <b>"${habitTitle}"</b> отмечена как выполненная!\n\nПродолжайте в том же духе! 💪`, 
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📱 Открыть приложение', web_app: { url: WEBAPP_URL } }
+            ]]
+          }
+        }
+      );
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '✅ Выполнено! Отличная работа!'
+      });
+      
+      // Запускаем проверку и отправку уведомлений друзьям
+      const habitResult = await db.query(
+        'SELECT * FROM habits WHERE id = $1',
+        [userHabitId]
+      );
+      
+      if (habitResult.rows.length > 0) {
+        const sendFriendNotifications = require('./controllers/markController').sendFriendNotifications;
+        await sendFriendNotifications(habitResult.rows[0], userId, date);
+      }
+      
+      console.log(`✅ Quick habit ${userHabitId} marked as done for user ${userId}`);
+    } catch (error) {
+      console.error('Error quick marking habit:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Ошибка при отметке'
       });
     }
   }
