@@ -268,7 +268,7 @@ async getTodayHabits(req, res) {
       pending: pendingCount
     });
 
-    // Получаем мотивационную фразу с учетом прогресса
+    // Получаем мотивационную фразу с учетом прогресса и цвета фона
     const language = req.user.language || 'en';
     const phrase = await Phrase.getRandomPhrase(language, completedCount, totalCount);
 

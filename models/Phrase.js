@@ -37,7 +37,7 @@ class Phrase {
       
       // Сначала пытаемся получить фразу нужного типа
       let result = await db.query(
-        `SELECT phrase_${lang} AS text, emoji, type
+        `SELECT phrase_${lang} AS text, emoji, type, background_color
          FROM motivational_phrases
          WHERE type = $1
          AND min_completed <= $2
@@ -49,7 +49,7 @@ class Phrase {
       // Если не нашли фразу нужного типа, берем любую подходящую по min_completed
       if (result.rows.length === 0) {
         result = await db.query(
-          `SELECT phrase_${lang} AS text, emoji, type
+          `SELECT phrase_${lang} AS text, emoji, type, background_color
            FROM motivational_phrases
            WHERE min_completed <= $1
            ORDER BY RANDOM()
@@ -63,33 +63,34 @@ class Phrase {
         return {
           text: phrase.text,
           emoji: phrase.emoji || '',
-          type: phrase.type || 'encouragement'
+          type: phrase.type || 'encouragement',
+          backgroundColor: phrase.background_color || '#A7D96C'
         };
       }
     } catch (error) {
       console.error('getRandomPhrase error:', error);
     }
     
-    // Запасные варианты для разных ситуаций
+    // Запасные варианты для разных ситуаций с цветами
     if (lang === 'ru') {
       if (totalCount === 0) {
-        return { text: 'Создай свою первую привычку!', emoji: '🚀', type: 'encouragement' };
+        return { text: 'Создай свою первую привычку!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' };
       } else if (completedCount === 0) {
-        return { text: 'Ты справишься!', emoji: '💪', type: 'encouragement' };
+        return { text: 'Продолжай пробовать, друг!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' };
       } else if (completedCount === totalCount) {
-        return { text: 'Ты всё сделал! Невероятно!', emoji: '🎉', type: 'perfect' };
+        return { text: 'Ты всё сделал! Невероятно!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' };
       } else {
-        return { text: 'Продолжай в том же духе!', emoji: '✨', type: 'success' };
+        return { text: 'Продолжай в том же духе!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' };
       }
     } else {
       if (totalCount === 0) {
-        return { text: 'Create your first habit!', emoji: '🚀', type: 'encouragement' };
+        return { text: 'Create your first habit!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' };
       } else if (completedCount === 0) {
-        return { text: 'You can do it!', emoji: '💪', type: 'encouragement' };
+        return { text: 'Keep trying buddy!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' };
       } else if (completedCount === totalCount) {
-        return { text: 'All done! Amazing!', emoji: '🎉', type: 'perfect' };
+        return { text: 'All done! Amazing!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' };
       } else {
-        return { text: 'Keep going!', emoji: '✨', type: 'success' };
+        return { text: 'Keep going!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' };
       }
     }
   }
@@ -116,7 +117,7 @@ class Phrase {
         }
         
         const result = await db.query(
-          `SELECT phrase_${lang} AS text, emoji, type
+          `SELECT phrase_${lang} AS text, emoji, type, background_color
            FROM motivational_phrases
            WHERE type = $1
            ORDER BY RANDOM()
@@ -129,7 +130,8 @@ class Phrase {
           return {
             text: phrase.text,
             emoji: phrase.emoji || '',
-            type: phrase.type || phraseType
+            type: phrase.type || phraseType,
+            backgroundColor: phrase.background_color || '#A7D96C'
           };
         }
       }
