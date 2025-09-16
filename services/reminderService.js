@@ -39,6 +39,7 @@ class ReminderService {
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
       const currentDay = now.getDay() || 7; // 0 (Sunday) = 7
+      const today = now.toISOString().split('T')[0];
       
       console.log(`🕐 Checking reminders: ${currentTime}, Day: ${currentDay} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]})`);
       
@@ -63,23 +64,86 @@ class ReminderService {
       );
       
       if (result.rows.length > 0) {
-        console.log(`📨 Found ${result.rows.length} habits to remind about at ${currentTime}`);
+        console.log(`📨 Found ${result.rows.length} habits with reminders at ${currentTime}`);
         
         for (const habit of result.rows) {
-          // Проверяем, не отправляли ли уже сегодня
-          const sentToday = await db.query(
-            `SELECT id FROM reminder_history 
+          // Проверяем статус привычки на сегодня
+          const statusResult = await db.query(
+            `SELECT status FROM habit_marks 
              WHERE habit_id = $1 
-             AND DATE(sent_at) = CURRENT_DATE`,
-            [habit.id]
+             AND date = $2::date`,
+            [habit.id, today]
           );
           
-          if (sentToday.rows.length === 0) {
-            await this.sendReminder(habit);
+          // Определяем, нужно ли отправлять напоминание
+          let shouldSendReminder = true;
+          let reminderReason = 'pending';
+          
+          if (statusResult.rows.length > 0) {
+            const currentStatus = statusResult.rows[0].status;
+            console.log(`📊 Habit "${habit.title}" (ID: ${habit.id}) status: ${currentStatus}`);
+            
+            // Логика отправки напоминаний в зависимости от статуса
+            switch(currentStatus) {
+              case 'completed':
+                shouldSendReminder = false;
+                console.log(`✅ Habit already completed - skipping reminder`);
+                break;
+              case 'failed':
+                shouldSendReminder = false;
+                console.log(`❌ Habit marked as failed - skipping reminder`);
+                break;
+              case 'skipped':
+                shouldSendReminder = true;
+                reminderReason = 'skipped';
+                console.log(`⏭ Habit was skipped - sending reminder again`);
+                break;
+              case 'pending':
+              default:
+                shouldSendReminder = true;
+                reminderReason = 'pending';
+                console.log(`⏰ Habit is pending - sending reminder`);
+                break;
+            }
+          } else {
+            // Нет отметки на сегодня - отправляем напоминание
+            shouldSendReminder = true;
+            reminderReason = 'no_mark';
+            console.log(`📝 No mark for today - sending reminder`);
+          }
+          
+          if (shouldSendReminder) {
+            // Проверяем, не отправляли ли уже сегодня напоминание
+            // (для избежания дублирования при переходе из completed/failed в skipped)
+            const sentToday = await db.query(
+              `SELECT id, sent_at FROM reminder_history 
+               WHERE habit_id = $1 
+               AND DATE(sent_at) = CURRENT_DATE
+               ORDER BY sent_at DESC
+               LIMIT 1`,
+              [habit.id]
+            );
+            
+            // Если привычка была в skipped, проверяем время последнего напоминания
+            if (sentToday.rows.length > 0 && reminderReason === 'skipped') {
+              const lastSentTime = new Date(sentToday.rows[0].sent_at);
+              const timeDiff = now - lastSentTime;
+              const minutesDiff = Math.floor(timeDiff / 60000);
+              
+              // Если прошло меньше 60 минут с последнего напоминания, пропускаем
+              if (minutesDiff < 60) {
+                console.log(`⏰ Already sent reminder ${minutesDiff} minutes ago for skipped habit - skipping`);
+                continue;
+              }
+            } else if (sentToday.rows.length > 0 && reminderReason !== 'skipped') {
+              // Для обычных напоминаний - одно в день
+              console.log(`⏭ Already sent reminder for habit "${habit.title}" today`);
+              continue;
+            }
+            
+            await this.sendReminder(habit, reminderReason);
             // Добавляем задержку между отправками
             await new Promise(resolve => setTimeout(resolve, 1000));
-          } else {
-            console.log(`⏭ Already sent reminder for habit "${habit.title}" (ID: ${habit.id}) today`);
           }
         }
       }
@@ -89,29 +153,53 @@ class ReminderService {
     }
   }
 
-  async sendReminder(habit) {
+  async sendReminder(habit, reason = 'pending') {
     try {
       const chatId = habit.telegram_id;
       const lang = habit.language || 'en';
       
-      console.log(`📤 Sending reminder to ${chatId} for habit "${habit.title}"`);
+      console.log(`📤 Sending reminder to ${chatId} for habit "${habit.title}" (reason: ${reason})`);
       
-      // Формируем сообщение с названием и целью
-      const message = lang === 'ru' 
-        ? `🔔 <b>Напоминание о привычке!</b>
+      // Формируем сообщение в зависимости от причины
+      let message;
+      
+      if (reason === 'skipped') {
+        // Особое сообщение для пропущенных привычек
+        message = lang === 'ru' 
+          ? `🔔 <b>Повторное напоминание!</b>
+
+📝 <b>Привычка:</b> ${habit.title}
+🎯 <b>Цель:</b> ${habit.goal}
+⏰ <b>Время:</b> ${habit.reminder_time ? habit.reminder_time.substring(0, 5) : 'сейчас'}
+
+Вы пропустили эту привычку сегодня. Никогда не поздно начать снова! 💪
+Каждый момент - это новая возможность!`
+          : `🔔 <b>Reminder Again!</b>
+
+📝 <b>Habit:</b> ${habit.title}
+🎯 <b>Goal:</b> ${habit.goal}
+⏰ <b>Time:</b> ${habit.reminder_time ? habit.reminder_time.substring(0, 5) : 'now'}
+
+You skipped this habit today. It's never too late to start again! 💪
+Every moment is a new opportunity!`;
+      } else {
+        // Обычное напоминание
+        message = lang === 'ru' 
+          ? `🔔 <b>Напоминание о привычке!</b>
 
 📝 <b>Привычка:</b> ${habit.title}
 🎯 <b>Цель:</b> ${habit.goal}
 ⏰ <b>Время:</b> ${habit.reminder_time ? habit.reminder_time.substring(0, 5) : 'сейчас'}
 
 Не забудьте отметить выполнение:`
-        : `🔔 <b>Habit Reminder!</b>
+          : `🔔 <b>Habit Reminder!</b>
 
 📝 <b>Habit:</b> ${habit.title}
 🎯 <b>Goal:</b> ${habit.goal}
 ⏰ <b>Time:</b> ${habit.reminder_time ? habit.reminder_time.substring(0, 5) : 'now'}
 
 Don't forget to mark your progress:`;
+      }
       
       // Кнопки для отметки
       const keyboard = {
@@ -136,13 +224,18 @@ Don't forget to mark your progress:`;
         parse_mode: 'HTML'
       });
       
-      // Сохраняем в историю
+      // Сохраняем в историю с указанием причины
       await db.query(
-        'INSERT INTO reminder_history (habit_id, sent_at) VALUES ($1, NOW())',
-        [habit.id]
+        `INSERT INTO reminder_history (habit_id, sent_at, reminder_reason) 
+         VALUES ($1, NOW(), $2)
+         ON CONFLICT (habit_id, DATE(sent_at)) 
+         DO UPDATE SET 
+           sent_at = NOW(),
+           reminder_reason = $2`,
+        [habit.id, reason]
       );
       
-      console.log(`✅ Reminder sent for "${habit.title}" to user ${chatId}`);
+      console.log(`✅ Reminder sent for "${habit.title}" to user ${chatId} (reason: ${reason})`);
     } catch (error) {
       console.error(`❌ Failed to send reminder for habit ${habit.id}:`, error.message);
       
@@ -152,12 +245,14 @@ Don't forget to mark your progress:`;
     }
   }
 
-  // Обновленный метод тестирования - показывает все привычки с напоминаниями
+  // Обновленный метод тестирования - показывает все привычки с напоминаниями и их статусы
   async testReminder(userId, chatId) {
     try {
       console.log(`🧪 Testing reminders for user ${userId}`);
       
-      // Получаем все активные привычки пользователя с напоминаниями
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Получаем все активные привычки пользователя с напоминаниями и их статусами
       const result = await db.query(
         `SELECT 
           h.id,
@@ -166,14 +261,19 @@ Don't forget to mark your progress:`;
           h.reminder_time,
           h.reminder_enabled,
           h.schedule_days,
-          u.language
+          u.language,
+          hm.status as today_status
          FROM habits h
          JOIN users u ON h.user_id = u.id
+         LEFT JOIN habit_marks hm ON (
+           hm.habit_id = h.id 
+           AND hm.date = $2::date
+         )
          WHERE u.id = $1
          AND h.is_active = true
          AND h.reminder_enabled = true
          ORDER BY h.reminder_time`,
-        [userId]
+        [userId, today]
       );
       
       if (result.rows.length > 0) {
@@ -192,6 +292,28 @@ Don't forget to mark your progress:`;
           const daysStr = habit.schedule_days ? 
             habit.schedule_days.map(d => daysMap[d]).join(', ') : 'Every day';
           
+          const statusStr = habit.today_status || 'pending';
+          let statusEmoji = '⏰';
+          let willSendReminder = true;
+          
+          switch(statusStr) {
+            case 'completed':
+              statusEmoji = '✅';
+              willSendReminder = false;
+              break;
+            case 'failed':
+              statusEmoji = '❌';
+              willSendReminder = false;
+              break;
+            case 'skipped':
+              statusEmoji = '⏭';
+              willSendReminder = true;
+              break;
+            default:
+              statusEmoji = '⏰';
+              willSendReminder = true;
+          }
+          
           const message = lang === 'ru'
             ? `🔔 <b>Тестовое напоминание</b>
 
@@ -199,6 +321,8 @@ Don't forget to mark your progress:`;
 🎯 <b>Цель:</b> ${habit.goal}
 ⏰ <b>Время напоминания:</b> ${timeStr}
 📅 <b>Дни:</b> ${daysStr}
+📊 <b>Статус сегодня:</b> ${statusEmoji} ${statusStr}
+🔔 <b>Будет напоминание:</b> ${willSendReminder ? 'Да ✅' : 'Нет ❌'}
 
 Это тестовое сообщение. Реальные напоминания будут приходить в ${timeStr}.`
             : `🔔 <b>Test Reminder</b>
@@ -207,6 +331,8 @@ Don't forget to mark your progress:`;
 🎯 <b>Goal:</b> ${habit.goal}
 ⏰ <b>Reminder time:</b> ${timeStr}
 📅 <b>Days:</b> ${daysStr}
+📊 <b>Status today:</b> ${statusEmoji} ${statusStr}
+🔔 <b>Will send reminder:</b> ${willSendReminder ? 'Yes ✅' : 'No ❌'}
 
 This is a test message. Real reminders will come at ${timeStr}.`;
           
@@ -245,21 +371,28 @@ This is a test message. Real reminders will come at ${timeStr}.`;
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
       const currentDay = now.getDay() || 7;
+      const today = now.toISOString().split('T')[0];
       
       const result = await db.query(
         `SELECT 
           h.title,
           h.reminder_time,
-          u.first_name
+          u.first_name,
+          hm.status as today_status
          FROM habits h
          JOIN users u ON h.user_id = u.id
+         LEFT JOIN habit_marks hm ON (
+           hm.habit_id = h.id 
+           AND hm.date = $3::date
+         )
          WHERE h.reminder_enabled = true
          AND h.is_active = true
          AND h.reminder_time > $1
          AND $2 = ANY(h.schedule_days)
+         AND (hm.status IS NULL OR hm.status IN ('pending', 'skipped'))
          ORDER BY h.reminder_time
          LIMIT 1`,
-        [currentTime, currentDay]
+        [currentTime, currentDay, today]
       );
       
       if (result.rows.length > 0) {
