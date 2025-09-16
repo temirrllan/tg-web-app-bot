@@ -445,65 +445,186 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
 
 // Удалить участника из привычки
 // Удалить участника из привычки
-router.delete('/habits/:habitId/members/:userId', authMiddleware, async (req, res) => {
+// Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
+
+router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
   try {
     const { habitId, userId: targetUserId } = req.params;
-    const requestUserId = req.user.id;
+    const fromUserId = req.user.id;
     
-    // Проверяем права (только владелец или сам участник может удалить)
-    const habitOwnerCheck = await db.query(
-      'SELECT user_id FROM habits WHERE id = $1',
-      [habitId]
+    console.log(`🥊 Punch request from user ${fromUserId} to user ${targetUserId} for habit ${habitId}`);
+    
+    // Сначала проверяем, выполнена ли привычка у друга сегодня
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Находим привычку друга, связанную с этой группой привычек
+    const targetHabitResult = await db.query(
+      `SELECT h.id, h.title, h.parent_habit_id
+       FROM habits h
+       WHERE h.user_id = $1
+       AND (
+         h.parent_habit_id = (SELECT parent_habit_id FROM habits WHERE id = $2)
+         OR h.parent_habit_id = $2
+         OR h.id = (SELECT parent_habit_id FROM habits WHERE id = $2)
+         OR (h.parent_habit_id IS NULL AND h.id = $2)
+       )
+       AND h.is_active = true
+       LIMIT 1`,
+      [targetUserId, habitId]
     );
     
-    if (habitOwnerCheck.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Habit not found' });
-    }
-    
-    const isOwner = habitOwnerCheck.rows[0].user_id === requestUserId;
-    const isSelf = targetUserId === requestUserId.toString();
-    
-    if (!isOwner && !isSelf) {
-      return res.status(403).json({ 
+    if (targetHabitResult.rows.length === 0) {
+      console.log('❌ Target habit not found');
+      return res.status(404).json({ 
         success: false, 
-        error: 'No permission to remove this member' 
+        error: 'Friend habit not found',
+        showToast: true,
+        toastMessage: 'Friend\'s habit not found 😕',
+        toastType: 'error'
       });
     }
     
-    // Удаляем участника (мягкое удаление)
-    await db.query(
-      'UPDATE habit_members SET is_active = false WHERE habit_id = $1 AND user_id = $2',
-      [habitId, targetUserId]
+    const targetHabitId = targetHabitResult.rows[0].id;
+    const habitTitle = targetHabitResult.rows[0].title;
+    
+    console.log(`📋 Found target habit: ${targetHabitId} - "${habitTitle}"`);
+    
+    // Проверяем статус выполнения привычки друга на сегодня
+    const statusResult = await db.query(
+      `SELECT status 
+       FROM habit_marks 
+       WHERE habit_id = $1 
+       AND date = $2::date`,
+      [targetHabitId, today]
     );
     
-    // Также деактивируем привычку у удаляемого пользователя
-    await db.query(
-      `UPDATE habits 
-       SET is_active = false 
-       WHERE user_id = $1 
-       AND parent_habit_id = $2`,
-      [targetUserId, habitId]
+    // Получаем имя друга для персонализированных сообщений
+    const friendResult = await db.query(
+      'SELECT first_name, telegram_id FROM users WHERE id = $1',
+      [targetUserId]
     );
     
-    // Деактивируем связанные записи в habit_members для привычки пользователя
-    const userHabitResult = await db.query(
-      'SELECT id FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
-      [targetUserId, habitId]
+    const friendName = friendResult.rows.length > 0 
+      ? friendResult.rows[0].first_name 
+      : 'Your friend';
+    
+    const friendTelegramId = friendResult.rows.length > 0 
+      ? friendResult.rows[0].telegram_id 
+      : null;
+    
+    // Получаем имя отправителя
+    const senderResult = await db.query(
+      'SELECT first_name FROM users WHERE id = $1',
+      [fromUserId]
     );
     
-    if (userHabitResult.rows.length > 0) {
-      await db.query(
-        'UPDATE habit_members SET is_active = false WHERE habit_id = $1',
-        [userHabitResult.rows[0].id]
-      );
+    const senderName = senderResult.rows.length > 0 
+      ? senderResult.rows[0].first_name 
+      : 'Your friend';
+    
+    // Если привычка уже выполнена - НЕ отправляем punch
+    if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'completed') {
+      console.log(`✅ Habit already completed by ${friendName}, not sending punch`);
+      
+      return res.json({ 
+        success: false,
+        alreadyCompleted: true,
+        showToast: true,
+        toastType: 'info',
+        toastMessage: `У ${friendName} уже выполнено 👌`,
+        friendName: friendName,
+        habitTitle: habitTitle
+      });
     }
     
-    res.json({ success: true });
+    // Если привычка пропущена (skipped) - ОТПРАВЛЯЕМ punch с особым сообщением
+    let messageText;
+    let toastMessage;
+    
+    if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'skipped') {
+      console.log(`⏭ Habit skipped by ${friendName}, sending special punch`);
+      
+      messageText = `👊 <b>Напоминание от ${senderName}!</b>\n\n` +
+        `Твой друг заметил, что ты пропустил привычку:\n` +
+        `📝 <b>"${habitTitle}"</b>\n\n` +
+        `Никогда не поздно начать снова! Давай, ты можешь! 💪\n` +
+        `<i>Каждый день - это новый шанс!</i>`;
+      
+      toastMessage = `Панч отправлен ${friendName}! Привычка была пропущена 🔄`;
+    } else {
+      // Обычный punch для pending статуса
+      console.log(`📤 Sending regular punch to ${friendName}`);
+      
+      messageText = `👊 <b>Напоминание от ${senderName}!</b>\n\n` +
+        `Твой друг хочет, чтобы ты выполнил:\n` +
+        `📝 <b>"${habitTitle}"</b>\n\n` +
+        `Не подведи его! Выполни сейчас! 💪`;
+      
+      toastMessage = `Панч отправлен ${friendName}! 👊`;
+    }
+    
+    // Отправляем уведомление через бота
+    if (friendTelegramId) {
+      console.log(`📱 Sending Telegram notification to ${friendTelegramId}`);
+      
+      const bot = require('../server').bot;
+      
+      try {
+        await bot.sendMessage(
+          friendTelegramId,
+          messageText,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { 
+                    text: '✅ Отметить выполненным', 
+                    callback_data: `quick_done_${targetHabitId}_${today}` 
+                  }
+                ],
+                [
+                  {
+                    text: '📱 Открыть приложение',
+                    web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
+                  }
+                ]
+              ]
+            }
+          }
+        );
+        
+        console.log('✅ Telegram notification sent successfully');
+      } catch (botError) {
+        console.error('❌ Failed to send Telegram notification:', botError.message);
+        // Продолжаем выполнение даже если не удалось отправить уведомление
+      }
+    }
+    
+    // Сохраняем в историю
+    await db.query(
+      'INSERT INTO habit_punches (habit_id, from_user_id, to_user_id) VALUES ($1, $2, $3)',
+      [habitId, fromUserId, targetUserId]
+    );
+    
+    console.log('✅ Punch saved to database');
+    
+    return res.json({ 
+      success: true,
+      showToast: true,
+      toastType: 'success',
+      toastMessage: toastMessage,
+      friendName: friendName
+    });
+    
   } catch (error) {
-    console.error('Remove member error:', error);
+    console.error('❌ Punch error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to remove member' 
+      error: 'Failed to send punch',
+      showToast: true,
+      toastType: 'error',
+      toastMessage: 'Не удалось отправить панч. Попробуйте ещё раз.'
     });
   }
 });
