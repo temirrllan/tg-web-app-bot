@@ -10,12 +10,13 @@ class HabitMark {
       throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
     }
 
-    // Убедимся, что дата в правильном формате
+    // ВАЖНО: Форматируем дату правильно, учитывая часовой пояс
     const formattedDate = this.formatDate(date);
-    console.log('Formatted date:', formattedDate);
+    console.log('Formatted date for marking:', formattedDate);
 
     try {
       // Используем UPSERT для создания или обновления отметки
+      // ВАЖНО: Явно указываем тип date при вставке
       const result = await db.query(
         `INSERT INTO habit_marks (habit_id, date, status, marked_at) 
          VALUES ($1, $2::date, $3, CURRENT_TIMESTAMP) 
@@ -23,7 +24,7 @@ class HabitMark {
          DO UPDATE SET 
            status = EXCLUDED.status, 
            marked_at = CURRENT_TIMESTAMP
-         RETURNING *`,
+         RETURNING id, habit_id, date::text as date, status, marked_at`,
         [habitId, formattedDate, status]
       );
 
@@ -84,13 +85,17 @@ class HabitMark {
         return true; // Разрешаем отметку на сегодня
       }
 
+      // ВАЖНО: Создаем даты в локальном часовом поясе
       const today = new Date();
+      // Обнуляем время для корректного сравнения дат
       today.setHours(0, 0, 0, 0);
       
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
       
-      const targetDate = new Date(date);
+      // Парсим целевую дату правильно
+      const [year, month, day] = date.split('-').map(Number);
+      const targetDate = new Date(year, month - 1, day);
       targetDate.setHours(0, 0, 0, 0);
       
       // Проверяем, что дата не в будущем
@@ -102,9 +107,9 @@ class HabitMark {
       // Проверяем, что дата не раньше вчерашнего дня
       const canMark = targetDate >= yesterday;
       console.log('Can mark result:', canMark, {
-        target: targetDate.toISOString(),
-        yesterday: yesterday.toISOString(),
-        today: today.toISOString()
+        target: this.formatDate(targetDate),
+        yesterday: this.formatDate(yesterday),
+        today: this.formatDate(today)
       });
       
       return canMark;
@@ -150,7 +155,7 @@ class HabitMark {
     try {
       // Получаем последние отметки для пересчета streak
       const result = await db.query(
-        `SELECT date, status 
+        `SELECT date::text as date, status 
          FROM habit_marks 
          WHERE habit_id = $1 AND status = 'completed'
          ORDER BY date DESC`,
@@ -163,7 +168,7 @@ class HabitMark {
 
       // Проверяем непрерывность выполнения с сегодняшнего дня назад
       for (let i = 0; i < result.rows.length; i++) {
-        const markDate = new Date(result.rows[i].date);
+        const markDate = new Date(result.rows[i].date + 'T00:00:00');
         const expectedDate = new Date(today);
         expectedDate.setDate(expectedDate.getDate() - i);
 
@@ -184,9 +189,12 @@ class HabitMark {
     }
   }
 
+  // ВАЖНО: Улучшенная функция форматирования даты
   static formatDate(date) {
     if (!date) {
-      return new Date().toISOString().split('T')[0];
+      // Если дата не указана, возвращаем сегодня в формате YYYY-MM-DD
+      const today = new Date();
+      return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     }
     
     // Если уже в формате YYYY-MM-DD, возвращаем как есть
@@ -194,14 +202,23 @@ class HabitMark {
       return date;
     }
     
-    // Иначе конвертируем
+    // Если это объект Date
+    if (date instanceof Date) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+    
+    // Пытаемся распарсить строку даты
     const d = new Date(date);
-    return d.toISOString().split('T')[0];
+    if (isNaN(d.getTime())) {
+      throw new Error(`Invalid date format: ${date}`);
+    }
+    
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   static async getHabitMarks(habitId, startDate, endDate) {
     const result = await db.query(
-      `SELECT date, status 
+      `SELECT date::text as date, status 
        FROM habit_marks 
        WHERE habit_id = $1 
        AND date >= $2::date 
@@ -211,6 +228,21 @@ class HabitMark {
     );
 
     return result.rows;
+  }
+
+  // Новый метод для получения отметки на конкретную дату
+  static async getMarkForDate(habitId, date) {
+    const formattedDate = this.formatDate(date);
+    
+    const result = await db.query(
+      `SELECT id, status, date::text as date, marked_at
+       FROM habit_marks 
+       WHERE habit_id = $1 
+       AND date = $2::date`,
+      [habitId, formattedDate]
+    );
+
+    return result.rows[0] || null;
   }
 }
 

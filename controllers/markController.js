@@ -15,12 +15,22 @@ const markController = {
         habitId: id,
         userId: userId,
         status: status,
-        date: date
+        date: date,
+        requestBody: req.body
       });
 
-      // Если дата не указана, используем сегодня
-      const markDate = date || new Date().toISOString().split('T')[0];
-      console.log('Using date:', markDate);
+      // ВАЖНО: Проверяем и форматируем дату
+      let markDate;
+      if (date) {
+        // Если дата передана, используем её
+        markDate = date;
+      } else {
+        // Если дата не указана, используем сегодня в локальном часовом поясе
+        const today = new Date();
+        markDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      }
+      
+      console.log('Using date for marking:', markDate);
 
       // Проверяем, что привычка принадлежит пользователю
       const habit = await Habit.findById(id, userId);
@@ -50,13 +60,18 @@ const markController = {
 
       console.log('✅ Date validation passed');
 
+      // ВАЖНО: Проверяем, что отметка будет для правильной даты
+      const existingMark = await HabitMark.getMarkForDate(id, markDate);
+      console.log('Existing mark for this date:', existingMark);
+
       // Отмечаем привычку для конкретной даты
       const mark = await HabitMark.mark(id, markDate, status);
       console.log('✅ Habit marked successfully:', {
         habitId: id,
         date: markDate,
         status: status,
-        markId: mark.id
+        markId: mark.id,
+        returnedDate: mark.date
       });
 
       // Если статус "completed", отправляем уведомления друзьям
@@ -66,13 +81,17 @@ const markController = {
 
       res.json({
         success: true,
-        mark
+        mark: {
+          ...mark,
+          date: markDate // Гарантируем возврат правильной даты
+        }
       });
     } catch (error) {
       console.error('💥 Mark habit error:', error);
       res.status(500).json({ 
         success: false, 
-        error: 'Failed to mark habit' 
+        error: 'Failed to mark habit',
+        details: error.message
       });
     }
   },
@@ -83,8 +102,15 @@ const markController = {
     try {
       const { id } = req.params;
       // Получаем дату из query параметров или body
-      const date = req.query.date || req.body?.date || new Date().toISOString().split('T')[0];
+      const date = req.query.date || req.body?.date;
       const userId = req.user.id;
+
+      if (!date) {
+        return res.status(400).json({
+          success: false,
+          error: 'Date is required for unmarking'
+        });
+      }
 
       console.log('Unmark habit request:', {
         habitId: id,
@@ -102,6 +128,18 @@ const markController = {
         });
       }
 
+      // Проверяем существование отметки перед удалением
+      const existingMark = await HabitMark.getMarkForDate(id, date);
+      console.log('Mark to delete:', existingMark);
+
+      if (!existingMark) {
+        console.log('❌ No mark found for this date');
+        return res.status(404).json({
+          success: false,
+          error: 'No mark found for this date'
+        });
+      }
+
       const deleted = await HabitMark.deleteMark(id, date);
       console.log(deleted ? '✅ Mark removed' : '❌ Mark not found');
 
@@ -114,7 +152,8 @@ const markController = {
       console.error('💥 Unmark habit error:', error);
       res.status(500).json({ 
         success: false, 
-        error: 'Failed to unmark habit' 
+        error: 'Failed to unmark habit',
+        details: error.message
       });
     }
   }
