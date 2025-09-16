@@ -511,10 +511,14 @@ router.delete('/habits/:habitId/members/:userId', authMiddleware, async (req, re
 // Обновляем эндпоинт для punch с отправкой уведомления
 // Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
 
+// Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
+
 router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
   try {
     const { habitId, userId: targetUserId } = req.params;
     const fromUserId = req.user.id;
+    
+    console.log(`🥊 Punch request from user ${fromUserId} to user ${targetUserId} for habit ${habitId}`);
     
     // Сначала проверяем, выполнена ли привычка у друга сегодня
     const today = new Date().toISOString().split('T')[0];
@@ -536,16 +540,20 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
     );
     
     if (targetHabitResult.rows.length === 0) {
+      console.log('❌ Target habit not found');
       return res.status(404).json({ 
         success: false, 
         error: 'Friend habit not found',
         showToast: true,
-        toastMessage: 'Friend\'s habit not found 😕' 
+        toastMessage: 'Friend\'s habit not found 😕',
+        toastType: 'error'
       });
     }
     
     const targetHabitId = targetHabitResult.rows[0].id;
     const habitTitle = targetHabitResult.rows[0].title;
+    
+    console.log(`📋 Found target habit: ${targetHabitId} - "${habitTitle}"`);
     
     // Проверяем статус выполнения привычки друга на сегодня
     const statusResult = await db.query(
@@ -556,24 +564,26 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       [targetHabitId, today]
     );
     
-    // Если привычка уже выполнена
+    // Получаем имя друга для персонализированных сообщений
+    const friendResult = await db.query(
+      'SELECT first_name FROM users WHERE id = $1',
+      [targetUserId]
+    );
+    
+    const friendName = friendResult.rows.length > 0 
+      ? friendResult.rows[0].first_name 
+      : 'Your friend';
+    
+    // Если привычка уже выполнена - НЕ отправляем punch
     if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'completed') {
-      // Получаем имя друга для персонализированного сообщения
-      const friendResult = await db.query(
-        'SELECT first_name FROM users WHERE id = $1',
-        [targetUserId]
-      );
-      
-      const friendName = friendResult.rows.length > 0 
-        ? friendResult.rows[0].first_name 
-        : 'Your friend';
+      console.log(`✅ Habit already completed by ${friendName}, not sending punch`);
       
       return res.json({ 
         success: false,
         alreadyCompleted: true,
         showToast: true,
         toastType: 'info',
-        toastMessage: `Bro, ${friendName} already completed this habit today! 👌`,
+        toastMessage: `У ${friendName} уже выполнено 👌`,
         friendName: friendName,
         habitTitle: habitTitle
       });
@@ -581,69 +591,72 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
     
     // Если привычка пропущена (skipped)
     if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'skipped') {
-      const friendResult = await db.query(
-        'SELECT first_name FROM users WHERE id = $1',
-        [targetUserId]
-      );
-      
-      const friendName = friendResult.rows.length > 0 
-        ? friendResult.rows[0].first_name 
-        : 'Your friend';
+      console.log(`⏭ Habit skipped by ${friendName}`);
       
       return res.json({ 
         success: false,
         isSkipped: true,
         showToast: true,
         toastType: 'warning',
-        toastMessage: `${friendName} skipped this habit today 😔`,
+        toastMessage: `${friendName} пропустил эту привычку сегодня 😔`,
         friendName: friendName,
         habitTitle: habitTitle
       });
     }
     
-    // Если привычка еще не выполнена - отправляем punch как обычно
+    console.log(`📤 Sending punch to ${friendName}`);
+    
+    // Если привычка еще не выполнена - отправляем punch
     // Получаем информацию для уведомления
     const userData = await db.query(
-      `SELECT u.telegram_id, u2.first_name as from_name, h.title
+      `SELECT u.telegram_id, u2.first_name as from_name
        FROM users u
        JOIN users u2 ON u2.id = $2
-       JOIN habits h ON h.id = $3
        WHERE u.id = $1`,
-      [targetUserId, fromUserId, habitId]
+      [targetUserId, fromUserId]
     );
     
     if (userData.rows.length > 0) {
-      const { telegram_id, from_name, title } = userData.rows[0];
+      const { telegram_id, from_name } = userData.rows[0];
+      
+      console.log(`📱 Sending Telegram notification to ${telegram_id}`);
       
       // Отправляем уведомление через бота
       const bot = require('../server').bot;
       
-      await bot.sendMessage(
-        telegram_id,
-        `👊 <b>Reminder from ${from_name}!</b>\n\n` +
-        `Your friend wants you to complete:\n` +
-        `📝 <b>"${title}"</b>\n\n` +
-        `Don't let them down! Complete it now! 💪`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { 
-                  text: '✅ Mark as Done', 
-                  callback_data: `quick_done_${targetHabitId}_${today}` 
-                }
-              ],
-              [
-                {
-                  text: '📱 Open App',
-                  web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                }
+      try {
+        await bot.sendMessage(
+          telegram_id,
+          `👊 <b>Напоминание от ${from_name}!</b>\n\n` +
+          `Твой друг хочет, чтобы ты выполнил:\n` +
+          `📝 <b>"${habitTitle}"</b>\n\n` +
+          `Не подведи его! Выполни сейчас! 💪`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { 
+                    text: '✅ Отметить выполненным', 
+                    callback_data: `quick_done_${targetHabitId}_${today}` 
+                  }
+                ],
+                [
+                  {
+                    text: '📱 Открыть приложение',
+                    web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
+                  }
+                ]
               ]
-            ]
+            }
           }
-        }
-      );
+        );
+        
+        console.log('✅ Telegram notification sent successfully');
+      } catch (botError) {
+        console.error('❌ Failed to send Telegram notification:', botError.message);
+        // Продолжаем выполнение даже если не удалось отправить уведомление
+      }
       
       // Сохраняем в историю
       await db.query(
@@ -651,39 +664,32 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
         [habitId, fromUserId, targetUserId]
       );
       
-      // Получаем имя друга для ответа
-      const friendResult = await db.query(
-        'SELECT first_name FROM users WHERE id = $1',
-        [targetUserId]
-      );
-      
-      const friendName = friendResult.rows.length > 0 
-        ? friendResult.rows[0].first_name 
-        : 'Your friend';
+      console.log('✅ Punch saved to database');
       
       return res.json({ 
         success: true,
         showToast: true,
         toastType: 'success',
-        toastMessage: `Punch sent to ${friendName}! 👊`,
+        toastMessage: `Панч отправлен ${friendName}! 👊`,
         friendName: friendName
       });
     }
     
-    res.json({ 
+    // Fallback если не нашли пользователя
+    return res.json({ 
       success: true,
       showToast: true,
       toastType: 'success',
-      toastMessage: 'Punch sent! 👊'
+      toastMessage: 'Панч отправлен! 👊'
     });
   } catch (error) {
-    console.error('Punch error:', error);
+    console.error('❌ Punch error:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Failed to send punch',
       showToast: true,
       toastType: 'error',
-      toastMessage: 'Failed to send punch. Please try again.'
+      toastMessage: 'Не удалось отправить панч. Попробуйте ещё раз.'
     });
   }
 });
