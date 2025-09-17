@@ -1163,6 +1163,54 @@ router.get('/subscription/history', authMiddleware, async (req, res) => {
     });
   }
 });
+
+// Отладочный эндпоинт для проверки подписки (УДАЛИТЬ В ПРОДАКШЕНЕ)
+router.get('/subscription/debug', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Получаем все данные о пользователе и подписке
+    const userResult = await db.query(
+      `SELECT 
+        id,
+        telegram_id,
+        is_premium,
+        subscription_type,
+        subscription_expires_at
+       FROM users 
+       WHERE id = $1`,
+      [userId]
+    );
+    
+    const subscriptionResult = await db.query(
+      `SELECT 
+        id,
+        plan_type,
+        plan_name,
+        started_at,
+        expires_at,
+        is_active
+       FROM subscriptions 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 5`,
+      [userId]
+    );
+    
+    res.json({
+      success: true,
+      user: userResult.rows[0],
+      subscriptions: subscriptionResult.rows,
+      checkResult: await SubscriptionService.checkUserSubscription(userId)
+    });
+  } catch (error) {
+    console.error('Debug error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
