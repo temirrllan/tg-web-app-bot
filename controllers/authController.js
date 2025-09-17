@@ -24,7 +24,7 @@ const authController = {
       let isNewUser = false;
 
       if (checkUser.rows.length === 0) {
-        // Создаем нового пользователя с is_premium = false по умолчанию
+        // Создаем нового пользователя
         const insertUser = await pool.query(
           `INSERT INTO users (
              telegram_id, username, first_name, last_name, language, is_premium, photo_url
@@ -36,7 +36,7 @@ const authController = {
             user.first_name || '',
             user.last_name || '',
             user.language_code || 'en',
-            false, // Новый пользователь всегда начинает с бесплатного тарифа
+            user.is_premium || false,
             user.photo_url || null
           ]
         );
@@ -44,14 +44,15 @@ const authController = {
         userData = insertUser.rows[0];
         isNewUser = true;
       } else {
-        // Обновляем существующего пользователя (НЕ трогаем is_premium!)
+        // Обновляем существующего пользователя
         const updateUser = await pool.query(
           `UPDATE users SET
              username = $2,
              first_name = $3,
              last_name = $4,
              language = $5,
-             photo_url = $6
+             is_premium = $6,
+             photo_url = $7
            WHERE telegram_id = $1
            RETURNING *`,
           [
@@ -60,20 +61,13 @@ const authController = {
             user.first_name || checkUser.rows[0].first_name,
             user.last_name || checkUser.rows[0].last_name,
             user.language_code || checkUser.rows[0].language || 'en',
+            user.is_premium !== undefined ? user.is_premium : checkUser.rows[0].is_premium,
             user.photo_url || checkUser.rows[0].photo_url
           ]
         );
 
         userData = updateUser.rows[0];
       }
-
-      // Логируем для отладки
-      console.log('🎯 User data being sent:', {
-        id: userData.id,
-        telegram_id: userData.telegram_id,
-        is_premium: userData.is_premium,
-        username: userData.username
-      });
 
       res.json({
         success: true,
@@ -90,6 +84,5 @@ const authController = {
     }
   }
 };
-
 
 module.exports = authController;
