@@ -9,7 +9,7 @@ const habitRoutes = require('./routes/habitRoutes');
 const { generalLimiter } = require('./middleware/rateLimit');
 const keepAliveService = require('./services/keepAlive');
 const db = require('./config/database');
-
+const subscriptionCron = require('./services/subscriptionCron');
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -701,7 +701,8 @@ const server = app.listen(PORT, async () => {
   
   // Запускаем сервис напоминаний после старта сервера
   reminderService.start();
-  
+  // Запускаем cron для проверки подписок
+subscriptionCron.start();
   try {
     // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом
     const publicBase = process.env.BACKEND_PUBLIC_URL || ''; // если зададите — поставим отсюда
@@ -731,6 +732,6 @@ process.on('SIGINT', () => {
   keepAliveService.stop();
   server.close(() => process.exit(0));
 });
-
+subscriptionCron.stop();
 // Экспортируем бота для использования в других модулях
 module.exports.bot = bot;

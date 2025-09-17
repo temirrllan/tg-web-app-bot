@@ -7,6 +7,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
 const db = require('../config/database');
+const SubscriptionService = require('../services/subscriptionService');
 
 // Категории
 router.get('/categories', categoryController.getAll);
@@ -1032,6 +1033,133 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to check subscription'
+    });
+  }
+});
+
+// Эндпоинт для активации премиум подписки с выбранным планом
+router.post('/subscription/activate', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { plan } = req.body; // 'month' или 'year' из фронтенда
+    
+    // Маппинг старых названий на новые
+    const planMapping = {
+      'month': '6_months',
+      'year': '1_year'
+    };
+    
+    const planType = planMapping[plan] || plan;
+    
+    console.log(`💎 Activating subscription for user ${userId}, plan: ${planType}`);
+    
+    // Создаем подписку
+    const result = await SubscriptionService.createSubscription(userId, planType);
+    
+    res.json({
+      success: true,
+      message: result.message,
+      subscription: result.subscription
+    });
+  } catch (error) {
+    console.error('💥 Subscription activation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to activate subscription'
+    });
+  }
+});
+
+// Эндпоинт для проверки статуса подписки
+router.get('/subscription/check', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const status = await SubscriptionService.checkUserSubscription(userId);
+    
+    console.log(`📊 Subscription status for user ${userId}:`, status);
+    
+    res.json({
+      success: true,
+      ...status
+    });
+  } catch (error) {
+    console.error('💥 Subscription check error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check subscription'
+    });
+  }
+});
+
+// Эндпоинт для получения доступных планов
+router.get('/subscription/plans', async (req, res) => {
+  try {
+    const plans = SubscriptionService.PLANS;
+    
+    res.json({
+      success: true,
+      plans: Object.keys(plans).map(key => ({
+        id: key,
+        ...plans[key]
+      }))
+    });
+  } catch (error) {
+    console.error('💥 Get plans error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get subscription plans'
+    });
+  }
+});
+
+// Эндпоинт для отмены подписки
+router.post('/subscription/cancel', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    console.log(`🚫 Cancelling subscription for user ${userId}`);
+    
+    const result = await SubscriptionService.cancelSubscription(userId);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('💥 Subscription cancellation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to cancel subscription'
+    });
+  }
+});
+
+// Эндпоинт для получения истории подписок
+router.get('/subscription/history', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const result = await db.query(
+      `SELECT 
+        sh.*,
+        s.plan_name,
+        s.expires_at,
+        s.is_trial
+       FROM subscription_history sh
+       JOIN subscriptions s ON sh.subscription_id = s.id
+       WHERE sh.user_id = $1
+       ORDER BY sh.created_at DESC
+       LIMIT 20`,
+      [userId]
+    );
+    
+    res.json({
+      success: true,
+      history: result.rows
+    });
+  } catch (error) {
+    console.error('💥 Get history error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get subscription history'
     });
   }
 });
