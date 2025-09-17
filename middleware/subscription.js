@@ -12,25 +12,25 @@ const checkSubscriptionLimit = async (req, res, next) => {
     }
 
     const userId = req.user.id;
-    const habitCount = await Habit.countActive(userId);
-
-    // Проверяем подписку
-    let subscriptionType = 'free';
-    try {
-      const pool = require('../config/database');
-      const result = await pool.query(
-        'SELECT type FROM subscriptions WHERE user_id = $1 AND is_active = true',
-        [userId]
-      );
-      if (result.rows.length > 0) {
-        subscriptionType = result.rows[0].type;
-      }
-    } catch {
-      // ignore, используем free
+    const isPremium = req.user.is_premium || false;
+    
+    // Если пользователь премиум - пропускаем проверку
+    if (isPremium) {
+      console.log(`User ${userId} has premium subscription`);
+      return next();
     }
-
-    const limit = subscriptionType === 'premium' ? 999 : 3;
-    console.log(`User subscription: ${subscriptionType}, limit: ${limit}`);
+    
+    // Проверяем количество активных привычек
+    const pool = require('../config/database');
+    const result = await pool.query(
+      'SELECT COUNT(*) as count FROM habits WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+    
+    const habitCount = parseInt(result.rows[0].count);
+    const limit = 3;
+    
+    console.log(`User ${userId} subscription: free, habits: ${habitCount}/${limit}`);
 
     if (habitCount >= limit) {
       return res.status(403).json({
@@ -38,7 +38,8 @@ const checkSubscriptionLimit = async (req, res, next) => {
         error: 'Habit limit reached',
         showPremium: true,
         limit,
-        current: habitCount
+        current: habitCount,
+        message: 'Upgrade to premium to create unlimited habits'
       });
     }
 

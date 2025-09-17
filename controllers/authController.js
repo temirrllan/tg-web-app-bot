@@ -25,6 +25,7 @@ const authController = {
 
       if (checkUser.rows.length === 0) {
         // Создаем нового пользователя
+        // ВАЖНО: is_premium по умолчанию false - это подписка в нашем приложении
         const insertUser = await pool.query(
           `INSERT INTO users (
              telegram_id, username, first_name, last_name, language, is_premium, photo_url
@@ -36,7 +37,7 @@ const authController = {
             user.first_name || '',
             user.last_name || '',
             user.language_code || 'en',
-            user.is_premium || false,
+            false, // ВСЕГДА false при регистрации - это наша подписка, не Telegram Premium
             user.photo_url || null
           ]
         );
@@ -45,14 +46,14 @@ const authController = {
         isNewUser = true;
       } else {
         // Обновляем существующего пользователя
+        // НЕ обновляем is_premium - оно управляется только через покупку подписки
         const updateUser = await pool.query(
           `UPDATE users SET
              username = $2,
              first_name = $3,
              last_name = $4,
              language = $5,
-             is_premium = $6,
-             photo_url = $7
+             photo_url = $6
            WHERE telegram_id = $1
            RETURNING *`,
           [
@@ -61,7 +62,6 @@ const authController = {
             user.first_name || checkUser.rows[0].first_name,
             user.last_name || checkUser.rows[0].last_name,
             user.language_code || checkUser.rows[0].language || 'en',
-            user.is_premium !== undefined ? user.is_premium : checkUser.rows[0].is_premium,
             user.photo_url || checkUser.rows[0].photo_url
           ]
         );

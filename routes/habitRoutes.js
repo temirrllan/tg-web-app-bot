@@ -942,6 +942,99 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
     res.status(500).json({ success: false, error: 'Failed to send punch' });
   }
 });
+// Эндпоинт для активации премиум подписки
+router.post('/subscription/activate', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { plan } = req.body; // 'month' или 'year'
+    
+    console.log(`💎 Activating premium subscription for user ${userId}, plan: ${plan}`);
+    
+    // Временная реализация - просто активируем премиум
+    // В будущем здесь будет интеграция с Telegram Stars
+    const result = await db.query(
+      `UPDATE users 
+       SET is_premium = true 
+       WHERE id = $1 
+       RETURNING id, is_premium`,
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    // Опционально: сохраняем информацию о подписке
+    try {
+      await db.query(
+        `INSERT INTO subscriptions (user_id, type, started_at, is_active) 
+         VALUES ($1, 'premium', CURRENT_TIMESTAMP, true)
+         ON CONFLICT (user_id) 
+         DO UPDATE SET 
+           type = 'premium',
+           started_at = CURRENT_TIMESTAMP,
+           is_active = true`,
+        [userId]
+      );
+    } catch (subError) {
+      console.log('Subscriptions table might not exist, skipping...');
+    }
+    
+    console.log(`✅ Premium activated for user ${userId}`);
+    
+    res.json({
+      success: true,
+      message: 'Premium subscription activated',
+      user: {
+        id: result.rows[0].id,
+        is_premium: result.rows[0].is_premium
+      }
+    });
+  } catch (error) {
+    console.error('💥 Subscription activation error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to activate subscription'
+    });
+  }
+});
+
+// Эндпоинт для проверки лимитов пользователя
+router.get('/subscription/check', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Получаем количество активных привычек
+    const habitsResult = await db.query(
+      'SELECT COUNT(*) as count FROM habits WHERE user_id = $1 AND is_active = true',
+      [userId]
+    );
+    
+    const habitCount = parseInt(habitsResult.rows[0].count);
+    const isPremium = req.user.is_premium || false;
+    const limit = isPremium ? 999 : 3;
+    const canCreateMore = habitCount < limit;
+    
+    console.log(`📊 User ${userId}: ${habitCount}/${limit} habits, premium: ${isPremium}`);
+    
+    res.json({
+      success: true,
+      habitCount,
+      limit,
+      isPremium,
+      canCreateMore
+    });
+  } catch (error) {
+    console.error('💥 Subscription check error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check subscription'
+    });
+  }
+});
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
