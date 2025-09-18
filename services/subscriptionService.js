@@ -90,12 +90,13 @@ class SubscriptionService {
       const subscription = result.rows[0];
       console.log(`✅ Subscription created with ID: ${subscription.id}`);
       
-      // ВАЖНО: Обновляем статус пользователя с правильными значениями
+      // ВАЖНО: Обновляем ВСЕ необходимые поля в таблице users
       const updateUserResult = await client.query(
         `UPDATE users 
-         SET is_premium = true, 
-             subscription_type = $2,
-             subscription_expires_at = $3
+         SET 
+           is_premium = true, 
+           subscription_type = $2,
+           subscription_expires_at = $3
          WHERE id = $1
          RETURNING id, is_premium, subscription_type, subscription_expires_at`,
         [userId, planType, expiresAt]
@@ -189,6 +190,7 @@ class SubscriptionService {
       let isValid = false;
       let needsUpdate = false;
       
+      // Приоритет отдаем данным из таблицы subscriptions если они есть
       if (data.subscription_id) {
         if (data.expires_at === null) {
           // Lifetime подписка
@@ -198,6 +200,22 @@ class SubscriptionService {
           if (!isValid) {
             needsUpdate = true;
           }
+        }
+        
+        // Синхронизируем данные если они не совпадают
+        if (isValid && (!data.is_premium || data.subscription_type !== data.plan_type)) {
+          console.log(`⚠️ Syncing user data with active subscription`);
+          await db.query(
+            `UPDATE users 
+             SET is_premium = true, 
+                 subscription_type = $2,
+                 subscription_expires_at = $3
+             WHERE id = $1`,
+            [userId, data.plan_type, data.expires_at]
+          );
+          data.is_premium = true;
+          data.subscription_type = data.plan_type;
+          data.subscription_expires_at = data.expires_at;
         }
       } else if (data.is_premium && data.subscription_expires_at) {
         // Проверяем по данным из users таблицы
@@ -228,6 +246,8 @@ class SubscriptionService {
           );
         }
         data.is_premium = false;
+        data.subscription_type = null;
+        data.subscription_expires_at = null;
         isValid = false;
       }
       
@@ -237,9 +257,19 @@ class SubscriptionService {
       
       console.log(`✅ User ${userId} status: Premium=${isPremium}, Habits=${habitCount}/${limit}`);
       
-      return {
-        hasSubscription: !!data.subscription_id || data.is_premium,
-        subscription: (data.subscription_id || data.subscription_type) ? {
+      // Формируем ответ с правильными данными
+      const subscriptionData = {
+        hasSubscription: !!data.subscription_id || (data.is_premium && data.subscription_type),
+        subscription: null,
+        isPremium,
+        habitCount,
+        limit,
+        canCreateMore: habitCount < limit
+      };
+      
+      // Добавляем детали подписки если она есть
+      if ((data.subscription_id || data.subscription_type) && isValid) {
+        subscriptionData.subscription = {
           id: data.subscription_id,
           planType: data.plan_type || data.subscription_type,
           planName: data.plan_name || this.PLANS[data.subscription_type]?.name,
@@ -248,13 +278,11 @@ class SubscriptionService {
           isActive: isValid,
           isTrial: data.is_trial || false,
           daysLeft: (data.expires_at || data.subscription_expires_at) ? 
-            Math.ceil((new Date(data.expires_at || data.subscription_expires_at) - now) / (1000 * 60 * 60 * 24)) : null
-        } : null,
-        isPremium,
-        habitCount,
-        limit,
-        canCreateMore: habitCount < limit
-      };
+            Math.ceil(((new Date(data.expires_at || data.subscription_expires_at)) - now) / (1000 * 60 * 60 * 24)) : null
+        };
+      }
+      
+      return subscriptionData;
     } catch (error) {
       console.error('❌ Error checking subscription:', error);
       return {
@@ -388,11 +416,8 @@ class SubscriptionService {
           s.id, 
           s.user_id,
           s.plan_type,
-          s.expires_at,
-          u.subscription_type,
-          u.subscription_expires_at
+          s.expires_at
          FROM subscriptions s
-         JOIN users u ON s.user_id = u.id
          WHERE s.is_active = true 
          AND s.expires_at IS NOT NULL 
          AND s.expires_at < CURRENT_TIMESTAMP`
@@ -405,37 +430,48 @@ class SubscriptionService {
         await this.expireSubscription(sub.user_id, sub.id);
       }
       
-      // Также проверяем пользователей с is_premium = true но без активной подписки
-      const orphanedUsers = await db.query(
-        `SELECT u.id, u.subscription_expires_at
+      // Также синхронизируем пользователей где данные не совпадают
+      const syncResult = await db.query(
+        `SELECT u.id, u.subscription_type, s.plan_type, s.expires_at
          FROM users u
+         LEFT JOIN subscriptions s ON s.user_id = u.id AND s.is_active = true
          WHERE u.is_premium = true
-         AND u.subscription_expires_at IS NOT NULL
-         AND u.subscription_expires_at < CURRENT_TIMESTAMP
-         AND NOT EXISTS (
-           SELECT 1 FROM subscriptions s 
-           WHERE s.user_id = u.id 
-           AND s.is_active = true
+         AND (
+           (s.id IS NULL AND u.subscription_type IS NULL) OR
+           (s.id IS NOT NULL AND u.subscription_type != s.plan_type)
          )`
       );
       
-      if (orphanedUsers.rows.length > 0) {
-        console.log(`📊 Found ${orphanedUsers.rows.length} users with expired premium status`);
+      if (syncResult.rows.length > 0) {
+        console.log(`📊 Found ${syncResult.rows.length} users needing sync`);
         
-        for (const user of orphanedUsers.rows) {
-          await db.query(
-            `UPDATE users 
-             SET is_premium = false,
-                 subscription_type = NULL,
-                 subscription_expires_at = NULL
-             WHERE id = $1`,
-            [user.id]
-          );
-          console.log(`✅ Reset premium status for user ${user.id}`);
+        for (const user of syncResult.rows) {
+          if (user.plan_type) {
+            // Есть активная подписка - синхронизируем
+            await db.query(
+              `UPDATE users 
+               SET subscription_type = $2,
+                   subscription_expires_at = $3
+               WHERE id = $1`,
+              [user.id, user.plan_type, user.expires_at]
+            );
+            console.log(`✅ Synced user ${user.id} with subscription ${user.plan_type}`);
+          } else {
+            // Нет активной подписки - сбрасываем премиум
+            await db.query(
+              `UPDATE users 
+               SET is_premium = false,
+                   subscription_type = NULL,
+                   subscription_expires_at = NULL
+               WHERE id = $1`,
+              [user.id]
+            );
+            console.log(`✅ Reset premium for user ${user.id} (no active subscription)`);
+          }
         }
       }
       
-      return result.rows.length + orphanedUsers.rows.length;
+      return result.rows.length + syncResult.rows.length;
     } catch (error) {
       console.error('❌ Error checking expired subscriptions:', error);
       return 0;
