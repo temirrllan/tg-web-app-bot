@@ -1025,28 +1025,43 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
 });
 
 // Эндпоинт для активации премиум подписки с выбранным планом
+// Эндпоинт для активации премиум подписки с выбранным планом
 router.post('/subscription/activate', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { plan } = req.body; // 'month' или 'year' из фронтенда
+    const { plan } = req.body; // '6_months' или '1_year' из фронтенда
     
-    // Маппинг старых названий на новые
-    const planMapping = {
-      'month': '6_months',
-      'year': '1_year'
-    };
+    console.log(`💎 Activating subscription for user ${userId}, plan: ${plan}`);
     
-    const planType = planMapping[plan] || plan;
+    // Проверяем корректность плана
+    const validPlans = ['6_months', '1_year', 'lifetime'];
+    if (!validPlans.includes(plan)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid plan: ${plan}. Valid plans are: ${validPlans.join(', ')}`
+      });
+    }
     
-    console.log(`💎 Activating subscription for user ${userId}, plan: ${planType}`);
+    // Создаем подписку через сервис
+    const result = await SubscriptionService.createSubscription(userId, plan);
     
-    // Создаем подписку
-    const result = await SubscriptionService.createSubscription(userId, planType);
+    if (!result.success) {
+      throw new Error('Failed to create subscription');
+    }
+    
+    // Проверяем что данные обновились
+    const verifyResult = await db.query(
+      'SELECT is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    console.log('✅ Verification after activation:', verifyResult.rows[0]);
     
     res.json({
       success: true,
       message: result.message,
-      subscription: result.subscription
+      subscription: result.subscription,
+      user: result.user
     });
   } catch (error) {
     console.error('💥 Subscription activation error:', error);
