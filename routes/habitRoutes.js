@@ -1135,6 +1135,7 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
 });
 
 // Эндпоинт для получения истории подписок
+// Эндпоинт для получения истории подписок с детальной информацией
 router.get('/subscription/history', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -1142,8 +1143,10 @@ router.get('/subscription/history', authMiddleware, async (req, res) => {
     const result = await db.query(
       `SELECT 
         sh.*,
-        s.plan_name,
+        s.plan_type,
         s.expires_at,
+        s.started_at,
+        s.price_stars,
         s.is_trial
        FROM subscription_history sh
        JOIN subscriptions s ON sh.subscription_id = s.id
