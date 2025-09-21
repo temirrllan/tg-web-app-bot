@@ -140,102 +140,68 @@ class SubscriptionService {
   }
   
   // Проверить статус подписки пользователя
-  static async checkUserSubscription(userId) {
-    try {
-      console.log(`🔍 Checking subscription for user ${userId}`);
-      
-      // Получаем данные пользователя и подписки одним запросом
-      const result = await db.query(
-        `SELECT 
-          u.id,
-          u.is_premium,
-          u.subscription_type,
-          u.subscription_expires_at,
-          s.id as subscription_id,
-          s.plan_type,
-          s.plan_name,
-          s.started_at,
-          s.expires_at,
-          s.is_active as subscription_active,
-          s.is_trial,
-          (SELECT COUNT(*) FROM habits WHERE user_id = $1 AND is_active = true) as habit_count
-         FROM users u
-         LEFT JOIN subscriptions s ON s.user_id = u.id AND s.is_active = true
-         WHERE u.id = $1`,
-        [userId]
-      );
-      
-      if (result.rows.length === 0) {
-        console.log(`❌ User ${userId} not found`);
-        return {
-          hasSubscription: false,
-          isPremium: false,
-          habitCount: 0,
-          limit: 3,
-          canCreateMore: true
-        };
-      }
-      
-      const data = result.rows[0];
-      const now = new Date();
-      
-      console.log(`📊 User ${userId} subscription data:`, {
-        is_premium: data.is_premium,
-        subscription_type: data.subscription_type,
-        subscription_expires_at: data.subscription_expires_at,
-        has_active_subscription: !!data.subscription_id
-      });
-      
-      // Проверяем, не истекла ли подписка
-      let isValid = false;
-      let needsUpdate = false;
-      
-      // Приоритет отдаем данным из таблицы subscriptions если они есть
-      if (data.subscription_id) {
-        if (data.expires_at === null) {
-          // Lifetime подписка
-          isValid = true;
-        } else if (data.expires_at) {
-          isValid = new Date(data.expires_at) > now;
-          if (!isValid) {
-            needsUpdate = true;
-          }
-        }
+  // Проверить статус подписки пользователя
+static async checkUserSubscription(userId) {
+  try {
+    console.log(`🔍 Checking subscription for user ${userId}`);
+    
+    // Получаем актуальные данные из таблицы users
+    const result = await db.query(
+      `SELECT 
+        u.id,
+        u.is_premium,
+        u.subscription_type,
+        u.subscription_expires_at,
+        (SELECT COUNT(*) FROM habits WHERE user_id = u.id AND is_active = true) as habit_count
+       FROM users u
+       WHERE u.id = $1`,
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`❌ User ${userId} not found`);
+      return {
+        hasSubscription: false,
+        isPremium: false,
+        habitCount: 0,
+        limit: 3,
+        canCreateMore: true
+      };
+    }
+    
+    const userData = result.rows[0];
+    const now = new Date();
+    
+    console.log(`📊 User ${userId} subscription data:`, {
+      is_premium: userData.is_premium,
+      subscription_type: userData.subscription_type,
+      subscription_expires_at: userData.subscription_expires_at
+    });
+    
+    // Проверяем актуальность подписки
+    let isActive = false;
+    let subscription = null;
+    
+    if (userData.is_premium && userData.subscription_type) {
+      // Проверяем срок действия
+      if (userData.subscription_expires_at) {
+        const expiresAt = new Date(userData.subscription_expires_at);
+        isActive = expiresAt > now;
         
-        // Синхронизируем данные если они не совпадают
-        if (isValid && (!data.is_premium || data.subscription_type !== data.plan_type)) {
-          console.log(`⚠️ Syncing user data with active subscription`);
-          await db.query(
-            `UPDATE users 
-             SET is_premium = true, 
-                 subscription_type = $2,
-                 subscription_expires_at = $3
-             WHERE id = $1`,
-            [userId, data.plan_type, data.expires_at]
-          );
-          data.is_premium = true;
-          data.subscription_type = data.plan_type;
-          data.subscription_expires_at = data.expires_at;
-        }
-      } else if (data.is_premium && data.subscription_expires_at) {
-        // Проверяем по данным из users таблицы
-        if (data.subscription_expires_at === null) {
-          isValid = true;
+        if (isActive) {
+          const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+          
+          subscription = {
+            isActive: true,
+            planType: userData.subscription_type,
+            planName: this.PLANS[userData.subscription_type]?.name || 'Premium',
+            expiresAt: userData.subscription_expires_at,
+            daysLeft: daysLeft > 0 ? daysLeft : 0,
+            isTrial: userData.subscription_type === 'trial_7_days'
+          };
         } else {
-          isValid = new Date(data.subscription_expires_at) > now;
-          if (!isValid) {
-            needsUpdate = true;
-          }
-        }
-      }
-      
-      // Если подписка истекла, деактивируем её
-      if (needsUpdate) {
-        console.log(`⏰ Subscription expired for user ${userId}, deactivating...`);
-        if (data.subscription_id) {
-          await this.expireSubscription(userId, data.subscription_id);
-        } else {
-          // Просто сбрасываем премиум статус
+          // Подписка истекла - деактивируем
+          console.log(`⏰ Subscription expired for user ${userId}`);
           await db.query(
             `UPDATE users 
              SET is_premium = false, 
@@ -245,56 +211,45 @@ class SubscriptionService {
             [userId]
           );
         }
-        data.is_premium = false;
-        data.subscription_type = null;
-        data.subscription_expires_at = null;
-        isValid = false;
-      }
-      
-      const isPremium = data.is_premium && isValid;
-      const limit = isPremium ? 999 : 3;
-      const habitCount = parseInt(data.habit_count);
-      
-      console.log(`✅ User ${userId} status: Premium=${isPremium}, Habits=${habitCount}/${limit}`);
-      
-      // Формируем ответ с правильными данными
-      const subscriptionData = {
-        hasSubscription: !!data.subscription_id || (data.is_premium && data.subscription_type),
-        subscription: null,
-        isPremium,
-        habitCount,
-        limit,
-        canCreateMore: habitCount < limit
-      };
-      
-      // Добавляем детали подписки если она есть
-      if ((data.subscription_id || data.subscription_type) && isValid) {
-        subscriptionData.subscription = {
-          id: data.subscription_id,
-          planType: data.plan_type || data.subscription_type,
-          planName: data.plan_name || this.PLANS[data.subscription_type]?.name,
-          startsAt: data.started_at,
-          expiresAt: data.expires_at || data.subscription_expires_at,
-          isActive: isValid,
-          isTrial: data.is_trial || false,
-          daysLeft: (data.expires_at || data.subscription_expires_at) ? 
-            Math.ceil(((new Date(data.expires_at || data.subscription_expires_at)) - now) / (1000 * 60 * 60 * 24)) : null
+      } else {
+        // Lifetime подписка
+        isActive = true;
+        subscription = {
+          isActive: true,
+          planType: userData.subscription_type,
+          planName: this.PLANS[userData.subscription_type]?.name || 'Lifetime Premium',
+          expiresAt: null,
+          daysLeft: null,
+          isTrial: false
         };
       }
-      
-      return subscriptionData;
-    } catch (error) {
-      console.error('❌ Error checking subscription:', error);
-      return {
-        hasSubscription: false,
-        isPremium: false,
-        habitCount: 0,
-        limit: 3,
-        canCreateMore: true,
-        error: error.message
-      };
     }
+    
+    const habitCount = parseInt(userData.habit_count);
+    const limit = isActive ? 999 : 3;
+    
+    console.log(`✅ User ${userId} status: Premium=${isActive}, Habits=${habitCount}/${limit}`);
+    
+    return {
+      hasSubscription: isActive,
+      subscription: subscription,
+      isPremium: isActive,
+      habitCount,
+      limit,
+      canCreateMore: habitCount < limit
+    };
+  } catch (error) {
+    console.error('❌ Error checking subscription:', error);
+    return {
+      hasSubscription: false,
+      isPremium: false,
+      habitCount: 0,
+      limit: 3,
+      canCreateMore: true,
+      error: error.message
+    };
   }
+}
   
   // Деактивировать истекшую подписку
   static async expireSubscription(userId, subscriptionId) {
