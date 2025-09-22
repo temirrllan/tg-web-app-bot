@@ -73,6 +73,7 @@ router.get('/habits/marks', async (req, res) => {
 
 // Получение привычек для конкретной даты
 // Получение привычек для конкретной даты с их актуальными статусами
+// Получение привычек для конкретной даты с их актуальными статусами
 router.get('/habits/date/:date', async (req, res) => {
   try {
     const { date } = req.params;
@@ -108,8 +109,8 @@ router.get('/habits/date/:date', async (req, res) => {
         c.name_en, 
         c.icon as category_icon, 
         c.color,
-        -- Получаем актуальный статус из habit_marks
-        COALESCE(hm.status, 'pending') as today_status,
+        -- ВАЖНО: Получаем статус именно для запрошенной даты
+        COALESCE(hm.status, 'pending') as date_status,
         hm.id as mark_id,
         hm.marked_at,
         -- Подсчитываем участников для связанных привычек
@@ -141,29 +142,40 @@ router.get('/habits/date/:date', async (req, res) => {
       [userId, dayOfWeek, date]
     );
     
+    // ВАЖНО: Преобразуем date_status в today_status для совместимости с фронтендом
+    // но только если запрашивается сегодняшний день
+    const today = new Date().toISOString().split('T')[0];
+    const habitsWithCorrectStatus = result.rows.map(habit => ({
+      ...habit,
+      today_status: habit.date_status,
+      // Удаляем date_status чтобы не было дублирования
+      date_status: undefined
+    }));
+    
     // Логируем статусы для отладки
-    console.log(`Found ${result.rows.length} habits for ${date}:`);
-    result.rows.forEach(h => {
+    console.log(`Found ${habitsWithCorrectStatus.length} habits for ${date}:`);
+    habitsWithCorrectStatus.forEach(h => {
       console.log(`- "${h.title}" (ID: ${h.id}): ${h.today_status}, Members: ${h.members_count}`);
     });
     
-    const completedCount = result.rows.filter(h => h.today_status === 'completed').length;
-    const failedCount = result.rows.filter(h => h.today_status === 'failed').length;
-    const skippedCount = result.rows.filter(h => h.today_status === 'skipped').length;
-    const pendingCount = result.rows.filter(h => h.today_status === 'pending').length;
+    const completedCount = habitsWithCorrectStatus.filter(h => h.today_status === 'completed').length;
+    const failedCount = habitsWithCorrectStatus.filter(h => h.today_status === 'failed').length;
+    const skippedCount = habitsWithCorrectStatus.filter(h => h.today_status === 'skipped').length;
+    const pendingCount = habitsWithCorrectStatus.filter(h => h.today_status === 'pending').length;
     
     console.log(`Stats: completed=${completedCount}, failed=${failedCount}, skipped=${skippedCount}, pending=${pendingCount}`);
     
     res.json({
       success: true,
-      habits: result.rows,
+      habits: habitsWithCorrectStatus,
       stats: {
         completed: completedCount,
-        total: result.rows.length,
+        total: habitsWithCorrectStatus.length,
         failed: failedCount,
         skipped: skippedCount,
         pending: pendingCount
-      }
+      },
+      date: date // Явно возвращаем дату для которой получены данные
     });
   } catch (error) {
     console.error('Get habits for date error:', error);
