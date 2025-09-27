@@ -521,8 +521,7 @@ router.patch('/user/language', authMiddleware, async (req, res) => {
       success: false,
       error: 'Failed to update language'
     });
-  }
-});
+  }})
 // Удалить участника из привычки
 // Удалить участника из привычки
 // Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
