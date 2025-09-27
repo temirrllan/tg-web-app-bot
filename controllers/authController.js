@@ -1,3 +1,4 @@
+// Обновите controllers/authController.js
 const pool = require('../config/database');
 
 const authController = {
@@ -24,8 +25,19 @@ const authController = {
       let isNewUser = false;
 
       if (checkUser.rows.length === 0) {
-        // Создаем нового пользователя
-        // ВАЖНО: is_premium по умолчанию false - это подписка в нашем приложении
+        // Определяем начальный язык для нового пользователя
+        let initialLanguage = 'en';
+        if (user.language_code) {
+          if (user.language_code === 'ru') {
+            initialLanguage = 'ru';
+          } else if (user.language_code === 'kk' || user.language_code === 'kz') {
+            initialLanguage = 'kk';
+          }
+        }
+        
+        console.log(`Creating new user with language: ${initialLanguage}`);
+        
+        // Создаем нового пользователя с языком
         const insertUser = await pool.query(
           `INSERT INTO users (
              telegram_id, username, first_name, last_name, language, is_premium, photo_url
@@ -36,24 +48,25 @@ const authController = {
             user.username || null,
             user.first_name || '',
             user.last_name || '',
-            user.language_code || 'en',
-            false, // ВСЕГДА false при регистрации - это наша подписка, не Telegram Premium
+            initialLanguage, // Устанавливаем язык на основе Telegram
+            false,
             user.photo_url || null
           ]
         );
 
         userData = insertUser.rows[0];
         isNewUser = true;
+        
+        console.log(`✅ New user created with language: ${userData.language}`);
       } else {
-        // Обновляем существующего пользователя
-        // НЕ обновляем is_premium - оно управляется только через покупку подписки
+        // Для существующего пользователя обновляем данные, НО НЕ ЯЗЫК
+        // Язык меняется только явно через настройки
         const updateUser = await pool.query(
           `UPDATE users SET
              username = $2,
              first_name = $3,
              last_name = $4,
-             language = $5,
-             photo_url = $6
+             photo_url = $5
            WHERE telegram_id = $1
            RETURNING *`,
           [
@@ -61,17 +74,22 @@ const authController = {
             user.username || checkUser.rows[0].username,
             user.first_name || checkUser.rows[0].first_name,
             user.last_name || checkUser.rows[0].last_name,
-            user.language_code || checkUser.rows[0].language || 'en',
             user.photo_url || checkUser.rows[0].photo_url
           ]
         );
 
         userData = updateUser.rows[0];
+        
+        console.log(`✅ User logged in with language: ${userData.language}`);
       }
 
+      // ВАЖНО: Всегда возвращаем язык пользователя
       res.json({
         success: true,
-        user: userData,
+        user: {
+          ...userData,
+          language: userData.language || 'en' // Гарантируем наличие языка
+        },
         isNewUser
       });
     } catch (error) {
