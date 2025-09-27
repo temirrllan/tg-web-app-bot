@@ -443,7 +443,86 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
     });
   }
 });
+// Добавьте в routes/habitRoutes.js после других роутов
 
+// Обновить язык пользователя
+// Добавьте в routes/habitRoutes.js после других роутов
+
+// Получить профиль пользователя
+router.get('/user/profile', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const result = await db.query(
+      'SELECT id, telegram_id, username, first_name, last_name, language, is_premium, photo_url FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      user: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Get user profile error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get user profile'
+    });
+  }
+});
+
+// Обновить язык пользователя
+router.patch('/user/language', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { language } = req.body;
+    
+    // Валидация языка
+    const validLanguages = ['en', 'ru', 'kk'];
+    if (!validLanguages.includes(language)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid language. Valid options: ${validLanguages.join(', ')}`
+      });
+    }
+    
+    console.log(`Updating language for user ${userId} to ${language}`);
+    
+    // Обновляем язык в базе данных
+    const result = await db.query(
+      'UPDATE users SET language = $1 WHERE id = $2 RETURNING id, language',
+      [language, userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    console.log(`✅ Language updated to ${language} for user ${userId}`);
+    
+    res.json({
+      success: true,
+      language: result.rows[0].language,
+      message: `Language updated to ${language}`
+    });
+  } catch (error) {
+    console.error('Update language error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update language'
+    });
+  }
+});
 // Удалить участника из привычки
 // Удалить участника из привычки
 // Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
