@@ -38,15 +38,22 @@ const authController = {
           const langCode = user.language_code.toLowerCase();
           console.log(`🌍 Telegram language code received: "${langCode}"`);
           
-          // ИСПРАВЛЕНО: Более точное определение языка
-          if (langCode === 'ru' || langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
-            initialLanguage = 'ru';
-          } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-') || langCode.startsWith('kz-') || langCode.startsWith('kk_') || langCode.startsWith('kz_')) {
+          // ИСПРАВЛЕННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ЯЗЫКА
+          if (langCode === 'kk' || langCode.startsWith('kk-') || langCode.startsWith('kk_') || 
+              langCode === 'kz' || langCode.startsWith('kz-') || langCode.startsWith('kz_')) {
+            // Казахский язык - сохраняем как 'kk'
             initialLanguage = 'kk';
+            console.log('✅ Detected Kazakh language');
+          } else if (langCode === 'ru' || langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
+            // Русский язык
+            initialLanguage = 'ru';
+            console.log('✅ Detected Russian language');
           } else if (langCode === 'en' || langCode.startsWith('en-') || langCode.startsWith('en_')) {
+            // Английский язык
             initialLanguage = 'en';
+            console.log('✅ Detected English language');
           } else {
-            // Для ЛЮБОГО другого языка используем английский
+            // Любой другой язык - используем английский по умолчанию
             initialLanguage = 'en';
             console.log(`🌍 Unknown language code "${langCode}", defaulting to English`);
           }
@@ -82,7 +89,8 @@ const authController = {
           id: userData.id,
           telegram_id: userData.telegram_id,
           language: userData.language,
-          first_name: userData.first_name
+          first_name: userData.first_name,
+          telegram_language_code: user.language_code
         });
       } else {
         // СУЩЕСТВУЮЩИЙ ПОЛЬЗОВАТЕЛЬ
