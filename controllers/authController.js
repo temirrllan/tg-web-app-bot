@@ -42,7 +42,8 @@ const authController = {
           const langCode = String(user.language_code).toLowerCase().trim();
           console.log(`📝 Processing language code: "${langCode}"`);
           
-          // Определяем язык на основе language_code из Telegram
+          // ИСПРАВЛЕНИЕ: Более точное определение языка
+          // Проверяем точное совпадение или начало строки
           if (langCode === 'ru' || langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
             initialLanguage = 'ru';
             console.log('🇷🇺 Detected Russian');
@@ -50,14 +51,16 @@ const authController = {
             initialLanguage = 'kk';
             console.log('🇰🇿 Detected Kazakh');
           } else if (langCode === 'en' || langCode.startsWith('en-') || langCode.startsWith('en_')) {
+            // ВАЖНО: Явно проверяем английский
             initialLanguage = 'en';
-            console.log('🇬🇧 Detected English');
+            console.log('🇬🇧 Detected English explicitly');
           } else {
-            // Для любого другого языка используем английский
+            // Для ЛЮБОГО другого языка используем английский как дефолт
             initialLanguage = 'en';
-            console.log(`🌍 Unsupported language "${langCode}", using English as default`);
+            console.log(`🌍 Language "${langCode}" not in supported list (ru, kk, en), using English as default`);
           }
         } else {
+          // Если language_code вообще не передан - используем английский
           console.log('⚠️ No language_code provided, using English as default');
           initialLanguage = 'en';
         }
@@ -88,7 +91,8 @@ const authController = {
           id: userData.id,
           telegram_id: userData.telegram_id,
           language: userData.language,
-          username: userData.username
+          username: userData.username,
+          is_new_user: isNewUser
         });
       } else {
         // СУЩЕСТВУЮЩИЙ ПОЛЬЗОВАТЕЛЬ
@@ -99,7 +103,8 @@ const authController = {
           id: userData.id,
           telegram_id: userData.telegram_id,
           saved_language: userData.language,
-          telegram_language: user.language_code
+          telegram_language: user.language_code,
+          note: 'Using saved language from DB, NOT from Telegram'
         });
         
         // Обновляем только базовые данные (НЕ язык!)
@@ -129,7 +134,7 @@ const authController = {
       if (!userData.language || !['en', 'ru', 'kk'].includes(userData.language)) {
         console.log(`⚠️ Invalid language in DB: "${userData.language}", setting to "en"`);
         
-        // Исправляем некорректный язык
+        // Исправляем некорректный язык на английский
         const fixLanguage = await pool.query(
           'UPDATE users SET language = $1 WHERE id = $2 RETURNING language',
           ['en', userData.id]
@@ -155,7 +160,7 @@ const authController = {
         isNewUser
       };
       
-      console.log(`📤 Sending response with language: "${responseData.user.language}"`);
+      console.log(`📤 Sending response with language: "${responseData.user.language}" (isNewUser: ${isNewUser})`);
       res.json(responseData);
       
     } catch (error) {
