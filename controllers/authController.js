@@ -3,6 +3,7 @@ const pool = require('../config/database');
 const authController = {
   async telegramAuth(req, res) {
     console.log('🎯 authController.telegramAuth called');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
 
     try {
       const { user, initData } = req.body;
@@ -14,11 +15,12 @@ const authController = {
         });
       }
 
-      console.log('User data received:', {
+      console.log('👤 User data received:', {
         id: user.id,
         username: user.username,
+        first_name: user.first_name,
         language_code: user.language_code,
-        first_name: user.first_name
+        is_premium: user.is_premium
       });
 
       // Проверяем, существует ли пользователь
@@ -32,26 +34,35 @@ const authController = {
 
       if (checkUser.rows.length === 0) {
         // НОВЫЙ ПОЛЬЗОВАТЕЛЬ - определяем язык по Telegram
-        let initialLanguage = 'en'; // По умолчанию английский
+        let initialLanguage = 'en'; // По умолчанию ВСЕГДА английский
+        
+        console.log(`🔍 Detecting language from Telegram language_code: "${user.language_code}"`);
         
         if (user.language_code) {
-          const langCode = user.language_code.toLowerCase();
-          console.log(`Telegram language code: ${langCode}`);
+          const langCode = String(user.language_code).toLowerCase().trim();
+          console.log(`📝 Processing language code: "${langCode}"`);
           
           // Определяем язык на основе language_code из Telegram
-          if (langCode === 'ru' || langCode.startsWith('ru-')) {
+          if (langCode === 'ru' || langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
             initialLanguage = 'ru';
-          } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-') || langCode.startsWith('kz-')) {
+            console.log('🇷🇺 Detected Russian');
+          } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-') || langCode.startsWith('kz-') || langCode.startsWith('kk_') || langCode.startsWith('kz_')) {
             initialLanguage = 'kk';
-          } else if (langCode === 'en' || langCode.startsWith('en-')) {
+            console.log('🇰🇿 Detected Kazakh');
+          } else if (langCode === 'en' || langCode.startsWith('en-') || langCode.startsWith('en_')) {
             initialLanguage = 'en';
+            console.log('🇬🇧 Detected English');
           } else {
             // Для любого другого языка используем английский
             initialLanguage = 'en';
+            console.log(`🌍 Unsupported language "${langCode}", using English as default`);
           }
+        } else {
+          console.log('⚠️ No language_code provided, using English as default');
+          initialLanguage = 'en';
         }
         
-        console.log(`🌍 Creating new user with language: ${initialLanguage} (from Telegram: ${user.language_code})`);
+        console.log(`✅ Final language for new user: ${initialLanguage}`);
         
         // Создаем нового пользователя с определенным языком
         const insertUser = await pool.query(
@@ -73,11 +84,23 @@ const authController = {
         userData = insertUser.rows[0];
         isNewUser = true;
         
-        console.log(`✅ New user created with ID: ${userData.id}, Language: ${userData.language}`);
+        console.log(`✅ New user created:`, {
+          id: userData.id,
+          telegram_id: userData.telegram_id,
+          language: userData.language,
+          username: userData.username
+        });
       } else {
         // СУЩЕСТВУЮЩИЙ ПОЛЬЗОВАТЕЛЬ
         // НЕ меняем язык! Используем сохраненный в БД
         userData = checkUser.rows[0];
+        
+        console.log(`👤 Existing user found:`, {
+          id: userData.id,
+          telegram_id: userData.telegram_id,
+          saved_language: userData.language,
+          telegram_language: user.language_code
+        });
         
         // Обновляем только базовые данные (НЕ язык!)
         const updateUser = await pool.query(
@@ -99,11 +122,25 @@ const authController = {
 
         userData = updateUser.rows[0];
         
-        console.log(`✅ Existing user logged in. ID: ${userData.id}, Saved language: ${userData.language}`);
+        console.log(`✅ User data updated (language unchanged): ${userData.language}`);
+      }
+
+      // Проверяем, что язык корректный
+      if (!userData.language || !['en', 'ru', 'kk'].includes(userData.language)) {
+        console.log(`⚠️ Invalid language in DB: "${userData.language}", setting to "en"`);
+        
+        // Исправляем некорректный язык
+        const fixLanguage = await pool.query(
+          'UPDATE users SET language = $1 WHERE id = $2 RETURNING language',
+          ['en', userData.id]
+        );
+        
+        userData.language = 'en';
+        console.log('✅ Language fixed to "en"');
       }
 
       // ВАЖНО: Всегда возвращаем язык пользователя из БД
-      res.json({
+      const responseData = {
         success: true,
         user: {
           id: userData.id,
@@ -111,14 +148,16 @@ const authController = {
           username: userData.username,
           first_name: userData.first_name,
           last_name: userData.last_name,
-          language: userData.language || 'en', // Гарантируем наличие языка
+          language: userData.language, // Язык из БД
           is_premium: userData.is_premium,
           photo_url: userData.photo_url
         },
         isNewUser
-      });
+      };
       
-      console.log(`📤 Response sent with language: ${userData.language}`);
+      console.log(`📤 Sending response with language: "${responseData.user.language}"`);
+      res.json(responseData);
+      
     } catch (error) {
       console.error('💥 Auth error:', error);
       res.status(500).json({
