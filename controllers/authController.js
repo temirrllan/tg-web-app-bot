@@ -35,31 +35,47 @@ const authController = {
         let initialLanguage = 'en'; // По умолчанию английский
         
         if (user.language_code) {
-          const langCode = user.language_code.toLowerCase();
+          const langCode = user.language_code.toLowerCase().trim();
           console.log(`🌍 Telegram language code received: "${langCode}"`);
           
-          // ИСПРАВЛЕННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ЯЗЫКА
-          if (langCode === 'kk' || langCode.startsWith('kk-') || langCode.startsWith('kk_') || 
-              langCode === 'kz' || langCode.startsWith('kz-') || langCode.startsWith('kz_')) {
-            // Казахский язык - сохраняем как 'kk'
+          // ИСПРАВЛЕННАЯ ЛОГИКА: проверяем точное совпадение и префиксы
+          // Важно: проверяем сначала точные совпадения, потом префиксы
+          
+          // Проверка на казахский
+          if (langCode === 'kk' || langCode === 'kz' || 
+              langCode.startsWith('kk-') || langCode.startsWith('kk_') ||
+              langCode.startsWith('kz-') || langCode.startsWith('kz_')) {
             initialLanguage = 'kk';
             console.log('✅ Detected Kazakh language');
-          } else if (langCode === 'ru' || langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
-            // Русский язык
+          }
+          // Проверка на русский
+          else if (langCode === 'ru' || 
+                   langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
             initialLanguage = 'ru';
             console.log('✅ Detected Russian language');
-          } else if (langCode === 'en' || langCode.startsWith('en-') || langCode.startsWith('en_')) {
-            // Английский язык
+          }
+          // Проверка на английский
+          else if (langCode === 'en' || 
+                   langCode.startsWith('en-') || langCode.startsWith('en_')) {
             initialLanguage = 'en';
             console.log('✅ Detected English language');
-          } else {
-            // Любой другой язык - используем английский по умолчанию
-            initialLanguage = 'en';
-            console.log(`🌍 Unknown language code "${langCode}", defaulting to English`);
           }
+          // Любой другой язык - английский по умолчанию
+          else {
+            initialLanguage = 'en';
+            console.log(`⚠️ Unknown language code "${langCode}", defaulting to English`);
+          }
+          
+          console.log(`📌 Final decision: language_code="${langCode}" → language="${initialLanguage}"`);
         } else {
           // Если language_code не передан - используем английский
           console.log('⚠️ No language_code provided, defaulting to English');
+          initialLanguage = 'en';
+        }
+        
+        // Дополнительная проверка перед сохранением
+        if (!['en', 'ru', 'kk'].includes(initialLanguage)) {
+          console.error(`❌ Invalid language "${initialLanguage}" detected, forcing English`);
           initialLanguage = 'en';
         }
         
@@ -92,6 +108,11 @@ const authController = {
           first_name: userData.first_name,
           telegram_language_code: user.language_code
         });
+        
+        // Проверяем, что язык сохранился корректно
+        if (userData.language !== initialLanguage) {
+          console.error(`❌ Language mismatch! Expected: ${initialLanguage}, Got: ${userData.language}`);
+        }
       } else {
         // СУЩЕСТВУЮЩИЙ ПОЛЬЗОВАТЕЛЬ
         // НЕ меняем язык! Используем сохраненный в БД
@@ -125,6 +146,18 @@ const authController = {
         });
       }
 
+      // ВАЖНО: Проверяем корректность языка перед отправкой
+      if (!userData.language || !['en', 'ru', 'kk'].includes(userData.language)) {
+        console.error(`❌ Invalid language in DB: "${userData.language}", forcing English`);
+        userData.language = 'en';
+        
+        // Обновляем в БД если нужно
+        await pool.query(
+          'UPDATE users SET language = $1 WHERE id = $2',
+          ['en', userData.id]
+        );
+      }
+
       // ВАЖНО: Всегда возвращаем язык пользователя из БД
       const responseData = {
         success: true,
@@ -134,7 +167,7 @@ const authController = {
           username: userData.username,
           first_name: userData.first_name,
           last_name: userData.last_name,
-          language: userData.language || 'en', // Гарантируем наличие языка
+          language: userData.language, // Гарантированно корректный язык
           is_premium: userData.is_premium,
           photo_url: userData.photo_url
         },
