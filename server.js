@@ -6,10 +6,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const logger = require('./middleware/logger');
 const authRoutes = require('./routes/authRoutes');
 const habitRoutes = require('./routes/habitRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
 const { generalLimiter } = require('./middleware/rateLimit');
 const keepAliveService = require('./services/keepAlive');
-
 const db = require('./config/database');
 const subscriptionCron = require('./services/subscriptionCron');
 const app = express();
@@ -80,7 +78,6 @@ app.get('/health', (req, res) => {
 /** API */
 app.use('/api/auth', authRoutes);
 app.use('/api', habitRoutes);
-app.use('/api/payment', paymentRoutes);
 
 /** ---------- TELEGRAM BOT (WEBHOOK) ---------- */
 console.log('\n🤖 Запуск Telegram бота (webhook)...');
