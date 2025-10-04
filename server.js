@@ -9,7 +9,6 @@ const habitRoutes = require('./routes/habitRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const { generalLimiter } = require('./middleware/rateLimit');
 const keepAliveService = require('./services/keepAlive');
-const paymentRoutes = require('./routes/paymentRoutes');
 
 const db = require('./config/database');
 const subscriptionCron = require('./services/subscriptionCron');
