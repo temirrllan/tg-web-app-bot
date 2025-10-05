@@ -76,77 +76,126 @@ class TelegramStarsService {
    * Обработать успешный платеж
    */
   static async processSuccessfulPayment({ invoiceId, transactionId, telegramPaymentId }) {
-    const client = await db.getClient();
+  const client = await db.getClient();
 
-    try {
-      await client.query('BEGIN');
+  try {
+    await client.query('BEGIN');
 
-      console.log('Processing payment:', { invoiceId, transactionId });
+    console.log('Processing payment:', { invoiceId, transactionId });
 
-      // Получаем информацию об инвойсе
-      const invoiceResult = await client.query(
-        'SELECT * FROM payment_invoices WHERE id = $1',
-        [invoiceId]
-      );
+    // Получаем информацию об инвойсе
+    const invoiceResult = await client.query(
+      'SELECT * FROM payment_invoices WHERE id = $1',
+      [invoiceId]
+    );
 
-      if (invoiceResult.rows.length === 0) {
-        throw new Error('Invoice not found');
-      }
-
-      const invoice = invoiceResult.rows[0];
-
-      // Проверяем, что инвойс еще не был оплачен
-      if (invoice.status === 'paid') {
-        console.log('Invoice already paid');
-        await client.query('ROLLBACK');
-        return { success: false, message: 'Already paid' };
-      }
-
-      // Обновляем статус инвойса
-      await client.query(
-        `UPDATE payment_invoices 
-         SET status = 'paid', 
-             transaction_id = $1,
-             telegram_payment_id = $2,
-             paid_at = CURRENT_TIMESTAMP
-         WHERE id = $3`,
-        [transactionId, telegramPaymentId, invoiceId]
-      );
-
-      // Создаем подписку через SubscriptionService
-      const SubscriptionService = require('./subscriptionService');
-      const subscriptionResult = await SubscriptionService.createSubscription(
-        invoice.user_id,
-        invoice.plan_type,
-        transactionId
-      );
-
-      if (!subscriptionResult.success) {
-        throw new Error('Failed to create subscription');
-      }
-
-      // Отправляем Stars тимлиду
-      if (TEAM_LEAD_TELEGRAM_ID) {
-        await this.transferStarsToTeamLead(invoice.amount, invoice.user_id);
-      }
-
-      await client.query('COMMIT');
-
-      console.log('Payment processed successfully:', subscriptionResult);
-
-      return {
-        success: true,
-        subscription: subscriptionResult.subscription,
-        invoiceId
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Error processing payment:', error);
-      throw error;
-    } finally {
-      client.release();
+    if (invoiceResult.rows.length === 0) {
+      throw new Error('Invoice not found');
     }
+
+    const invoice = invoiceResult.rows[0];
+
+    // Проверяем, что инвойс еще не был оплачен
+    if (invoice.status === 'paid') {
+      console.log('Invoice already paid');
+      await client.query('ROLLBACK');
+      return { success: false, message: 'Already paid' };
+    }
+
+    // Обновляем статус инвойса
+    await client.query(
+      `UPDATE payment_invoices 
+       SET status = 'paid', 
+           transaction_id = $1,
+           telegram_payment_id = $2,
+           paid_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [transactionId, telegramPaymentId, invoiceId]
+    );
+
+    // Создаем подписку через SubscriptionService
+    const SubscriptionService = require('./subscriptionService');
+    const subscriptionResult = await SubscriptionService.createSubscription(
+      invoice.user_id,
+      invoice.plan_type,
+      transactionId
+    );
+
+    if (!subscriptionResult.success) {
+      throw new Error('Failed to create subscription');
+    }
+
+    await client.query('COMMIT');
+
+    // ========== ДОБАВЛЕННЫЙ КОД ДЛЯ УВЕДОМЛЕНИЙ ⬇️ ==========
+    
+    // Отправляем уведомление владельцу о платеже
+    try {
+      const bot = require('../server').bot;
+      
+      if (!process.env.TEAM_LEAD_TELEGRAM_ID) {
+        console.warn('⚠️ TEAM_LEAD_TELEGRAM_ID not set - skipping notification');
+      } else {
+        // Получаем информацию о пользователе
+        const userResult = await db.query(
+          'SELECT first_name, username, telegram_id FROM users WHERE id = $1',
+          [invoice.user_id]
+        );
+        
+        const user = userResult.rows[0];
+        const userName = user?.first_name || user?.username || 'Unknown User';
+        const userTgId = user?.telegram_id || 'N/A';
+        
+        // Формируем сообщение
+        const message = 
+          `💰 <b>Новый платеж получен!</b>\n\n` +
+          `👤 <b>Клиент:</b> ${userName}\n` +
+          `🆔 <b>Telegram ID:</b> ${userTgId}\n` +
+          `📦 <b>План:</b> ${invoice.plan_type.replace('_', ' ').toUpperCase()}\n` +
+          `⭐ <b>Сумма:</b> ${invoice.amount} Stars\n` +
+          `💳 <b>Transaction ID:</b>\n<code>${transactionId}</code>\n` +
+          `📅 <b>Дата:</b> ${new Date().toLocaleString('ru-RU', { 
+            timeZone: 'Asia/Almaty',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+          })}\n\n` +
+          `✅ <i>Stars автоматически зачислены на ваш Telegram аккаунт.</i>\n\n` +
+          `🔗 Проверить: Telegram → Настройки → Premium → Stars`;
+        
+        // Отправляем уведомление
+        await bot.sendMessage(
+          process.env.TEAM_LEAD_TELEGRAM_ID,
+          message,
+          { parse_mode: 'HTML' }
+        );
+        
+        console.log('✅ Payment notification sent to team lead');
+      }
+    } catch (notifyError) {
+      console.error('❌ Failed to send notification to team lead:', notifyError.message);
+      // Не останавливаем процесс если уведомление не отправилось
+    }
+    
+    // ========== КОНЕЦ ДОБАВЛЕННОГО КОДА ⬆️ ==========
+
+    console.log('Payment processed successfully:', subscriptionResult);
+
+    return {
+      success: true,
+      subscription: subscriptionResult.subscription,
+      invoiceId
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error processing payment:', error);
+    throw error;
+  } finally {
+    client.release();
   }
+}
 
   /**
    * Перевести Stars тимлиду
