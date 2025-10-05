@@ -18,7 +18,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_SECRET = process.env.BOT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const WEBAPP_URL = process.env.WEBAPP_URL || FRONTEND_URL;
-const paymentHandler = new TelegramStarsPaymentHandler(bot);
+
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не найден в переменных окружения!');
@@ -86,7 +86,7 @@ console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
 /** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-
+const paymentHandler = new TelegramStarsPaymentHandler(bot);
 // Подготавливаем сервис напоминаний (запустим после старта сервера)
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
