@@ -1,4 +1,6 @@
-// services/telegramStarsPaymentHandler.js - ПОЛНАЯ ЗАМЕНА
+// services/telegramStarsPaymentHandler.js
+// Полная реализация обработки платежей через Telegram Stars
+
 const db = require('../config/database');
 const SubscriptionService = require('./subscriptionService');
 
@@ -11,7 +13,9 @@ class TelegramStarsPaymentHandler {
   setupHandlers() {
     console.log('🔐 Setting up Telegram Stars payment handlers...');
 
-    // Обработчик pre_checkout_query - ОБЯЗАТЕЛЕН!
+    // ============================================
+    // КРИТИЧНО: Обработчик pre_checkout_query
+    // ============================================
     this.bot.on('pre_checkout_query', async (query) => {
       console.log('💳 Pre-checkout query received:', {
         id: query.id,
@@ -24,11 +28,34 @@ class TelegramStarsPaymentHandler {
       try {
         // Парсим payload
         const payload = JSON.parse(query.invoice_payload);
-        const { invoiceId, userId, planType } = payload;
+        const { userId, planType, amount, invoiceId } = payload;
+
+        // Проверяем валидность данных
+        if (!userId || !planType || !amount) {
+          console.error('❌ Invalid payload data');
+          await this.bot.answerPreCheckoutQuery(query.id, false, {
+            error_message: 'Invalid payment data'
+          });
+          return;
+        }
+
+        // Проверяем существование пользователя
+        const userCheck = await db.query(
+          'SELECT id, telegram_id FROM users WHERE id = $1',
+          [userId]
+        );
+
+        if (userCheck.rows.length === 0) {
+          console.error('❌ User not found:', userId);
+          await this.bot.answerPreCheckoutQuery(query.id, false, {
+            error_message: 'User not found'
+          });
+          return;
+        }
 
         // Проверяем существование инвойса
         const invoiceCheck = await db.query(
-          'SELECT id, status, user_id FROM payment_invoices WHERE id = $1',
+          'SELECT id, status FROM payment_invoices WHERE id = $1',
           [invoiceId]
         );
 
@@ -40,10 +67,7 @@ class TelegramStarsPaymentHandler {
           return;
         }
 
-        const invoice = invoiceCheck.rows[0];
-
-        // Проверяем статус
-        if (invoice.status === 'paid') {
+        if (invoiceCheck.rows[0].status === 'paid') {
           console.warn('⚠️ Invoice already paid:', invoiceId);
           await this.bot.answerPreCheckoutQuery(query.id, false, {
             error_message: 'This invoice has already been paid'
@@ -51,16 +75,7 @@ class TelegramStarsPaymentHandler {
           return;
         }
 
-        // Проверяем владельца
-        if (invoice.user_id !== parseInt(userId)) {
-          console.error('❌ User mismatch');
-          await this.bot.answerPreCheckoutQuery(query.id, false, {
-            error_message: 'Invalid invoice'
-          });
-          return;
-        }
-
-        // Обновляем статус на processing
+        // Обновляем статус инвойса на "processing"
         await db.query(
           `UPDATE payment_invoices 
            SET status = 'processing',
@@ -70,26 +85,29 @@ class TelegramStarsPaymentHandler {
           [invoiceId, query.id]
         );
 
-        // ВАЖНО: Отвечаем Telegram что все ОК
+        // ✅ ОТВЕЧАЕМ TELEGRAM ЧТО ВСЁ ОК
         await this.bot.answerPreCheckoutQuery(query.id, true);
         
-        console.log('✅ Pre-checkout approved for invoice:', invoiceId);
+        console.log('✅ Pre-checkout query approved for invoice:', invoiceId);
       } catch (error) {
-        console.error('❌ Pre-checkout error:', error);
+        console.error('❌ Pre-checkout query error:', error);
         
+        // Отклоняем платеж в случае ошибки
         try {
           await this.bot.answerPreCheckoutQuery(query.id, false, {
-            error_message: 'Payment processing error'
+            error_message: 'Payment processing error. Please try again.'
           });
         } catch (answerError) {
-          console.error('❌ Failed to answer pre-checkout:', answerError);
+          console.error('❌ Failed to answer pre-checkout query:', answerError);
         }
       }
     });
-    // Продолжение файла services/telegramStarsPaymentHandler.js
 
-    // Обработчик successful_payment
+    // ============================================
+    // КРИТИЧНО: Обработчик successful_payment
+    // ============================================
     this.bot.on('message', async (msg) => {
+      // Проверяем наличие successful_payment
       if (!msg.successful_payment) return;
 
       const payment = msg.successful_payment;
@@ -109,15 +127,16 @@ class TelegramStarsPaymentHandler {
 
         // Парсим payload
         const payload = JSON.parse(payment.invoice_payload);
-        const { invoiceId, userId, planType } = payload;
+        const { userId, planType, amount, invoiceId } = payload;
 
         console.log('📝 Processing payment for:', {
-          invoiceId,
           userId,
-          planType
+          planType,
+          amount,
+          invoiceId
         });
 
-        // Получаем инвойс
+        // Получаем информацию об инвойсе
         const invoiceResult = await client.query(
           'SELECT * FROM payment_invoices WHERE id = $1',
           [invoiceId]
@@ -129,27 +148,26 @@ class TelegramStarsPaymentHandler {
 
         const invoice = invoiceResult.rows[0];
 
-        // Проверяем дубли
+        // Проверяем статус инвойса
         if (invoice.status === 'paid') {
           console.warn('⚠️ Invoice already paid, skipping:', invoiceId);
           await client.query('ROLLBACK');
           
+          // Отправляем пользователю уведомление
           await this.bot.sendMessage(
             msg.chat.id,
-            '✅ Your subscription is already active!',
-            { parse_mode: 'HTML' }
+            '✅ This subscription is already active!'
           );
           return;
         }
 
-        // Обновляем инвойс
+        // Обновляем статус инвойса
         await client.query(
           `UPDATE payment_invoices 
            SET status = 'paid',
                transaction_id = $2,
                telegram_payment_id = $3,
-               paid_at = CURRENT_TIMESTAMP,
-               updated_at = CURRENT_TIMESTAMP
+               paid_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
           [
             invoiceId,
@@ -160,7 +178,11 @@ class TelegramStarsPaymentHandler {
 
         console.log('✅ Invoice marked as paid:', invoiceId);
 
-        // Активируем подписку
+        // ============================================
+        // АКТИВИРУЕМ ПОДПИСКУ
+        // ============================================
+        console.log('🎁 Activating subscription for user:', userId);
+
         const subscriptionResult = await SubscriptionService.createSubscription(
           userId,
           planType,
@@ -171,11 +193,13 @@ class TelegramStarsPaymentHandler {
           throw new Error('Failed to activate subscription');
         }
 
+        console.log('✅ Subscription activated:', subscriptionResult);
+
         await client.query('COMMIT');
 
-        console.log('✅ Subscription activated successfully');
-
-        // Отправляем подтверждение пользователю
+        // ============================================
+        // УВЕДОМЛЯЕМ ПОЛЬЗОВАТЕЛЯ
+        // ============================================
         const plan = SubscriptionService.PLANS[planType];
         
         await this.bot.sendMessage(
@@ -200,8 +224,10 @@ class TelegramStarsPaymentHandler {
           }
         );
 
-        // Уведомление владельцу бота
-        if (process.env.OWNER_TELEGRAM_ID) {
+        // ============================================
+        // УВЕДОМЛЯЕМ ВЛАДЕЛЬЦА БОТА
+        // ============================================
+        if (process.env.TEAM_LEAD_TELEGRAM_ID) {
           const userResult = await db.query(
             'SELECT first_name, username, telegram_id FROM users WHERE id = $1',
             [userId]
@@ -211,20 +237,24 @@ class TelegramStarsPaymentHandler {
           const userName = user?.first_name || user?.username || 'Unknown';
           
           await this.bot.sendMessage(
-            process.env.OWNER_TELEGRAM_ID,
-            `💰 <b>New Payment!</b>\n\n` +
-            `👤 Customer: ${userName}\n` +
-            `🆔 Telegram ID: ${user.telegram_id}\n` +
-            `📦 Plan: ${plan.name}\n` +
-            `⭐ Amount: ${payment.total_amount} Stars\n` +
-            `💳 Transaction: <code>${payment.telegram_payment_charge_id}</code>\n` +
-            `📅 Date: ${new Date().toISOString()}\n\n` +
-            `✅ Stars credited to your account.`,
+            process.env.TEAM_LEAD_TELEGRAM_ID,
+            `💰 <b>New Payment Received!</b>\n\n` +
+            `👤 <b>Customer:</b> ${userName}\n` +
+            `🆔 <b>Telegram ID:</b> ${user.telegram_id}\n` +
+            `📦 <b>Plan:</b> ${plan.name}\n` +
+            `⭐ <b>Amount:</b> ${amount} Stars\n` +
+            `💳 <b>Transaction ID:</b>\n<code>${payment.telegram_payment_charge_id}</code>\n` +
+            `📅 <b>Date:</b> ${new Date().toLocaleString('en-US', {
+              timeZone: 'UTC',
+              dateStyle: 'medium',
+              timeStyle: 'short'
+            })}\n\n` +
+            `✅ <i>Stars automatically credited to your Telegram account.</i>`,
             { parse_mode: 'HTML' }
           );
         }
 
-        console.log('🎊 Payment processed successfully!');
+        console.log('🎊 Payment fully processed successfully!');
 
       } catch (error) {
         await client.query('ROLLBACK');
@@ -235,29 +265,52 @@ class TelegramStarsPaymentHandler {
           await this.bot.sendMessage(
             msg.chat.id,
             '❌ <b>Payment Processing Error</b>\n\n' +
-            'Your payment was received but there was an error activating your subscription.\n\n' +
-            'Please contact support with this ID:\n' +
+            'Your payment was received, but there was an error activating your subscription.\n\n' +
+            'Please contact support with this Transaction ID:\n' +
             `<code>${payment.telegram_payment_charge_id}</code>`,
             { parse_mode: 'HTML' }
           );
         } catch (notifyError) {
-          console.error('❌ Failed to notify user:', notifyError);
+          console.error('❌ Failed to notify user about error:', notifyError);
+        }
+
+        // Уведомляем владельца бота об ошибке
+        if (process.env.TEAM_LEAD_TELEGRAM_ID) {
+          try {
+            await this.bot.sendMessage(
+              process.env.TEAM_LEAD_TELEGRAM_ID,
+              `⚠️ <b>Payment Processing Error!</b>\n\n` +
+              `💳 Transaction ID: <code>${payment.telegram_payment_charge_id}</code>\n` +
+              `❌ Error: ${error.message}\n\n` +
+              `⚠️ Manual intervention required!`,
+              { parse_mode: 'HTML' }
+            );
+          } catch (ownerNotifyError) {
+            console.error('❌ Failed to notify owner:', ownerNotifyError);
+          }
         }
       } finally {
         client.release();
       }
     });
 
-    console.log('✅ Payment handlers configured');
+    console.log('✅ Telegram Stars payment handlers configured');
   }
 
-  // Метод для ручной проверки статуса платежа
+  // ============================================
+  // Вспомогательные методы
+  // ============================================
+
+  /**
+   * Проверить статус платежа
+   */
   async checkPaymentStatus(invoiceId) {
     try {
       const result = await db.query(
         `SELECT 
           pi.*,
-          s.is_active as subscription_active
+          s.is_active as subscription_active,
+          s.plan_type as subscription_plan
          FROM payment_invoices pi
          LEFT JOIN subscriptions s ON s.transaction_id = pi.transaction_id
          WHERE pi.id = $1`,
@@ -279,6 +332,37 @@ class TelegramStarsPaymentHandler {
       };
     } catch (error) {
       console.error('Error checking payment status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Получить список платежей пользователя
+   */
+  async getUserPayments(userId, limit = 20) {
+    try {
+      const result = await db.query(
+        `SELECT 
+          id,
+          plan_type,
+          amount,
+          status,
+          created_at,
+          paid_at,
+          telegram_payment_id
+         FROM payment_invoices
+         WHERE user_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [userId, limit]
+      );
+
+      return {
+        success: true,
+        payments: result.rows
+      };
+    } catch (error) {
+      console.error('Error getting user payments:', error);
       throw error;
     }
   }
