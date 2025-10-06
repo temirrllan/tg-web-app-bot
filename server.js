@@ -11,7 +11,6 @@ const keepAliveService = require('./services/keepAlive');
 const db = require('./config/database');
 const subscriptionCron = require('./services/subscriptionCron');
 const app = express();
-const TelegramStarsPaymentHandler = require('./services/telegramStarsPaymentHandler');
 
 const PORT = Number(process.env.PORT || 3001);
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -69,7 +68,8 @@ app.get('/', (req, res) => {
     status: 'ok',
     service: 'habit-tracker',
     timestamp: new Date().toISOString(),
-    bot: 'active'
+    bot: 'active',
+    payments: 'enabled'
   });
 });
 
@@ -86,11 +86,12 @@ console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
 /** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-const paymentHandler = new TelegramStarsPaymentHandler(bot);
 // Подготавливаем сервис напоминаний (запустим после старта сервера)
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
-
+const TelegramStarsPaymentHandler = require('./services/telegramStarsPaymentHandler');
+const paymentHandler = new TelegramStarsPaymentHandler(bot);
+app.set('trust proxy', 1);
 /** единый путь webhook — включаем токен в путь */
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
@@ -113,7 +114,12 @@ app.post(WEBHOOK_PATH, (req, res) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
-
+// Обработка успешного платежа
+  if (msg.successful_payment) {
+    console.log('💰 Payment received via message event');
+    // Обработка уже происходит в paymentHandler
+    return;
+  }
   if (text.startsWith('/start')) {
     const startParam = text.split(' ')[1];
     
@@ -413,7 +419,25 @@ bot.on('message', async (msg) => {
       }
     });
   }
-
+if (text === '/premium') {
+    await bot.sendMessage(
+      chatId,
+      '⭐ *Premium Features:*\n\n' +
+      '• Unlimited habits\n' +
+      '• Advanced statistics\n' +
+      '• Priority support\n\n' +
+      'Open the app to subscribe!',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[{
+            text: '💎 Get Premium',
+            web_app: { url: `${WEBAPP_URL}#premium` }
+          }]]
+        }
+      }
+    );
+  }
   if (text === '⚙️ Настройки') {
     await bot.sendMessage(
       chatId,
@@ -504,7 +528,8 @@ bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
-  
+  // Ваша существующая логика обработки callback
+  await bot.answerCallbackQuery(callbackQuery.id)
   console.log(`📲 Callback received: ${data} from chat ${chatId}`);
   
   if (data.startsWith('mark_done_')) {
@@ -710,7 +735,7 @@ subscriptionCron.start();
     const publicBase = process.env.BACKEND_PUBLIC_URL || ''; // если зададите — поставим отсюда
     if (publicBase) {
       const webhookUrl = `${publicBase}${WEBHOOK_PATH}`;
-      await bot.setWebHook(webhookUrl, { secret_token: BOT_SECRET, drop_pending_updates: true });
+      await bot.setWebHook(webhookUrl, { secret_token: BOT_SECRET, drop_pending_updates: true, allowed_updates: ['message', 'callback_query', 'pre_checkout_query'] });
       console.log(`✅ Webhook установлен: ${webhookUrl}`);
     } else {
       console.log('ℹ️ BACKEND_PUBLIC_URL не задан — webhook не переустанавливаем на старте (используйте setWebhook вручную).');
@@ -726,6 +751,8 @@ process.on('SIGTERM', () => {
   reminderService.stop();
   keepAliveService.stop();
   server.close(() => process.exit(0));
+  subscriptionCron.stop();
+
 });
 
 process.on('SIGINT', () => {
@@ -734,7 +761,7 @@ process.on('SIGINT', () => {
   keepAliveService.stop();
   server.close(() => process.exit(0));
 });
-subscriptionCron.stop();
+// subscriptionCron.stop();
 // Экспортируем бота для использования в других модулях
 module.exports.bot = bot;
 module.exports.paymentHandler = paymentHandler;
