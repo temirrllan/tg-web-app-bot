@@ -8,7 +8,6 @@ const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
 const db = require('../config/database');
 const SubscriptionService = require('../services/subscriptionService');
-const subscriptionController = require('../controllers/subscriptionController');
 
 // Категории
 router.get('/categories', categoryController.getAll);
@@ -22,24 +21,6 @@ router.get('/habits', habitController.getAll);
 router.get('/habits/today', habitController.getTodayHabits);
 router.patch('/habits/:id', habitController.update);
 router.delete('/habits/:id', habitController.delete);
-
-// Создать инвойс для оплаты
-router.post('/subscription/create-invoice', authMiddleware, subscriptionController.createInvoice);
-
-// Webhook для обработки платежей от Telegram
-router.post('/subscription/payment-webhook', subscriptionController.handlePaymentWebhook);
-
-// Проверить статус платежа
-router.get('/subscription/payment-status/:invoiceId', authMiddleware, subscriptionController.checkPaymentStatus);
-
-// Применить промокод
-router.post('/subscription/apply-promo', authMiddleware, subscriptionController.applyPromoCode);
-
-// Отменить платеж
-router.post('/subscription/cancel-payment/:invoiceId', authMiddleware, subscriptionController.cancelPayment);
-
-// История платежей
-router.get('/subscription/payment-history', authMiddleware, subscriptionController.getPaymentHistory);
 
 // Новый эндпоинт для получения отметок по дате
 // Получение отметок привычек для конкретной даты

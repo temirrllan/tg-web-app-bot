@@ -11,14 +11,12 @@ const keepAliveService = require('./services/keepAlive');
 const db = require('./config/database');
 const subscriptionCron = require('./services/subscriptionCron');
 const app = express();
-const TelegramStarsPaymentHandler = require('./services/telegramStarsPaymentHandler');
 
 const PORT = Number(process.env.PORT || 3001);
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_SECRET = process.env.BOT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const WEBAPP_URL = process.env.WEBAPP_URL || FRONTEND_URL;
-
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не найден в переменных окружения!');
@@ -86,7 +84,7 @@ console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
 /** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-const paymentHandler = new TelegramStarsPaymentHandler(bot);
+
 // Подготавливаем сервис напоминаний (запустим после старта сервера)
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
@@ -737,4 +735,3 @@ process.on('SIGINT', () => {
 subscriptionCron.stop();
 // Экспортируем бота для использования в других модулях
 module.exports.bot = bot;
-module.exports.paymentHandler = paymentHandler;
