@@ -1359,6 +1359,157 @@ router.get('/subscription/debug', authMiddleware, async (req, res) => {
     });
   }
 });
+
+// Проверка лимитов на добавление друзей
+router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    console.log(`🔍 Checking friend limit for habit ${id}, user ${userId}`);
+    
+    // Проверяем, что привычка принадлежит пользователю
+    const habitCheck = await db.query(
+      'SELECT id, parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    
+    if (habitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
+    
+    const habit = habitCheck.rows[0];
+    const targetHabitId = habit.parent_habit_id || habit.id;
+    
+    // Получаем статус подписки пользователя
+    const userResult = await db.query(
+      'SELECT is_premium FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    const isPremium = userResult.rows[0]?.is_premium || false;
+    
+    // Если пользователь премиум - нет ограничений
+    if (isPremium) {
+      return res.json({
+        success: true,
+        canAddFriend: true,
+        isPremium: true,
+        currentFriendsCount: 0,
+        limit: null
+      });
+    }
+    
+    // Для бесплатного тарифа проверяем количество друзей
+    // Считаем всех активных участников связанных привычек (кроме самого пользователя)
+    const friendsCount = await db.query(
+      `SELECT COUNT(DISTINCT hm.user_id) as count
+       FROM habit_members hm
+       WHERE hm.habit_id IN (
+         SELECT id FROM habits 
+         WHERE (parent_habit_id = $1 OR id = $1)
+         AND is_active = true
+       )
+       AND hm.is_active = true
+       AND hm.user_id != $2`,
+      [targetHabitId, userId]
+    );
+    
+    const currentCount = parseInt(friendsCount.rows[0].count);
+    const limit = 1; // Лимит для бесплатного тарифа
+    
+    console.log(`📊 Friend limit check: ${currentCount}/${limit} friends`);
+    
+    res.json({
+      success: true,
+      canAddFriend: currentCount < limit,
+      isPremium: false,
+      currentFriendsCount: currentCount,
+      limit: limit,
+      showPremiumModal: currentCount >= limit
+    });
+  } catch (error) {
+    console.error('❌ Check friend limit error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check friend limit'
+    });
+  }
+});
+
+// Удалить участника из привычки
+router.delete('/habits/:habitId/members/:memberId', authMiddleware, async (req, res) => {
+  const client = await db.getClient();
+  
+  try {
+    const { habitId, memberId } = req.params;
+    const userId = req.user.id;
+    
+    console.log(`🗑️ Removing member ${memberId} from habit ${habitId} by user ${userId}`);
+    
+    await client.query('BEGIN');
+    
+    // Проверяем, что привычка принадлежит пользователю
+    const habitCheck = await client.query(
+      'SELECT id, parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
+      [habitId, userId]
+    );
+    
+    if (habitCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found or access denied'
+      });
+    }
+    
+    const habit = habitCheck.rows[0];
+    const parentHabitId = habit.parent_habit_id || habit.id;
+    
+    // Деактивируем участника во всех связанных привычках
+    await client.query(
+      `UPDATE habit_members 
+       SET is_active = false 
+       WHERE user_id = $1 
+       AND habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = $2 OR id = $2
+       )`,
+      [memberId, parentHabitId]
+    );
+    
+    // Деактивируем привычку самого участника
+    await client.query(
+      `UPDATE habits 
+       SET is_active = false 
+       WHERE user_id = $1 
+       AND (parent_habit_id = $2 OR 
+            parent_habit_id = (SELECT parent_habit_id FROM habits WHERE id = $2 AND parent_habit_id IS NOT NULL))`,
+      [memberId, habitId]
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Member ${memberId} removed from habit ${habitId}`);
+    
+    res.json({
+      success: true,
+      message: 'Member removed successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Remove member error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove member'
+    });
+  } finally {
+    client.release();
+  }
+});
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
