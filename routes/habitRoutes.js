@@ -1070,9 +1070,12 @@ router.post('/subscription/activate', authMiddleware, async (req, res) => {
 
 // Эндпоинт для проверки лимитов пользователя
 // Эндпоинт для проверки статуса подписки
+// Эндпоинт для проверки статуса подписки
 router.get('/subscription/check', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
+    
+    console.log('🔍 [API] Checking subscription for user:', userId);
     
     // Получаем актуальные данные пользователя и подписки
     const userResult = await db.query(
@@ -1087,7 +1090,10 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
       [userId]
     );
     
+    console.log('📊 [API] User query result:', userResult.rows);
+    
     if (userResult.rows.length === 0) {
+      console.error('❌ [API] User not found');
       return res.status(404).json({
         success: false,
         error: 'User not found'
@@ -1095,6 +1101,14 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
     }
     
     const userData = userResult.rows[0];
+    
+    console.log('📋 [API] User data:', {
+      id: userData.id,
+      is_premium: userData.is_premium,
+      subscription_type: userData.subscription_type,
+      expires_at: userData.subscription_expires_at,
+      habit_count: userData.habit_count
+    });
     
     // Проверяем актуальность подписки
     let isActive = false;
@@ -1135,6 +1149,7 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
       
       // Если подписка истекла, обновляем статус в БД
       if (!isActive) {
+        console.log('⏰ [API] Subscription expired, updating database');
         await db.query(
           `UPDATE users 
            SET is_premium = false, 
@@ -1149,16 +1164,7 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
     const habitCount = parseInt(userData.habit_count);
     const limit = isActive ? 999 : 3;
     
-    console.log(`📊 Subscription check for user ${userId}:`, {
-      is_premium: userData.is_premium,
-      subscription_type: userData.subscription_type,
-      expires_at: userData.subscription_expires_at,
-      isActive,
-      habitCount,
-      limit
-    });
-    
-    res.json({
+    const response = {
       success: true,
       hasSubscription: isActive,
       subscription: subscription,
@@ -1166,15 +1172,32 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
       habitCount,
       limit,
       canCreateMore: habitCount < limit
-    });
+    };
+    
+    console.log('✅ [API] Sending response:', JSON.stringify(response, null, 2));
+    
+    res.json(response);
   } catch (error) {
-    console.error('💥 Subscription check error:', error);
+    console.error('💥 [API] Subscription check error:', error);
+    console.error('Stack trace:', error.stack);
     res.status(500).json({
       success: false,
-      error: 'Failed to check subscription'
+      error: 'Failed to check subscription',
+      details: error.message
     });
   }
 });
+
+// Вспомогательная функция для получения названия плана
+function getPlanName(planType) {
+  const plans = {
+    '6_months': 'Premium for 6 Months',
+    '1_year': 'Premium for 1 Year',
+    'lifetime': 'Lifetime Premium',
+    'trial_7_days': 'Free Trial (7 days)'
+  };
+  return plans[planType] || 'Premium';
+}
 
 // Вспомогательная функция для получения названия плана
 function getPlanName(planType) {
