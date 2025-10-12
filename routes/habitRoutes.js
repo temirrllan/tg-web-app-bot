@@ -1070,12 +1070,9 @@ router.post('/subscription/activate', authMiddleware, async (req, res) => {
 
 // Эндпоинт для проверки лимитов пользователя
 // Эндпоинт для проверки статуса подписки
-// Эндпоинт для проверки статуса подписки
 router.get('/subscription/check', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    
-    console.log('🔍 [API] Checking subscription for user:', userId);
     
     // Получаем актуальные данные пользователя и подписки
     const userResult = await db.query(
@@ -1090,10 +1087,7 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
       [userId]
     );
     
-    console.log('📊 [API] User query result:', userResult.rows);
-    
     if (userResult.rows.length === 0) {
-      console.error('❌ [API] User not found');
       return res.status(404).json({
         success: false,
         error: 'User not found'
@@ -1101,14 +1095,6 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
     }
     
     const userData = userResult.rows[0];
-    
-    console.log('📋 [API] User data:', {
-      id: userData.id,
-      is_premium: userData.is_premium,
-      subscription_type: userData.subscription_type,
-      expires_at: userData.subscription_expires_at,
-      habit_count: userData.habit_count
-    });
     
     // Проверяем актуальность подписки
     let isActive = false;
@@ -1149,7 +1135,6 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
       
       // Если подписка истекла, обновляем статус в БД
       if (!isActive) {
-        console.log('⏰ [API] Subscription expired, updating database');
         await db.query(
           `UPDATE users 
            SET is_premium = false, 
@@ -1164,7 +1149,16 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
     const habitCount = parseInt(userData.habit_count);
     const limit = isActive ? 999 : 3;
     
-    const response = {
+    console.log(`📊 Subscription check for user ${userId}:`, {
+      is_premium: userData.is_premium,
+      subscription_type: userData.subscription_type,
+      expires_at: userData.subscription_expires_at,
+      isActive,
+      habitCount,
+      limit
+    });
+    
+    res.json({
       success: true,
       hasSubscription: isActive,
       subscription: subscription,
@@ -1172,85 +1166,15 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
       habitCount,
       limit,
       canCreateMore: habitCount < limit
-    };
-    
-    console.log('✅ [API] Sending response:', JSON.stringify(response, null, 2));
-    
-    res.json(response);
+    });
   } catch (error) {
-    console.error('💥 [API] Subscription check error:', error);
-    console.error('Stack trace:', error.stack);
+    console.error('💥 Subscription check error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to check subscription',
-      details: error.message
+      error: 'Failed to check subscription'
     });
   }
 });
-// НОВЫЙ упрощенный эндпоинт для проверки premium статуса
-router.get('/subscription/status', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    
-    console.log('🔍 [Simple Check] Checking premium status for user:', userId);
-    
-    // Простой запрос - только is_premium и количество привычек
-    const result = await db.query(
-      `SELECT 
-        is_premium,
-        subscription_type,
-        subscription_expires_at,
-        (SELECT COUNT(*) FROM habits WHERE user_id = $1 AND is_active = true) as habit_count
-       FROM users 
-       WHERE id = $1`,
-      [userId]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-    
-    const user = result.rows[0];
-    const isPremium = user.is_premium === true;
-    
-    console.log('✅ [Simple Check] Result:', {
-      userId,
-      is_premium: isPremium,
-      subscription_type: user.subscription_type,
-      habit_count: user.habit_count
-    });
-    
-    // Простой ответ
-    const response = {
-      success: true,
-      isPremium: isPremium,
-      habitCount: parseInt(user.habit_count),
-      subscriptionType: user.subscription_type,
-      expiresAt: user.subscription_expires_at
-    };
-    
-    res.json(response);
-  } catch (error) {
-    console.error('❌ [Simple Check] Error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-// Вспомогательная функция для получения названия плана
-function getPlanName(planType) {
-  const plans = {
-    '6_months': 'Premium for 6 Months',
-    '1_year': 'Premium for 1 Year',
-    'lifetime': 'Lifetime Premium',
-    'trial_7_days': 'Free Trial (7 days)'
-  };
-  return plans[planType] || 'Premium';
-}
 
 // Вспомогательная функция для получения названия плана
 function getPlanName(planType) {
