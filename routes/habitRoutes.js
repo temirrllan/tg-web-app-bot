@@ -1259,13 +1259,36 @@ router.get('/subscription/plans', async (req, res) => {
 });
 
 // Эндпоинт для отмены подписки
+// Найдите этот роут в routes/habitRoutes.js и убедитесь что он правильный:
+
+// Эндпоинт для отмены подписки
 router.post('/subscription/cancel', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
     
     console.log(`🚫 Cancelling subscription for user ${userId}`);
     
+    // Проверяем текущую подписку
+    const currentStatus = await SubscriptionService.checkUserSubscription(userId);
+    
+    if (!currentStatus.hasSubscription) {
+      return res.json({
+        success: false,
+        error: 'No active subscription found'
+      });
+    }
+    
     const result = await SubscriptionService.cancelSubscription(userId);
+    
+    if (result.success) {
+      // Проверяем что подписка действительно отменена
+      const newStatus = await SubscriptionService.checkUserSubscription(userId);
+      
+      console.log(`✅ Subscription cancelled. New status:`, {
+        hasSubscription: newStatus.hasSubscription,
+        isPremium: newStatus.isPremium
+      });
+    }
     
     res.json(result);
   } catch (error) {
