@@ -78,7 +78,9 @@ app.get('/health', (req, res) => {
 /** API */
 app.use('/api/auth', authRoutes);
 app.use('/api', habitRoutes);
-
+// Роуты для платежей
+const paymentRoutes = require('./routes/paymentRoutes');
+app.use('/api/payment', paymentRoutes);
 /** ---------- TELEGRAM BOT (WEBHOOK) ---------- */
 console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
