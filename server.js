@@ -110,13 +110,17 @@ app.post(WEBHOOK_PATH, (req, res) => {
 });
 
 /** Хэндлеры бота */
+/** Хэндлеры бота */
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
 
+  console.log(`📨 Message received: "${text}" from ${chatId}`);
+
   if (text.startsWith('/start')) {
     const startParam = text.split(' ')[1];
     
+    // Если есть параметр join_ - обрабатываем как присоединение к привычке
     if (startParam && startParam.startsWith('join_')) {
       const shareCode = startParam.replace('join_', '');
       
@@ -163,7 +167,7 @@ bot.on('message', async (msg) => {
         if (shareResult.rows.length > 0) {
           const sharedHabit = shareResult.rows[0];
           
-          // Проверяем, не является ли пользователь уже участником (включая неактивных)
+          // Проверяем, не является ли пользователь уже участником
           const memberCheck = await db.query(
             'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
             [sharedHabit.habit_id, userId]
@@ -176,7 +180,6 @@ bot.on('message', async (msg) => {
               [sharedHabit.habit_id, userId]
             );
             
-            // Проверяем существование привычки у пользователя
             const userHabitCheck = await db.query(
               'SELECT * FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
               [userId, sharedHabit.habit_id]
@@ -185,14 +188,12 @@ bot.on('message', async (msg) => {
             let userHabitId;
             
             if (userHabitCheck.rows.length > 0) {
-              // Активируем существующую привычку
               await db.query(
                 'UPDATE habits SET is_active = true WHERE id = $1',
                 [userHabitCheck.rows[0].id]
               );
               userHabitId = userHabitCheck.rows[0].id;
             } else {
-              // Создаем новую копию привычки
               const newHabitResult = await db.query(
                 `INSERT INTO habits (
                   user_id, category_id, title, goal, schedule_type, 
@@ -216,7 +217,6 @@ bot.on('message', async (msg) => {
               userHabitId = newHabitResult.rows[0].id;
             }
             
-            // Восстанавливаем связь владельца с привычкой пользователя
             const ownerMemberCheck = await db.query(
               'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
               [userHabitId, sharedHabit.owner_user_id]
@@ -234,7 +234,6 @@ bot.on('message', async (msg) => {
               );
             }
             
-            // Уведомляем владельца
             const ownerData = await db.query(
               'SELECT telegram_id FROM users WHERE id = $1',
               [sharedHabit.owner_user_id]
@@ -273,8 +272,6 @@ bot.on('message', async (msg) => {
           }
           
           if (memberCheck.rows.length === 0) {
-            // АВТОМАТИЧЕСКИ добавляем пользователя к привычке
-            
             // Создаем копию привычки для нового пользователя
             const newHabitResult = await db.query(
               `INSERT INTO habits (
@@ -293,25 +290,22 @@ bot.on('message', async (msg) => {
                 sharedHabit.reminder_time,
                 sharedHabit.reminder_enabled,
                 sharedHabit.is_bad_habit,
-                sharedHabit.habit_id // Ссылка на оригинальную привычку
+                sharedHabit.habit_id
               ]
             );
             
             const newHabitId = newHabitResult.rows[0].id;
             
-            // Добавляем пользователя как участника оригинальной привычки
             await db.query(
               'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
               [sharedHabit.habit_id, userId]
             );
             
-            // Добавляем владельца как участника новой привычки пользователя
             await db.query(
               'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
               [newHabitId, sharedHabit.owner_user_id]
             );
             
-            // Уведомляем владельца привычки о новом участнике
             const ownerData = await db.query(
               'SELECT telegram_id FROM users WHERE id = $1',
               [sharedHabit.owner_user_id]
@@ -346,7 +340,6 @@ bot.on('message', async (msg) => {
               }
             );
           } else {
-            // Пользователь уже активный участник
             await bot.sendMessage(
               chatId,
               `ℹ️ You're already tracking this habit!\n\n` +
@@ -389,47 +382,62 @@ bot.on('message', async (msg) => {
     }
     
     // Обычный старт (без параметров)
-    await bot.sendMessage(
-      chatId,
-      'Добро пожаловать в Habit Tracker! 🎯\n\nИспользуйте кнопки ниже для навигации:',
-      {
-        reply_markup: {
-          keyboard: [
-            [{ text: '📊 Мои привычки' }],
-            [{ text: 'ℹ️ Информация о боте' }],
-            [{ text: '⚙️ Настройки' }]
-          ],
-          resize_keyboard: true
+    console.log(`👋 Sending welcome message to ${chatId}`);
+    
+    try {
+      await bot.sendMessage(
+        chatId,
+        '👋 **Welcome to Habit Tracker!**\n\n' +
+        'Track your habits, build streaks, and achieve your goals!\n\n' +
+        'Tap the button below to get started:',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            keyboard: [
+              [{ text: '📱 Open Habit Tracker', web_app: { url: WEBAPP_URL } }],
+              [{ text: 'ℹ️ About' }, { text: '❓ Help' }]
+            ],
+            resize_keyboard: true
+          }
         }
-      }
-    );
-
-    await bot.sendMessage(chatId, 'Откройте приложение для управления привычками:', {
-      reply_markup: {
-        inline_keyboard: [[{
-          text: '📱 Открыть Habit Tracker',
-          web_app: { url: WEBAPP_URL }
-        }]]
-      }
-    });
+      );
+      
+      console.log('✅ Welcome message sent successfully');
+    } catch (error) {
+      console.error('❌ Failed to send welcome message:', error);
+    }
+    
+    return;
   }
 
-  if (text === '⚙️ Настройки') {
+  // Обработка других текстовых команд
+  if (text === 'ℹ️ About' || text === '/about') {
     await bot.sendMessage(
       chatId,
-      'Настройки можно изменить в приложении.\n' +
-      'Доступные настройки:\n' +
-      '• Язык интерфейса (RU/EN)\n' +
-      '• Время напоминаний\n' +
-      '• Уведомления',
-      {
-        reply_markup: {
-          inline_keyboard: [[{
-            text: '⚙️ Открыть настройки',
-            web_app: { url: `${WEBAPP_URL}#settings` }
-          }]]
-        }
-      }
+      '📊 **Habit Tracker**\n\n' +
+      'Version: 1.0.0\n' +
+      'Build habits, track progress, achieve goals!\n\n' +
+      'Features:\n' +
+      '✅ Daily habit tracking\n' +
+      '✅ Streak monitoring\n' +
+      '✅ Reminders\n' +
+      '✅ Friend challenges\n' +
+      '✅ Premium features',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  if (text === '❓ Help' || text === '/help') {
+    await bot.sendMessage(
+      chatId,
+      '❓ **How to use Habit Tracker:**\n\n' +
+      '1️⃣ Tap "Open Habit Tracker" to launch the app\n' +
+      '2️⃣ Create your first habit\n' +
+      '3️⃣ Mark habits as done daily\n' +
+      '4️⃣ Build streaks and achieve goals!\n\n' +
+      'Need support? Contact @your_support_username',
+      { parse_mode: 'Markdown' }
     );
     return;
   }
@@ -437,7 +445,6 @@ bot.on('message', async (msg) => {
   // Команда для тестирования напоминаний
   if (text === '/testreminder') {
     try {
-      // Получаем user_id из базы данных
       const userResult = await db.query(
         'SELECT id FROM users WHERE telegram_id = $1',
         [chatId.toString()]
@@ -450,23 +457,23 @@ bot.on('message', async (msg) => {
         if (count > 0) {
           await bot.sendMessage(
             chatId, 
-            `✅ Отправлено ${count} тестовых напоминаний.\n\nРеальные напоминания будут приходить автоматически в указанное время.`
+            `✅ Sent ${count} test reminders.\n\nReal reminders will come at scheduled times.`
           );
         } else {
           await bot.sendMessage(
             chatId, 
-            '❌ У вас нет активных привычек с включенными напоминаниями.\n\nСоздайте привычку и установите время напоминания в приложении.'
+            '❌ No active habits with reminders.\n\nCreate a habit and set reminder time in the app.'
           );
         }
       } else {
         await bot.sendMessage(
           chatId, 
-          '❌ Пользователь не найден или сервис напоминаний недоступен.'
+          '❌ User not found or reminder service unavailable.'
         );
       }
     } catch (error) {
       console.error('Test reminder error:', error);
-      await bot.sendMessage(chatId, '❌ Ошибка при отправке тестового напоминания.');
+      await bot.sendMessage(chatId, '❌ Error sending test reminder.');
     }
     return;
   }
@@ -479,24 +486,29 @@ bot.on('message', async (msg) => {
         if (next) {
           await bot.sendMessage(
             chatId,
-            `📅 Следующее напоминание:\n\n` +
-            `📝 Привычка: ${next.title}\n` +
-            `⏰ Время: ${next.reminder_time.substring(0, 5)}\n` +
-            `👤 Пользователь: ${next.first_name}`
+            `📅 **Next reminder:**\n\n` +
+            `📝 Habit: ${next.title}\n` +
+            `⏰ Time: ${next.reminder_time.substring(0, 5)}\n` +
+            `👤 User: ${next.first_name}`,
+            { parse_mode: 'Markdown' }
           );
         } else {
-          await bot.sendMessage(chatId, '📭 Нет запланированных напоминаний на сегодня.');
+          await bot.sendMessage(chatId, '📭 No scheduled reminders for today.');
         }
       } else {
-        await bot.sendMessage(chatId, '❌ Сервис напоминаний недоступен.');
+        await bot.sendMessage(chatId, '❌ Reminder service unavailable.');
       }
     } catch (error) {
       console.error('Status error:', error);
-      await bot.sendMessage(chatId, '❌ Ошибка при проверке статуса.');
+      await bot.sendMessage(chatId, '❌ Error checking status.');
     }
     return;
   }
+
+  // Если команда не распознана
+  console.log(`⚠️ Unknown command: ${text}`);
 });
+
 
 // Обработчик callback кнопок из напоминаний
 // Обработчик callback кнопок из напоминаний
