@@ -1262,35 +1262,93 @@ router.get('/subscription/plans', async (req, res) => {
 // Найдите этот роут в routes/habitRoutes.js и убедитесь что он правильный:
 
 // Эндпоинт для отмены подписки
+// В файле routes/habitRoutes.js найдите и замените/добавьте этот эндпоинт:
+
+// Эндпоинт для отмены подписки
 router.post('/subscription/cancel', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
     
-    console.log(`🚫 Cancelling subscription for user ${userId}`);
+    console.log(`🚫 Starting subscription cancellation for user ${userId}`);
     
-    // Проверяем текущую подписку
-    const currentStatus = await SubscriptionService.checkUserSubscription(userId);
+    // Напрямую обновляем в базе данных
+    const client = await db.getClient();
     
-    if (!currentStatus.hasSubscription) {
-      return res.json({
-        success: false,
-        error: 'No active subscription found'
-      });
-    }
-    
-    const result = await SubscriptionService.cancelSubscription(userId);
-    
-    if (result.success) {
-      // Проверяем что подписка действительно отменена
-      const newStatus = await SubscriptionService.checkUserSubscription(userId);
+    try {
+      await client.query('BEGIN');
       
-      console.log(`✅ Subscription cancelled. New status:`, {
-        hasSubscription: newStatus.hasSubscription,
-        isPremium: newStatus.isPremium
+      // Проверяем текущий статус пользователя
+      const userResult = await client.query(
+        'SELECT id, is_premium, subscription_type FROM users WHERE id = $1',
+        [userId]
+      );
+      
+      if (userResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+      
+      const user = userResult.rows[0];
+      console.log(`Current user status:`, user);
+      
+      if (!user.is_premium) {
+        await client.query('ROLLBACK');
+        return res.json({
+          success: false,
+          error: 'No active subscription to cancel'
+        });
+      }
+      
+      // Деактивируем все активные подписки пользователя
+      await client.query(
+        `UPDATE subscriptions 
+         SET is_active = false, 
+             cancelled_at = CURRENT_TIMESTAMP
+         WHERE user_id = $1 AND is_active = true`,
+        [userId]
+      );
+      
+      // Сбрасываем премиум статус у пользователя
+      await client.query(
+        `UPDATE users 
+         SET is_premium = false,
+             subscription_type = NULL,
+             subscription_expires_at = NULL
+         WHERE id = $1`,
+        [userId]
+      );
+      
+      // Добавляем запись в историю если есть таблица subscription_history
+      try {
+        await client.query(
+          `INSERT INTO subscription_history (user_id, action, created_at) 
+           VALUES ($1, 'cancelled', CURRENT_TIMESTAMP)`,
+          [userId]
+        );
+      } catch (historyError) {
+        // Если таблицы истории нет - не критично
+        console.log('History table not found, skipping');
+      }
+      
+      await client.query('COMMIT');
+      
+      console.log(`✅ Subscription cancelled successfully for user ${userId}`);
+      
+      res.json({
+        success: true,
+        message: 'Subscription cancelled successfully'
       });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
     
-    res.json(result);
   } catch (error) {
     console.error('💥 Subscription cancellation error:', error);
     res.status(500).json({

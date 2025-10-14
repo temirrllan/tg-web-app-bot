@@ -298,6 +298,8 @@ static async checkUserSubscription(userId) {
   // Отменить подписку
   // В файле services/subscriptionService.js
 
+// В файле services/subscriptionService.js обновите метод cancelSubscription:
+
 static async cancelSubscription(userId) {
   const client = await db.getClient();
   
@@ -306,13 +308,23 @@ static async cancelSubscription(userId) {
     
     console.log(`🚫 Cancelling subscription for user ${userId}`);
     
-    // Находим активную подписку
-    const subResult = await client.query(
-      'SELECT id, plan_type FROM subscriptions WHERE user_id = $1 AND is_active = true',
+    // Проверяем текущий статус пользователя
+    const userResult = await client.query(
+      'SELECT id, is_premium, subscription_type FROM users WHERE id = $1',
       [userId]
     );
     
-    if (subResult.rows.length === 0) {
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return {
+        success: false,
+        error: 'User not found'
+      };
+    }
+    
+    const user = userResult.rows[0];
+    
+    if (!user.is_premium) {
       await client.query('ROLLBACK');
       return {
         success: false,
@@ -320,35 +332,49 @@ static async cancelSubscription(userId) {
       };
     }
     
-    const subscription = subResult.rows[0];
-    
-    // Отменяем подписку
-    await client.query(
+    // Деактивируем все активные подписки
+    const deactivateResult = await client.query(
       `UPDATE subscriptions 
        SET is_active = false, 
-           auto_renew = false,
            cancelled_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [subscription.id]
+       WHERE user_id = $1 AND is_active = true
+       RETURNING id`,
+      [userId]
     );
     
-    // ВАЖНО: Сбрасываем все поля подписки у пользователя
-    await client.query(
+    console.log(`Deactivated ${deactivateResult.rowCount} subscriptions`);
+    
+    // Сбрасываем премиум статус у пользователя
+    const updateUserResult = await client.query(
       `UPDATE users 
        SET is_premium = false,
            subscription_type = NULL,
            subscription_expires_at = NULL
-       WHERE id = $1`,
+       WHERE id = $1
+       RETURNING id, is_premium`,
       [userId]
     );
     
-    // Записываем в историю
-    await client.query(
-      `INSERT INTO subscription_history (
-        subscription_id, user_id, action, plan_type
-      ) VALUES ($1, $2, 'cancelled', $3)`,
-      [subscription.id, userId, subscription.plan_type]
-    );
+    if (updateUserResult.rowCount === 0) {
+      throw new Error('Failed to update user premium status');
+    }
+    
+    console.log(`Updated user premium status:`, updateUserResult.rows[0]);
+    
+    // Пытаемся добавить в историю (если таблица существует)
+    try {
+      if (deactivateResult.rows.length > 0) {
+        await client.query(
+          `INSERT INTO subscription_history (
+            subscription_id, user_id, action, created_at
+          ) VALUES ($1, $2, 'cancelled', CURRENT_TIMESTAMP)`,
+          [deactivateResult.rows[0].id, userId]
+        );
+      }
+    } catch (historyError) {
+      console.log('Could not add to history:', historyError.message);
+      // Не критично, продолжаем
+    }
     
     await client.query('COMMIT');
     
@@ -358,6 +384,7 @@ static async cancelSubscription(userId) {
       success: true,
       message: 'Subscription cancelled successfully'
     };
+    
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('❌ Error cancelling subscription:', error);
