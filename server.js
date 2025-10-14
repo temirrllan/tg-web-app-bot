@@ -91,23 +91,6 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
 
-/** единый путь webhook — включаем токен в путь */
-const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
-
-/** защита webhook секретом */
-app.post(WEBHOOK_PATH, (req, res) => {
-  try {
-    const secretHdr = req.get('x-telegram-bot-api-secret-token');
-    if (secretHdr !== BOT_SECRET) {
-      return res.sendStatus(401);
-    }
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
-  } catch (e) {
-    console.error('Webhook processUpdate error:', e);
-    res.sendStatus(500);
-  }
-});
 
 /** Хэндлеры бота */
 /** Хэндлеры бота */
@@ -509,7 +492,27 @@ bot.on('message', async (msg) => {
   console.log(`⚠️ Unknown command: ${text}`);
 });
 
-
+// Обработчик pre_checkout_query (ОБЯЗАТЕЛЬНО!)
+bot.on('pre_checkout_query', async (query) => {
+  console.log('💳 Pre-checkout query received:', query.id);
+  
+  try {
+    // ВАЖНО: Нужно ответить на pre_checkout_query, иначе оплата не пройдёт
+    await bot.answerPreCheckoutQuery(query.id, true);
+    console.log('✅ Pre-checkout query approved');
+  } catch (error) {
+    console.error('❌ Pre-checkout error:', error);
+    
+    // Отклоняем оплату с объяснением
+    try {
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Payment processing error. Please try again.'
+      });
+    } catch (e) {
+      console.error('Failed to reject pre-checkout:', e);
+    }
+  }
+});
 // Обработчик callback кнопок из напоминаний
 // Обработчик callback кнопок из напоминаний
 bot.on('callback_query', async (callbackQuery) => {

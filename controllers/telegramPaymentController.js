@@ -2,65 +2,95 @@ const TelegramStarsService = require('../services/telegramStarsService');
 const db = require('../config/database');
 const telegramPaymentController = {
   // Обработка webhook от Telegram
-  async handleWebhook(req, res) {
-    try {
-      console.log('📥 Telegram webhook received');
-      console.log('Body:', JSON.stringify(req.body, null, 2));
+  // Обработка webhook от Telegram
+async handleWebhook(req, res) {
+  try {
+    console.log('📥 Telegram payment webhook received');
+    console.log('Body:', JSON.stringify(req.body, null, 2));
 
-      const update = req.body;
+    const update = req.body;
 
-      // Проверяем наличие successful_payment
-      if (update.message && update.message.successful_payment) {
-        const payment = update.message.successful_payment;
-        const from_user_id = update.message.from.id;
+    // Проверяем наличие successful_payment в разных местах
+    let payment = null;
+    let from_user_id = null;
 
-        const paymentData = {
-          telegram_payment_charge_id: payment.telegram_payment_charge_id,
-          provider_payment_charge_id: payment.provider_payment_charge_id,
-          invoice_payload: payment.invoice_payload,
-          total_amount: payment.total_amount,
-          currency: payment.currency,
-          from_user_id: from_user_id
-        };
-
-        console.log('💳 Processing payment:', paymentData);
-
-        // Обрабатываем платеж
-        const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
-
-        if (result.success) {
-          console.log('✅ Payment processed successfully');
-          
-          // Здесь можно отправить уведомление пользователю через бота
-          try {
-            const bot = require('../server').bot;
-            await bot.sendMessage(
-              from_user_id,
-              '🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active. Enjoy unlimited habits!',
-              { parse_mode: 'HTML' }
-            );
-          } catch (botError) {
-            console.error('Failed to send confirmation message:', botError);
-          }
-
-          return res.status(200).json({ success: true });
-        } else {
-          console.error('❌ Payment processing failed:', result.error);
-          
-          // Не возвращаем ошибку Telegram, чтобы избежать повторной отправки
-          return res.status(200).json({ success: false, error: result.error });
-        }
-      }
-
-      // Если это не successful_payment, просто подтверждаем получение
-      res.status(200).json({ success: true });
-
-    } catch (error) {
-      console.error('💥 Webhook error:', error);
-      // Возвращаем 200 чтобы Telegram не повторял запрос
-      res.status(200).json({ success: false, error: error.message });
+    // Вариант 1: В message
+    if (update.message?.successful_payment) {
+      payment = update.message.successful_payment;
+      from_user_id = update.message.from.id;
     }
-  },
+    // Вариант 2: В callback_query (редко, но бывает)
+    else if (update.callback_query?.message?.successful_payment) {
+      payment = update.callback_query.message.successful_payment;
+      from_user_id = update.callback_query.from.id;
+    }
+
+    if (payment) {
+      const paymentData = {
+        telegram_payment_charge_id: payment.telegram_payment_charge_id,
+        provider_payment_charge_id: payment.provider_payment_charge_id,
+        invoice_payload: payment.invoice_payload,
+        total_amount: payment.total_amount,
+        currency: payment.currency,
+        from_user_id: from_user_id
+      };
+
+      console.log('💳 Processing payment:', paymentData);
+
+      // Обрабатываем платеж
+      const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
+
+      if (result.success) {
+        console.log('✅ Payment processed successfully');
+        
+        // Отправляем уведомление пользователю
+        try {
+          const bot = require('../server').bot;
+          const lang = 'en'; // Можно получить из БД
+          
+          const message = lang === 'ru'
+            ? '🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\nТеперь у вас есть:\n✅ Безлимитные привычки\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪'
+            : '🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\nYou now have:\n✅ Unlimited habits\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪';
+          
+          await bot.sendMessage(from_user_id, message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: '📱 Open App',
+                  web_app: { 
+                    url: process.env.WEBAPP_URL || process.env.FRONTEND_URL 
+                  }
+                }
+              ]]
+            }
+          });
+          
+          console.log('✅ Confirmation message sent to user');
+        } catch (botError) {
+          console.error('Failed to send confirmation:', botError.message);
+          // Не критично, продолжаем
+        }
+
+        return res.status(200).json({ success: true });
+      } else {
+        console.error('❌ Payment processing failed:', result.error);
+        
+        // Всё равно возвращаем 200 чтобы Telegram не повторял запрос
+        return res.status(200).json({ success: false, error: result.error });
+      }
+    }
+
+    // Если это не successful_payment, просто подтверждаем получение
+    console.log('ℹ️ Not a payment update, acknowledging');
+    res.status(200).json({ success: true });
+
+  } catch (error) {
+    console.error('💥 Webhook error:', error);
+    // ВАЖНО: Всегда возвращаем 200, иначе Telegram будет повторять запрос
+    res.status(200).json({ success: false, error: error.message });
+  }
+},
 // Отправить invoice кнопку пользователю
 async requestInvoiceButton(req, res) {
   try {
