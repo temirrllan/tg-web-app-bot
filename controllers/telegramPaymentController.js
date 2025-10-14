@@ -1,5 +1,5 @@
 const TelegramStarsService = require('../services/telegramStarsService');
-
+const db = require('../config/database');
 const telegramPaymentController = {
   // Обработка webhook от Telegram
   async handleWebhook(req, res) {
@@ -61,7 +61,153 @@ const telegramPaymentController = {
       res.status(200).json({ success: false, error: error.message });
     }
   },
+// Отправить invoice кнопку пользователю
+async requestInvoiceButton(req, res) {
+  try {
+    const { planType } = req.body;
+    const userId = req.user.id;
 
+    console.log(`📨 Sending invoice button to user ${userId}, plan: ${planType}`);
+
+    // Получаем telegram_id пользователя
+    const userResult = await db.query(
+      'SELECT telegram_id, first_name FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const { telegram_id, first_name } = userResult.rows[0];
+
+    // Получаем данные плана и цену
+    const price = TelegramStarsService.getPlanPrice(planType);
+    const plan = TelegramStarsService.PLANS[planType];
+
+    if (!price || !plan) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid plan'
+      });
+    }
+
+    // Генерируем invoice payload
+    const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
+
+    // Создаем запись о платеже
+    await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
+
+    // Отправляем invoice через бота
+    const bot = require('../server').bot;
+
+    try {
+      await bot.sendInvoice(
+        telegram_id,
+        plan.name, // title
+        plan.features.join('\n• '), // description
+        invoicePayload, // payload
+        '', // provider_token (пустой для Stars)
+        'XTR', // currency
+        [{ label: plan.name, amount: price }], // prices
+        {
+          photo_url: 'https://i.imgur.com/8QF3Z1M.png', // Можешь добавить свою картинку
+          photo_width: 512,
+          photo_height: 512,
+          need_name: false,
+          need_phone_number: false,
+          need_email: false,
+          need_shipping_address: false,
+          is_flexible: false,
+          send_phone_number_to_provider: false,
+          send_email_to_provider: false
+        }
+      );
+
+      console.log('✅ Invoice sent successfully');
+
+      res.json({
+        success: true,
+        message: 'Invoice sent to user',
+        invoicePayload: invoicePayload
+      });
+
+    } catch (botError) {
+      console.error('❌ Failed to send invoice:', botError);
+      
+      // Проверяем если пользователь заблокировал бота
+      if (botError.response?.statusCode === 403) {
+        return res.status(403).json({
+          success: false,
+          error: 'User has blocked the bot',
+          code: 'bot_blocked'
+        });
+      }
+
+      throw botError;
+    }
+
+  } catch (error) {
+    console.error('💥 Send invoice error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send invoice'
+    });
+  }
+},
+
+// Проверить статус платежа по payload
+async checkPaymentStatusByPayload(req, res) {
+  try {
+    const { payload } = req.query;
+    
+    if (!payload) {
+      return res.status(400).json({
+        success: false,
+        error: 'Payload required'
+      });
+    }
+
+    const result = await db.query(
+      `SELECT 
+        tp.*,
+        s.is_active as subscription_active
+       FROM telegram_payments tp
+       LEFT JOIN subscriptions s ON s.telegram_payment_charge_id = tp.telegram_payment_charge_id
+       WHERE tp.invoice_payload = $1
+       ORDER BY tp.created_at DESC
+       LIMIT 1`,
+      [payload]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        status: 'pending',
+        paid: false
+      });
+    }
+
+    const payment = result.rows[0];
+
+    res.json({
+      success: true,
+      status: payment.status,
+      paid: payment.status === 'completed',
+      subscriptionActive: payment.subscription_active || false
+    });
+
+  } catch (error) {
+    console.error('Check payment status error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check status'
+    });
+  }
+},
   // Инициировать платеж (создать invoice)
   async createInvoice(req, res) {
     try {

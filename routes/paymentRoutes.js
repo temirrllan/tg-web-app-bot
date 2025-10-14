@@ -11,5 +11,9 @@ router.post('/create-invoice', authMiddleware, telegramPaymentController.createI
 
 // Проверить статус платежа
 router.get('/status/:paymentId', authMiddleware, telegramPaymentController.checkPaymentStatus);
+// Отправить invoice кнопку
+router.post('/request-invoice-button', authMiddleware, telegramPaymentController.requestInvoiceButton);
 
+// Проверить статус по payload
+router.get('/check-status', authMiddleware, telegramPaymentController.checkPaymentStatusByPayload);
 module.exports = router;
