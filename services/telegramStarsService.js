@@ -7,13 +7,13 @@ class TelegramStarsService {
     '6_months': {
       name: 'Premium for 6 Months',
       duration_months: 6,
-      price_stars: 1, // Минимальная цена для теста
+      price_stars: 1,
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
       name: 'Premium for 1 Year',
       duration_months: 12,
-      price_stars: 1, // Минимальная цена для теста
+      price_stars: 1,
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
     }
   };
@@ -30,13 +30,36 @@ class TelegramStarsService {
     return plan.price_stars;
   }
 
-  // Создать invoice payload (уникальный идентификатор платежа)
+  // ИСПРАВЛЕННАЯ функция генерации payload - используем разделитель который не конфликтует
   static generateInvoicePayload(userId, planType) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
-    const payload = `${userId}_${planType}_${timestamp}_${randomString}`;
+    // Используем | как разделитель вместо _
+    const payload = `${userId}|${planType}|${timestamp}|${randomString}`;
     console.log(`🔑 Generated payload: ${payload}`);
     return payload;
+  }
+
+  // ИСПРАВЛЕННАЯ функция парсинга payload
+  static parseInvoicePayload(payload) {
+    try {
+      // Парсим по |
+      const parts = payload.split('|');
+      
+      if (parts.length < 2) {
+        throw new Error('Invalid payload format');
+      }
+      
+      return {
+        userId: parts[0],
+        planType: parts[1],
+        timestamp: parts[2],
+        randomString: parts[3]
+      };
+    } catch (error) {
+      console.error('Error parsing payload:', error);
+      throw error;
+    }
   }
 
   // Создать запись о платеже
@@ -140,9 +163,9 @@ class TelegramStarsService {
       const user = userResult.rows[0];
       console.log(`👤 Processing payment for user: ${user.first_name} (ID: ${user.id})`);
 
-      // 3. Парсим invoice_payload чтобы получить plan_type
-      const payloadParts = invoice_payload.split('_');
-      const planType = payloadParts[1];
+      // 3. ИСПРАВЛЕННЫЙ парсинг invoice_payload
+      const parsed = this.parseInvoicePayload(invoice_payload);
+      const planType = parsed.planType;
 
       if (!this.PLANS[planType]) {
         await client.query('ROLLBACK');
