@@ -48,19 +48,49 @@ const allowedOrigins = [
 app.use(
   cors({
     origin(origin, cb) {
-      if (!origin) return cb(null, true); // mobile apps / curl
+      if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, true);
-      // Мягкий CORS (не роняем запросы из незнакомых ориджинов, но не выдаём креды)
       return cb(null, false);
     },
     credentials: true
   })
 );
-
 app.use(express.json());
 app.use(logger);
-app.use(generalLimiter);
 
+// Webhook от Telegram для команд бота
+const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
+
+app.post(WEBHOOK_PATH, async (req, res) => {
+  try {
+    // Проверяем secret token
+    const secretHeader = req.get('x-telegram-bot-api-secret-token');
+    
+    if (!BOT_SECRET) {
+      console.error('❌ BOT_SECRET not configured');
+      return res.status(401).json({ success: false, error: 'Webhook secret is not configured' });
+    }
+    
+    if (secretHeader !== BOT_SECRET) {
+      console.error('❌ Invalid webhook secret');
+      return res.status(401).json({ success: false, error: 'Unauthorized webhook' });
+    }
+    
+    console.log('✅ Telegram webhook authorized');
+    
+    const update = req.body;
+    
+    // Передаём обновление боту
+    bot.processUpdate(update);
+    
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('❌ Telegram webhook error:', error);
+    res.status(200).json({ success: false, error: error.message });
+  }
+});
+
+app.use(generalLimiter);
 /** Health */
 app.get('/', (req, res) => {
   res.json({
@@ -804,6 +834,7 @@ bot.on('callback_query', async (callbackQuery) => {
 });
 
 /** ---------- Запуск HTTP и установка webhook ---------- */
+/** ---------- Запуск HTTP и установка webhook ---------- */
 const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -814,22 +845,64 @@ const server = app.listen(PORT, async () => {
   
   // Запускаем сервис напоминаний после старта сервера
   reminderService.start();
+  
   // Запускаем cron для проверки подписок
-subscriptionCron.start();
+  subscriptionCron.start();
+  
   try {
-    // Ставим/обновляем webhook ОДНИМ способом и ОБЯЗАТЕЛЬНО с секретом
-    const publicBase = process.env.BACKEND_PUBLIC_URL || ''; // если зададите — поставим отсюда
+    // Устанавливаем webhook для бота
+    const publicBase = process.env.BACKEND_PUBLIC_URL || '';
+    
     if (publicBase) {
       const webhookUrl = `${publicBase}${WEBHOOK_PATH}`;
-      await bot.setWebHook(webhookUrl, { secret_token: BOT_SECRET, drop_pending_updates: true });
-      console.log(`✅ Webhook установлен: ${webhookUrl}`);
+      
+      console.log(`\n🔗 Setting webhook to: ${webhookUrl}`);
+      
+      await bot.setWebHook(webhookUrl, {
+        secret_token: BOT_SECRET,
+        drop_pending_updates: true,
+        allowed_updates: ['message', 'callback_query', 'pre_checkout_query']
+      });
+      
+      console.log('✅ Webhook установлен успешно');
+      
+      // Проверяем webhook
+      const webhookInfo = await bot.getWebhookInfo();
+      console.log('📊 Webhook Info:', {
+        url: webhookInfo.url,
+        has_custom_certificate: webhookInfo.has_custom_certificate,
+        pending_update_count: webhookInfo.pending_update_count,
+        allowed_updates: webhookInfo.allowed_updates
+      });
+      
     } else {
-      console.log('ℹ️ BACKEND_PUBLIC_URL не задан — webhook не переустанавливаем на старте (используйте setWebhook вручную).');
+      console.log('ℹ️ BACKEND_PUBLIC_URL не задан — webhook не установлен');
+      console.log('⚠️ Для работы бота в production необходимо установить BACKEND_PUBLIC_URL');
     }
   } catch (e) {
     console.error('❌ Ошибка установки webhook:', e);
   }
 });
+
+/** Грейсфул шатдаун */
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  reminderService.stop();
+  keepAliveService.stop();
+  subscriptionCron.stop();
+  server.close(() => process.exit(0));
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT signal received: closing HTTP server');
+  reminderService.stop();
+  keepAliveService.stop();
+  subscriptionCron.stop();
+  server.close(() => process.exit(0));
+});
+
+// Экспортируем бота для использования в других модулях
+module.exports.bot = bot;
 
 /** Грейсфул шатдаун */
 process.on('SIGTERM', () => {
