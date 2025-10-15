@@ -97,8 +97,11 @@ const reminderService = new ReminderService(bot);
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
-
-  console.log(`📨 Message received: "${text}" from ${chatId}`);
+console.log(`📨 ========== NEW MESSAGE ==========`);
+  console.log(`From: ${chatId} (${msg.from.first_name} ${msg.from.last_name || ''})`);
+  console.log(`Text: "${text}"`);
+  console.log(`Username: @${msg.from.username || 'none'}`);
+  
 
   if (text.startsWith('/start')) {
     const startParam = text.split(' ')[1];
@@ -109,7 +112,7 @@ bot.on('message', async (msg) => {
       
       try {
         // Получаем или создаем пользователя
-        let userResult = await db.query(
+         let userResult = await db.query(
           'SELECT id, telegram_id FROM users WHERE telegram_id = $1',
           [chatId.toString()]
         );
@@ -133,11 +136,13 @@ bot.on('message', async (msg) => {
             ]
           );
           userId = newUserResult.rows[0].id;
+          console.log(`✅ New user created: ID ${userId}`);
         } else {
           userId = userResult.rows[0].id;
+          console.log(`✅ Existing user found: ID ${userId}`);
         }
         
-        // Проверяем существование share code и получаем данные привычки
+        // Проверяем существование share code
         const shareResult = await db.query(
           `SELECT sh.*, h.*, u.first_name as owner_name
            FROM shared_habits sh
@@ -353,7 +358,7 @@ bot.on('message', async (msg) => {
           return;
         }
       } catch (error) {
-        console.error('Error processing join code:', error);
+        console.error('❌ Error processing join code:', error);
         await bot.sendMessage(
           chatId,
           '❌ An error occurred while joining the habit.\n' +
@@ -368,6 +373,46 @@ bot.on('message', async (msg) => {
     console.log(`👋 Sending welcome message to ${chatId}`);
     
     try {
+      // Получаем или создаем пользователя
+      let userResult = await db.query(
+        'SELECT id, telegram_id, first_name FROM users WHERE telegram_id = $1',
+        [chatId.toString()]
+      );
+      
+      if (userResult.rows.length === 0) {
+        // Создаем нового пользователя
+        const tgUser = msg.from;
+        await db.query(
+          `INSERT INTO users (
+            telegram_id, username, first_name, last_name, language, is_premium
+          ) VALUES ($1, $2, $3, $4, $5, false)`,
+          [
+            chatId.toString(),
+            tgUser.username || null,
+            tgUser.first_name || '',
+            tgUser.last_name || '',
+            tgUser.language_code || 'en'
+          ]
+        );
+        console.log(`✅ New user created via /start: ${chatId}`);
+      } else {
+        // Обновляем данные существующего пользователя
+        await db.query(
+          `UPDATE users 
+           SET username = $2, 
+               first_name = $3, 
+               last_name = $4
+           WHERE telegram_id = $1`,
+          [
+            chatId.toString(),
+            msg.from.username || null,
+            msg.from.first_name || '',
+            msg.from.last_name || ''
+          ]
+        );
+        console.log(`✅ Existing user updated via /start: ${chatId}`);
+      }
+      
       await bot.sendMessage(
         chatId,
         '👋 **Welcome to Habit Tracker!**\n\n' +
@@ -493,13 +538,64 @@ bot.on('message', async (msg) => {
 });
 
 // Обработчик pre_checkout_query (ОБЯЗАТЕЛЬНО!)
+// Обработчик pre_checkout_query (ОБЯЗАТЕЛЬНО!)
 bot.on('pre_checkout_query', async (query) => {
-  console.log('💳 Pre-checkout query received:', query.id);
+  console.log('💳 ========== PRE-CHECKOUT QUERY ==========');
+  console.log('Query ID:', query.id);
+  console.log('From:', query.from.id, query.from.first_name);
+  console.log('Currency:', query.currency);
+  console.log('Total amount:', query.total_amount);
+  console.log('Invoice payload:', query.invoice_payload);
   
   try {
-    // ВАЖНО: Нужно ответить на pre_checkout_query, иначе оплата не пройдёт
+    // Проверяем валидность платежа
+    const payloadParts = query.invoice_payload.split('_');
+    const userId = parseInt(payloadParts[0]);
+    const planType = payloadParts[1];
+    
+    // Проверяем существование пользователя
+    const userResult = await db.query(
+      'SELECT id FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      console.error('❌ User not found:', userId);
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'User not found. Please try again.'
+      });
+      return;
+    }
+    
+    // Проверяем валидность плана
+    const TelegramStarsService = require('./services/telegramStarsService');
+    const plan = TelegramStarsService.PLANS[planType];
+    
+    if (!plan) {
+      console.error('❌ Invalid plan:', planType);
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Invalid subscription plan. Please try again.'
+      });
+      return;
+    }
+    
+    // Проверяем сумму
+    const expectedAmount = TelegramStarsService.getPlanPrice(planType);
+    if (query.total_amount !== expectedAmount) {
+      console.error('❌ Amount mismatch:', {
+        expected: expectedAmount,
+        got: query.total_amount
+      });
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Invalid payment amount. Please try again.'
+      });
+      return;
+    }
+    
+    // Всё хорошо - разрешаем оплату
     await bot.answerPreCheckoutQuery(query.id, true);
     console.log('✅ Pre-checkout query approved');
+    
   } catch (error) {
     console.error('❌ Pre-checkout error:', error);
     

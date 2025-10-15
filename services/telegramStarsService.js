@@ -2,38 +2,41 @@ const db = require('../config/database');
 const crypto = require('crypto');
 
 class TelegramStarsService {
-  // Тарифные планы (для теста используем 1-2 XTR, в продакшене реальные цены)
+  // Тарифные планы с минимальными ценами для теста
   static PLANS = {
     '6_months': {
       name: 'Premium for 6 Months',
       duration_months: 6,
-      price_stars_test: 1, // Тестовая цена
-      price_stars_prod: 600, // Продакшн цена
+      price_stars: 1, // Минимальная цена для теста
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
       name: 'Premium for 1 Year',
       duration_months: 12,
-      price_stars_test: 2, // Тестовая цена
-      price_stars_prod: 1000, // Продакшн цена
+      price_stars: 1, // Минимальная цена для теста
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
     }
   };
 
-  // Получить цену в зависимости от окружения
+  // Получить цену плана
   static getPlanPrice(planType) {
     const plan = this.PLANS[planType];
-    if (!plan) return null;
+    if (!plan) {
+      console.error(`❌ Invalid plan type: ${planType}`);
+      return null;
+    }
     
-    const isTestMode = process.env.TELEGRAM_STARS_TEST_MODE === 'true';
-    return isTestMode ? plan.price_stars_test : plan.price_stars_prod;
+    console.log(`💰 Price for ${planType}: ${plan.price_stars} XTR`);
+    return plan.price_stars;
   }
 
   // Создать invoice payload (уникальный идентификатор платежа)
   static generateInvoicePayload(userId, planType) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
-    return `${userId}_${planType}_${timestamp}_${randomString}`;
+    const payload = `${userId}_${planType}_${timestamp}_${randomString}`;
+    console.log(`🔑 Generated payload: ${payload}`);
+    return payload;
   }
 
   // Создать запись о платеже
@@ -43,17 +46,29 @@ class TelegramStarsService {
     try {
       await client.query('BEGIN');
       
+      // Проверяем, нет ли уже pending платежа с таким payload
+      const existingPayment = await client.query(
+        'SELECT id FROM telegram_payments WHERE invoice_payload = $1',
+        [invoicePayload]
+      );
+      
+      if (existingPayment.rows.length > 0) {
+        console.log(`⚠️ Payment with payload ${invoicePayload} already exists`);
+        await client.query('COMMIT');
+        return existingPayment.rows[0].id;
+      }
+      
       const result = await client.query(
         `INSERT INTO telegram_payments (
-          user_id, invoice_payload, currency, total_amount, plan_type, status
-        ) VALUES ($1, $2, 'XTR', $3, $4, 'pending')
+          user_id, invoice_payload, currency, total_amount, plan_type, status, created_at
+        ) VALUES ($1, $2, 'XTR', $3, $4, 'pending', CURRENT_TIMESTAMP)
         RETURNING id`,
         [userId, invoicePayload, amount, planType]
       );
       
       await client.query('COMMIT');
       
-      console.log(`✅ Payment record created: ID ${result.rows[0].id}`);
+      console.log(`✅ Payment record created: ID ${result.rows[0].id}, Amount: ${amount} XTR`);
       return result.rows[0].id;
       
     } catch (error) {
@@ -87,7 +102,7 @@ class TelegramStarsService {
     try {
       await client.query('BEGIN');
 
-      // 1. Проверяем, не обработали ли уже этот платеж
+      // 1. Проверяем, не обработали ли уже этот платеж (защита от дублей)
       const existingPayment = await client.query(
         'SELECT id, status FROM telegram_payments WHERE telegram_payment_charge_id = $1',
         [telegram_payment_charge_id]
@@ -97,19 +112,19 @@ class TelegramStarsService {
         const status = existingPayment.rows[0].status;
         
         if (status === 'completed') {
-          console.log(`⚠️ Payment ${telegram_payment_charge_id} already processed`);
-          await client.query('ROLLBACK');
+          console.log(`⚠️ Payment ${telegram_payment_charge_id} already processed (duplicate webhook)`);
+          await client.query('COMMIT');
           return {
-            success: false,
-            error: 'Payment already processed',
-            duplicate: true
+            success: true,
+            duplicate: true,
+            message: 'Payment already processed'
           };
         }
       }
 
       // 2. Находим пользователя по telegram_id
       const userResult = await client.query(
-        'SELECT id, telegram_id FROM users WHERE telegram_id = $1',
+        'SELECT id, telegram_id, first_name FROM users WHERE telegram_id = $1',
         [from_user_id.toString()]
       );
 
@@ -123,9 +138,9 @@ class TelegramStarsService {
       }
 
       const user = userResult.rows[0];
+      console.log(`👤 Processing payment for user: ${user.first_name} (ID: ${user.id})`);
 
       // 3. Парсим invoice_payload чтобы получить plan_type
-      // Формат: userId_planType_timestamp_random
       const payloadParts = invoice_payload.split('_');
       const planType = payloadParts[1];
 
@@ -139,6 +154,7 @@ class TelegramStarsService {
       }
 
       const plan = this.PLANS[planType];
+      console.log(`📦 Plan: ${plan.name}`);
 
       // 4. Обновляем/создаем запись платежа
       await client.query(
@@ -160,6 +176,7 @@ class TelegramStarsService {
           planType
         ]
       );
+      console.log(`✅ Payment record updated to completed`);
 
       // 5. Вычисляем дату окончания подписки
       let expiresAt = null;
@@ -169,6 +186,8 @@ class TelegramStarsService {
         expiresAt = new Date(startedAt);
         expiresAt.setMonth(expiresAt.getMonth() + plan.duration_months);
       }
+
+      console.log(`📅 Subscription period: ${startedAt.toISOString()} to ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
       // 6. Деактивируем старые подписки
       await client.query(
@@ -194,6 +213,7 @@ class TelegramStarsService {
           telegram_payment_charge_id
         ]
       );
+      console.log(`✅ Subscription created: ID ${subscriptionResult.rows[0].id}`);
 
       // 8. Обновляем статус пользователя
       await client.query(
@@ -204,18 +224,19 @@ class TelegramStarsService {
          WHERE id = $1`,
         [user.id, planType, expiresAt]
       );
+      console.log(`✅ User premium status updated`);
 
       // 9. Записываем в историю
       await client.query(
         `INSERT INTO subscription_history (
-          subscription_id, user_id, action, plan_type, price_stars
-        ) VALUES ($1, $2, 'purchased', $3, $4)`,
+          subscription_id, user_id, action, plan_type, price_stars, created_at
+        ) VALUES ($1, $2, 'purchased', $3, $4, CURRENT_TIMESTAMP)`,
         [subscriptionResult.rows[0].id, user.id, planType, total_amount]
       );
 
       await client.query('COMMIT');
 
-      console.log(`✅ Payment processed successfully for user ${user.id}`);
+      console.log(`🎉 Payment processed successfully for user ${user.id}`);
 
       return {
         success: true,
