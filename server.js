@@ -61,6 +61,8 @@ const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
+    console.log('🔔 WEBHOOK RECEIVED:', JSON.stringify(req.body, null, 2)); // ДОБАВЬТЕ ЭТУ СТРОКУ
+    
     const secretHeader = req.get('x-telegram-bot-api-secret-token');
     
     if (!BOT_SECRET) {
@@ -85,6 +87,13 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     res.status(200).json({ success: false, error: error.message });
   }
 });
+```
+
+**3. Проверьте webhook вручную:**
+
+Откройте в браузере (замените YOUR_BOT_TOKEN):
+```
+https://api.telegram.org/botYOUR_BOT_TOKEN/getWebhookInfo
 
 app.use(generalLimiter);
 
