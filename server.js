@@ -203,436 +203,57 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
   
-  console.log(`📨 ========== NEW MESSAGE ==========`);
-  console.log(`From: ${chatId} (${msg.from.first_name} ${msg.from.last_name || ''})`);
-  console.log(`Text: "${text}"`);
-  console.log(`Username: @${msg.from.username || 'none'}`);
+  console.log(`📨 NEW MESSAGE: "${text}" from ${chatId}`);
 
   if (text.startsWith('/start')) {
-    const startParam = text.split(' ')[1];
-    
-    if (startParam && startParam.startsWith('join_')) {
-      const shareCode = startParam.replace('join_', '');
-      
-      try {
-        let userResult = await db.query(
-          'SELECT id, telegram_id FROM users WHERE telegram_id = $1',
-          [chatId.toString()]
-        );
-        
-        let userId;
-        
-        if (userResult.rows.length === 0) {
-          const tgUser = msg.from;
-          const newUserResult = await db.query(
-            `INSERT INTO users (
-              telegram_id, username, first_name, last_name, language
-            ) VALUES ($1, $2, $3, $4, $5)
-            RETURNING id`,
-            [
-              chatId.toString(),
-              tgUser.username || null,
-              tgUser.first_name || '',
-              tgUser.last_name || '',
-              tgUser.language_code || 'en'
-            ]
-          );
-          userId = newUserResult.rows[0].id;
-          console.log(`✅ New user created: ID ${userId}`);
-        } else {
-          userId = userResult.rows[0].id;
-          console.log(`✅ Existing user found: ID ${userId}`);
-        }
-        
-        const shareResult = await db.query(
-          `SELECT sh.*, h.*, u.first_name as owner_name
-           FROM shared_habits sh
-           JOIN habits h ON sh.habit_id = h.id
-           JOIN users u ON sh.owner_user_id = u.id
-           WHERE sh.share_code = $1`,
-          [shareCode]
-        );
-        
-        if (shareResult.rows.length > 0) {
-          const sharedHabit = shareResult.rows[0];
-          
-          const memberCheck = await db.query(
-            'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
-            [sharedHabit.habit_id, userId]
-          );
-          
-          if (memberCheck.rows.length > 0 && !memberCheck.rows[0].is_active) {
-            await db.query(
-              'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
-              [sharedHabit.habit_id, userId]
-            );
-            
-            const userHabitCheck = await db.query(
-              'SELECT * FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
-              [userId, sharedHabit.habit_id]
-            );
-            
-            let userHabitId;
-            
-            if (userHabitCheck.rows.length > 0) {
-              await db.query(
-                'UPDATE habits SET is_active = true WHERE id = $1',
-                [userHabitCheck.rows[0].id]
-              );
-              userHabitId = userHabitCheck.rows[0].id;
-            } else {
-              const newHabitResult = await db.query(
-                `INSERT INTO habits (
-                  user_id, category_id, title, goal, schedule_type, 
-                  schedule_days, reminder_time, reminder_enabled, is_bad_habit,
-                  parent_habit_id
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                RETURNING id`,
-                [
-                  userId,
-                  sharedHabit.category_id,
-                  sharedHabit.title,
-                  sharedHabit.goal,
-                  sharedHabit.schedule_type,
-                  sharedHabit.schedule_days,
-                  sharedHabit.reminder_time,
-                  sharedHabit.reminder_enabled,
-                  sharedHabit.is_bad_habit,
-                  sharedHabit.habit_id
-                ]
-              );
-              userHabitId = newHabitResult.rows[0].id;
-            }
-            
-            const ownerMemberCheck = await db.query(
-              'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
-              [userHabitId, sharedHabit.owner_user_id]
-            );
-            
-            if (ownerMemberCheck.rows.length > 0) {
-              await db.query(
-                'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
-                [userHabitId, sharedHabit.owner_user_id]
-              );
-            } else {
-              await db.query(
-                'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
-                [userHabitId, sharedHabit.owner_user_id]
-              );
-            }
-            
-            const ownerData = await db.query(
-              'SELECT telegram_id FROM users WHERE id = $1',
-              [sharedHabit.owner_user_id]
-            );
-            
-            if (ownerData.rows.length > 0) {
-              await bot.sendMessage(
-                ownerData.rows[0].telegram_id,
-                `🎉 ${msg.from.first_name} rejoined your habit "${sharedHabit.title}"!`,
-                { parse_mode: 'Markdown' }
-              );
-            }
-            
-            await bot.sendMessage(
-              chatId,
-              `✅ **Welcome back!**\n\n` +
-              `You've rejoined the habit:\n` +
-              `📝 **${sharedHabit.title}**\n` +
-              `🎯 Goal: ${sharedHabit.goal}\n` +
-              `👤 Shared by: ${sharedHabit.owner_name}\n\n` +
-              `Open the app to continue tracking this habit!`,
-              {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                  inline_keyboard: [[
-                    {
-                      text: '📱 Open Habit Tracker',
-                      web_app: { url: WEBAPP_URL }
-                    }
-                  ]]
-                }
-              }
-            );
-            
-            return;
-          }
-          
-          if (memberCheck.rows.length === 0) {
-            const newHabitResult = await db.query(
-              `INSERT INTO habits (
-                user_id, category_id, title, goal, schedule_type, 
-                schedule_days, reminder_time, reminder_enabled, is_bad_habit,
-                parent_habit_id
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-              RETURNING id`,
-              [
-                userId,
-                sharedHabit.category_id,
-                sharedHabit.title,
-                sharedHabit.goal,
-                sharedHabit.schedule_type,
-                sharedHabit.schedule_days,
-                sharedHabit.reminder_time,
-                sharedHabit.reminder_enabled,
-                sharedHabit.is_bad_habit,
-                sharedHabit.habit_id
-              ]
-            );
-            
-            const newHabitId = newHabitResult.rows[0].id;
-            
-            await db.query(
-              'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
-              [sharedHabit.habit_id, userId]
-            );
-            
-            await db.query(
-              'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
-              [newHabitId, sharedHabit.owner_user_id]
-            );
-            
-            const ownerData = await db.query(
-              'SELECT telegram_id FROM users WHERE id = $1',
-              [sharedHabit.owner_user_id]
-            );
-            
-            if (ownerData.rows.length > 0) {
-              await bot.sendMessage(
-                ownerData.rows[0].telegram_id,
-                `🎉 ${msg.from.first_name} joined your habit "${sharedHabit.title}"!`,
-                { parse_mode: 'Markdown' }
-              );
-            }
-            
-            await bot.sendMessage(
-              chatId,
-              `✅ **Success!**\n\n` +
-              `You've joined the habit:\n` +
-              `📝 **${sharedHabit.title}**\n` +
-              `🎯 Goal: ${sharedHabit.goal}\n` +
-              `👤 Shared by: ${sharedHabit.owner_name}\n\n` +
-              `Open the app to start tracking this habit together!`,
-              {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                  inline_keyboard: [[
-                    {
-                      text: '📱 Open Habit Tracker',
-                      web_app: { url: WEBAPP_URL }
-                    }
-                  ]]
-                }
-              }
-            );
-          } else {
-            await bot.sendMessage(
-              chatId,
-              `ℹ️ You're already tracking this habit!\n\n` +
-              `📝 **${sharedHabit.title}**\n\n` +
-              `Open the app to continue:`,
-              {
-                parse_mode: 'Markdown',
-                reply_markup: {
-                  inline_keyboard: [[
-                    {
-                      text: '📱 Open Habit Tracker',
-                      web_app: { url: WEBAPP_URL }
-                    }
-                  ]]
-                }
-              }
-            );
-          }
-          
-          return;
-        } else {
-          await bot.sendMessage(
-            chatId,
-            '❌ Invalid or expired invitation link.\n\n' +
-            'Please ask your friend to share a new link.',
-            { parse_mode: 'Markdown' }
-          );
-          return;
-        }
-      } catch (error) {
-        console.error('❌ Error processing join code:', error);
-        await bot.sendMessage(
-          chatId,
-          '❌ An error occurred while joining the habit.\n' +
-          'Please try again later.',
-          { parse_mode: 'Markdown' }
-        );
-        return;
-      }
-    }
-    
-    // Обычный старт (без параметров)
-    console.log(`👋 Sending welcome message to ${chatId}`);
+    console.log('👋 Processing /start command');
     
     try {
-      // Получаем или создаем пользователя
       let userResult = await db.query(
-        'SELECT id, telegram_id, first_name FROM users WHERE telegram_id = $1',
+        'SELECT id FROM users WHERE telegram_id = $1',
         [chatId.toString()]
       );
       
       if (userResult.rows.length === 0) {
-        // Создаем нового пользователя
-        const tgUser = msg.from;
         await db.query(
-          `INSERT INTO users (
-            telegram_id, username, first_name, last_name, language, is_premium
-          ) VALUES ($1, $2, $3, $4, $5, false)`,
-          [
-            chatId.toString(),
-            tgUser.username || null,
-            tgUser.first_name || '',
-            tgUser.last_name || '',
-            tgUser.language_code || 'en'
-          ]
-        );
-        console.log(`✅ New user created via /start: ${chatId}`);
-      } else {
-        // Обновляем данные существующего пользователя
-        await db.query(
-          `UPDATE users 
-           SET username = $2, 
-               first_name = $3, 
-               last_name = $4
-           WHERE telegram_id = $1`,
+          `INSERT INTO users (telegram_id, username, first_name, last_name, language, is_premium)
+           VALUES ($1, $2, $3, $4, $5, false)`,
           [
             chatId.toString(),
             msg.from.username || null,
             msg.from.first_name || '',
-            msg.from.last_name || ''
+            msg.from.last_name || '',
+            msg.from.language_code || 'en'
           ]
         );
-        console.log(`✅ Existing user updated via /start: ${chatId}`);
+        console.log('✅ New user created');
       }
       
       await bot.sendMessage(
         chatId,
-        '👋 **Welcome to Habit Tracker!**\n\n' +
-        'Track your habits, build streaks, and achieve your goals!\n\n' +
-        'Tap the button below to get started:',
+        '👋 **Welcome to Habit Tracker!**\n\nTrack your habits, build streaks, and achieve your goals!',
         {
           parse_mode: 'Markdown',
           reply_markup: {
-            keyboard: [
-              [{ text: '📱 Open Habit Tracker', web_app: { url: WEBAPP_URL } }],
-              [{ text: 'ℹ️ About' }, { text: '❓ Help' }]
-            ],
+            keyboard: [[{ text: '📱 Open Habit Tracker', web_app: { url: WEBAPP_URL } }]],
             resize_keyboard: true
           }
         }
       );
       
-      console.log('✅ Welcome message sent successfully');
+      console.log('✅ Welcome message sent');
     } catch (error) {
-      console.error('❌ Failed to send welcome message:', error);
+      console.error('❌ /start error:', error);
     }
-    
-    return;
-  }
-
-  // Обработка других текстовых команд
-  if (text === 'ℹ️ About' || text === '/about') {
-    await bot.sendMessage(
-      chatId,
-      '📊 **Habit Tracker**\n\n' +
-      'Version: 1.0.0\n' +
-      'Build habits, track progress, achieve goals!\n\n' +
-      'Features:\n' +
-      '✅ Daily habit tracking\n' +
-      '✅ Streak monitoring\n' +
-      '✅ Reminders\n' +
-      '✅ Friend challenges\n' +
-      '✅ Premium features',
-      { parse_mode: 'Markdown' }
-    );
     return;
   }
 
   if (text === '❓ Help' || text === '/help') {
-    await bot.sendMessage(
-      chatId,
-      '❓ **How to use Habit Tracker:**\n\n' +
-      '1️⃣ Tap "Open Habit Tracker" to launch the app\n' +
-      '2️⃣ Create your first habit\n' +
-      '3️⃣ Mark habits as done daily\n' +
-      '4️⃣ Build streaks and achieve goals!\n\n' +
-      'Need support? Contact @your_support_username',
-      { parse_mode: 'Markdown' }
-    );
+    await bot.sendMessage(chatId, 'Help info here');
     return;
   }
 
-  // Команда для тестирования напоминаний
-  if (text === '/testreminder') {
-    try {
-      const userResult = await db.query(
-        'SELECT id FROM users WHERE telegram_id = $1',
-        [chatId.toString()]
-      );
-      
-      if (userResult.rows.length > 0 && reminderService) {
-        const userId = userResult.rows[0].id;
-        const count = await reminderService.testReminder(userId, chatId);
-        
-        if (count > 0) {
-          await bot.sendMessage(
-            chatId, 
-            `✅ Sent ${count} test reminders.\n\nReal reminders will come at scheduled times.`
-          );
-        } else {
-          await bot.sendMessage(
-            chatId, 
-            '❌ No active habits with reminders.\n\nCreate a habit and set reminder time in the app.'
-          );
-        }
-      } else {
-        await bot.sendMessage(
-          chatId, 
-          '❌ User not found or reminder service unavailable.'
-        );
-      }
-    } catch (error) {
-      console.error('Test reminder error:', error);
-      await bot.sendMessage(chatId, '❌ Error sending test reminder.');
-    }
-    return;
-  }
-
-  // Команда для проверки статуса напоминаний
-  if (text === '/reminderstatus') {
-    try {
-      if (reminderService) {
-        const next = await reminderService.getNextReminder();
-        if (next) {
-          await bot.sendMessage(
-            chatId,
-            `📅 **Next reminder:**\n\n` +
-            `📝 Habit: ${next.title}\n` +
-            `⏰ Time: ${next.reminder_time.substring(0, 5)}\n` +
-            `👤 User: ${next.first_name}`,
-            { parse_mode: 'Markdown' }
-          );
-        } else {
-          await bot.sendMessage(chatId, '📭 No scheduled reminders for today.');
-        }
-      } else {
-        await bot.sendMessage(chatId, '❌ Reminder service unavailable.');
-      }
-    } catch (error) {
-      console.error('Status error:', error);
-      await bot.sendMessage(chatId, '❌ Error checking status.');
-    }
-    return;
-  }
-
-  // Если команда не распознана
-  console.log(`⚠️ Unknown command: ${text}`);
+  console.log('⚠️ Unknown command');
 });
 
 // Обработчик callback кнопок из напоминаний
