@@ -87,13 +87,6 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     res.status(200).json({ success: false, error: error.message });
   }
 });
-```
-
-**3. Проверьте webhook вручную:**
-
-Откройте в браузере (замените YOUR_BOT_TOKEN):
-```
-https://api.telegram.org/botYOUR_BOT_TOKEN/getWebhookInfo
 
 app.use(generalLimiter);
 
