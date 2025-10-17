@@ -27,10 +27,8 @@ if (!BOT_SECRET) {
   process.exit(1);
 }
 
-/** чтобы rate-limit и IP работали за nginx/render */
 app.set('trust proxy', 1);
 
-/** CORS */
 const extraOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
@@ -63,7 +61,6 @@ const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
-    // Проверяем secret token
     const secretHeader = req.get('x-telegram-bot-api-secret-token');
     
     if (!BOT_SECRET) {
@@ -80,7 +77,6 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     
     const update = req.body;
     
-    // Передаём обновление боту
     bot.processUpdate(update);
     
     res.status(200).json({ success: true });
@@ -91,7 +87,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
 });
 
 app.use(generalLimiter);
-/** Health */
+
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
@@ -105,29 +101,108 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-/** API */
 app.use('/api/auth', authRoutes);
 app.use('/api', habitRoutes);
-// Роуты для платежей
+
 const paymentRoutes = require('./routes/paymentRoutes');
 app.use('/api/payment', paymentRoutes);
-/** ---------- TELEGRAM BOT (WEBHOOK) ---------- */
+
 console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
-/** создаём бота без polling */
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-// Подготавливаем сервис напоминаний (запустим после старта сервера)
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
 
+// ВАЖНО: Обработчик pre_checkout_query
+bot.on('pre_checkout_query', async (query) => {
+  console.log('💳 ========== PRE-CHECKOUT QUERY ==========');
+  console.log('Query ID:', query.id);
+  console.log('From:', query.from.id, query.from.first_name);
+  console.log('Currency:', query.currency);
+  console.log('Total amount:', query.total_amount);
+  console.log('Invoice payload:', query.invoice_payload);
+  
+  try {
+    // Проверяем валидность платежа
+    const TelegramStarsService = require('./services/telegramStarsService');
+    
+    // Парсим payload
+    let parsed;
+    try {
+      parsed = TelegramStarsService.parseInvoicePayload(query.invoice_payload);
+    } catch (parseError) {
+      console.error('❌ Invalid payload:', parseError);
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Invalid payment data. Please try again.'
+      });
+      return;
+    }
+    
+    const userId = parseInt(parsed.userId);
+    const planType = parsed.planType;
+    
+    console.log('Parsed payment data:', { userId, planType });
+    
+    // Проверяем существование пользователя
+    const userResult = await db.query(
+      'SELECT id FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      console.error('❌ User not found:', userId);
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'User not found. Please try again.'
+      });
+      return;
+    }
+    
+    // Проверяем валидность плана
+    const plan = TelegramStarsService.PLANS[planType];
+    
+    if (!plan) {
+      console.error('❌ Invalid plan:', planType);
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Invalid subscription plan. Please try again.'
+      });
+      return;
+    }
+    
+    // Проверяем сумму
+    const expectedAmount = TelegramStarsService.getPlanPrice(planType);
+    if (query.total_amount !== expectedAmount) {
+      console.error('❌ Amount mismatch:', {
+        expected: expectedAmount,
+        got: query.total_amount
+      });
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Invalid payment amount. Please try again.'
+      });
+      return;
+    }
+    
+    // Всё хорошо - разрешаем оплату
+    await bot.answerPreCheckoutQuery(query.id, true);
+    console.log('✅ Pre-checkout query approved');
+    
+  } catch (error) {
+    console.error('❌ Pre-checkout error:', error);
+    
+    try {
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Payment processing error. Please try again.'
+      });
+    } catch (e) {
+      console.error('Failed to reject pre-checkout:', e);
+    }
+  }
+});
 
-/** Хэндлеры бота */
-/** Хэндлеры бота */
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
-console.log(`📨 ========== NEW MESSAGE ==========`);
+  console.log(`📨 ========== NEW MESSAGE ==========`);
   console.log(`From: ${chatId} (${msg.from.first_name} ${msg.from.last_name || ''})`);
   console.log(`Text: "${text}"`);
   console.log(`Username: @${msg.from.username || 'none'}`);
@@ -136,12 +211,10 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
   if (text.startsWith('/start')) {
     const startParam = text.split(' ')[1];
     
-    // Если есть параметр join_ - обрабатываем как присоединение к привычке
     if (startParam && startParam.startsWith('join_')) {
       const shareCode = startParam.replace('join_', '');
       
       try {
-        // Получаем или создаем пользователя
          let userResult = await db.query(
           'SELECT id, telegram_id FROM users WHERE telegram_id = $1',
           [chatId.toString()]
@@ -150,7 +223,6 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
         let userId;
         
         if (userResult.rows.length === 0) {
-          // Создаем нового пользователя
           const tgUser = msg.from;
           const newUserResult = await db.query(
             `INSERT INTO users (
@@ -172,7 +244,6 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
           console.log(`✅ Existing user found: ID ${userId}`);
         }
         
-        // Проверяем существование share code
         const shareResult = await db.query(
           `SELECT sh.*, h.*, u.first_name as owner_name
            FROM shared_habits sh
@@ -185,13 +256,11 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
         if (shareResult.rows.length > 0) {
           const sharedHabit = shareResult.rows[0];
           
-          // Проверяем, не является ли пользователь уже участником
           const memberCheck = await db.query(
             'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
             [sharedHabit.habit_id, userId]
           );
           
-          // Если есть неактивная запись, активируем её
           if (memberCheck.rows.length > 0 && !memberCheck.rows[0].is_active) {
             await db.query(
               'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
@@ -290,7 +359,6 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
           }
           
           if (memberCheck.rows.length === 0) {
-            // Создаем копию привычки для нового пользователя
             const newHabitResult = await db.query(
               `INSERT INTO habits (
                 user_id, category_id, title, goal, schedule_type, 
@@ -398,7 +466,6 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
         return;
       }
     }
-    
     // Обычный старт (без параметров)
     console.log(`👋 Sending welcome message to ${chatId}`);
     
@@ -567,79 +634,6 @@ console.log(`📨 ========== NEW MESSAGE ==========`);
   console.log(`⚠️ Unknown command: ${text}`);
 });
 
-// Обработчик pre_checkout_query (ОБЯЗАТЕЛЬНО!)
-// Обработчик pre_checkout_query (ОБЯЗАТЕЛЬНО!)
-bot.on('pre_checkout_query', async (query) => {
-  console.log('💳 ========== PRE-CHECKOUT QUERY ==========');
-  console.log('Query ID:', query.id);
-  console.log('From:', query.from.id, query.from.first_name);
-  console.log('Currency:', query.currency);
-  console.log('Total amount:', query.total_amount);
-  console.log('Invoice payload:', query.invoice_payload);
-  
-  try {
-    // Проверяем валидность платежа
-    const payloadParts = query.invoice_payload.split('_');
-    const userId = parseInt(payloadParts[0]);
-    const planType = payloadParts[1];
-    
-    // Проверяем существование пользователя
-    const userResult = await db.query(
-      'SELECT id FROM users WHERE id = $1',
-      [userId]
-    );
-    
-    if (userResult.rows.length === 0) {
-      console.error('❌ User not found:', userId);
-      await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: 'User not found. Please try again.'
-      });
-      return;
-    }
-    
-    // Проверяем валидность плана
-    const TelegramStarsService = require('./services/telegramStarsService');
-    const plan = TelegramStarsService.PLANS[planType];
-    
-    if (!plan) {
-      console.error('❌ Invalid plan:', planType);
-      await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: 'Invalid subscription plan. Please try again.'
-      });
-      return;
-    }
-    
-    // Проверяем сумму
-    const expectedAmount = TelegramStarsService.getPlanPrice(planType);
-    if (query.total_amount !== expectedAmount) {
-      console.error('❌ Amount mismatch:', {
-        expected: expectedAmount,
-        got: query.total_amount
-      });
-      await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: 'Invalid payment amount. Please try again.'
-      });
-      return;
-    }
-    
-    // Всё хорошо - разрешаем оплату
-    await bot.answerPreCheckoutQuery(query.id, true);
-    console.log('✅ Pre-checkout query approved');
-    
-  } catch (error) {
-    console.error('❌ Pre-checkout error:', error);
-    
-    // Отклоняем оплату с объяснением
-    try {
-      await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: 'Payment processing error. Please try again.'
-      });
-    } catch (e) {
-      console.error('Failed to reject pre-checkout:', e);
-    }
-  }
-});
-// Обработчик callback кнопок из напоминаний
 // Обработчик callback кнопок из напоминаний
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
@@ -834,7 +828,6 @@ bot.on('callback_query', async (callbackQuery) => {
 });
 
 /** ---------- Запуск HTTP и установка webhook ---------- */
-/** ---------- Запуск HTTP и установка webhook ---------- */
 const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -901,23 +894,5 @@ process.on('SIGINT', () => {
   server.close(() => process.exit(0));
 });
 
-// Экспортируем бота для использования в других модулях
-module.exports.bot = bot;
-
-/** Грейсфул шатдаун */
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  reminderService.stop();
-  keepAliveService.stop();
-  server.close(() => process.exit(0));
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT signal received: closing HTTP server');
-  reminderService.stop();
-  keepAliveService.stop();
-  server.close(() => process.exit(0));
-});
-subscriptionCron.stop();
 // Экспортируем бота для использования в других модулях
 module.exports.bot = bot;
