@@ -202,11 +202,11 @@ bot.on('pre_checkout_query', async (query) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
+  
   console.log(`📨 ========== NEW MESSAGE ==========`);
   console.log(`From: ${chatId} (${msg.from.first_name} ${msg.from.last_name || ''})`);
   console.log(`Text: "${text}"`);
   console.log(`Username: @${msg.from.username || 'none'}`);
-  
 
   if (text.startsWith('/start')) {
     const startParam = text.split(' ')[1];
@@ -215,7 +215,7 @@ bot.on('message', async (msg) => {
       const shareCode = startParam.replace('join_', '');
       
       try {
-         let userResult = await db.query(
+        let userResult = await db.query(
           'SELECT id, telegram_id FROM users WHERE telegram_id = $1',
           [chatId.toString()]
         );
@@ -466,6 +466,7 @@ bot.on('message', async (msg) => {
         return;
       }
     }
+    
     // Обычный старт (без параметров)
     console.log(`👋 Sending welcome message to ${chatId}`);
     
@@ -646,7 +647,6 @@ bot.on('callback_query', async (callbackQuery) => {
     const habitId = data.replace('mark_done_', '');
     
     try {
-      // Отмечаем привычку как выполненную
       await db.query(
         `INSERT INTO habit_marks (habit_id, date, status) 
          VALUES ($1, CURRENT_DATE, 'completed')
@@ -655,7 +655,6 @@ bot.on('callback_query', async (callbackQuery) => {
         [habitId]
       );
       
-      // Обновляем streak
       await db.query(
         `UPDATE habits 
          SET streak_current = streak_current + 1,
@@ -697,7 +696,6 @@ bot.on('callback_query', async (callbackQuery) => {
         [habitId]
       );
       
-      // Сбрасываем streak при пропуске
       await db.query(
         'UPDATE habits SET streak_current = 0 WHERE id = $1',
         [habitId]
@@ -725,13 +723,11 @@ bot.on('callback_query', async (callbackQuery) => {
       });
     }
   } else if (data.startsWith('quick_done_')) {
-    // Новый обработчик для быстрой отметки из уведомления друга
     const parts = data.split('_');
     const habitId = parts[2];
     const date = parts[3] || new Date().toISOString().split('T')[0];
     
     try {
-      // Получаем пользователя по telegram_id
       const userResult = await db.query(
         'SELECT id, first_name FROM users WHERE telegram_id = $1',
         [chatId.toString()]
@@ -747,7 +743,6 @@ bot.on('callback_query', async (callbackQuery) => {
       const userId = userResult.rows[0].id;
       const userName = userResult.rows[0].first_name;
       
-      // Находим привычку пользователя связанную с этой группой
       const userHabitResult = await db.query(
         `SELECT h.id, h.title 
          FROM habits h
@@ -770,7 +765,6 @@ bot.on('callback_query', async (callbackQuery) => {
       const userHabitId = userHabitResult.rows[0].id;
       const habitTitle = userHabitResult.rows[0].title;
       
-      // Отмечаем привычку как выполненную
       await db.query(
         `INSERT INTO habit_marks (habit_id, date, status) 
          VALUES ($1, $2::date, 'completed')
@@ -779,7 +773,6 @@ bot.on('callback_query', async (callbackQuery) => {
         [userHabitId, date]
       );
       
-      // Обновляем streak
       await db.query(
         `UPDATE habits 
          SET streak_current = streak_current + 1,
@@ -806,7 +799,6 @@ bot.on('callback_query', async (callbackQuery) => {
         text: '✅ Выполнено! Отличная работа!'
       });
       
-      // Запускаем проверку и отправку уведомлений друзьям
       const habitResult = await db.query(
         'SELECT * FROM habits WHERE id = $1',
         [userHabitId]
