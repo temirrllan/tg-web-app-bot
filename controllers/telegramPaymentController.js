@@ -98,106 +98,116 @@ const telegramPaymentController = {
   },
 
   // Создать invoice и получить invoice URL
-  async createInvoice(req, res) {
-    try {
-      const { planType } = req.body;
-      const userId = req.user.id;
+  // ... (остальной код остается без изменений)
 
-      console.log(`📨 Creating invoice for user ${userId}, plan: ${planType}`);
+// Создать invoice и получить invoice URL
+async createInvoice(req, res) {
+  try {
+    const { planType } = req.body;
+    const userId = req.user.id;
 
-      // Получаем telegram_id пользователя
-      const userResult = await db.query(
-        'SELECT telegram_id, first_name FROM users WHERE id = $1',
-        [userId]
-      );
+    console.log(`📨 Creating invoice for user ${userId}, plan: ${planType}`);
 
-      if (userResult.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
-      }
+    // Получаем telegram_id пользователя
+    const userResult = await db.query(
+      'SELECT telegram_id, first_name FROM users WHERE id = $1',
+      [userId]
+    );
 
-      const { telegram_id, first_name } = userResult.rows[0];
-
-      // Получаем данные плана и цену
-      const price = TelegramStarsService.getPlanPrice(planType);
-      const plan = TelegramStarsService.PLANS[planType];
-
-      if (!price || !plan) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid plan'
-        });
-      }
-
-      console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR`);
-
-      // Генерируем invoice payload
-      const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
-
-      // Создаем запись о платеже
-      await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
-
-      // Создаём invoice link через Bot API
-      const bot = require('../server').bot;
-      
-      console.log('📤 Creating invoice link via Bot API...');
-
-      try {
-        const invoiceLink = await bot.createInvoiceLink(
-          plan.name, // title
-          `${plan.features.join('\n• ')}`, // description
-          invoicePayload, // payload
-          '', // provider_token (пустой для Stars)
-          'XTR', // currency
-          [{ label: plan.name, amount: price }], // prices
-          {
-            photo_url: 'https://i.imgur.com/8QF3Z1M.png',
-            photo_width: 512,
-            photo_height: 512,
-            need_name: false,
-            need_phone_number: false,
-            need_email: false,
-            need_shipping_address: false,
-            is_flexible: false,
-            send_phone_number_to_provider: false,
-            send_email_to_provider: false
-          }
-        );
-
-        console.log('✅ Invoice link created:', invoiceLink);
-
-        res.json({
-          success: true,
-          invoiceUrl: invoiceLink,
-          invoicePayload: invoicePayload,
-          price: price,
-          planName: plan.name
-        });
-
-      } catch (botError) {
-        console.error('❌ Failed to create invoice link:', botError);
-        
-        if (botError.response?.statusCode === 403) {
-          return res.status(403).json({
-            success: false,
-            error: 'User has blocked the bot',
-            code: 'bot_blocked'
-          });
-        }
-
-        throw botError;
-      }
-
-    } catch (error) {
-      console.error('💥 Create invoice error:', error);
-      res.status(500).json({
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        error: 'Failed to create invoice'
+        error: 'User not found'
       });
     }
-  },
+
+    const { telegram_id, first_name } = userResult.rows[0];
+
+    // ВАЖНО: Нормализуем plan type
+    const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
+    console.log(`🔄 Plan mapping: ${planType} -> ${normalizedPlan}`);
+
+    // Получаем данные плана и цену (используем нормализованный план)
+    const price = TelegramStarsService.getPlanPrice(normalizedPlan);
+    const plan = TelegramStarsService.PLANS[normalizedPlan];
+
+    if (!price || !plan) {
+      console.error(`❌ Invalid plan: ${planType} (normalized: ${normalizedPlan})`);
+      return res.status(400).json({
+        success: false,
+        error: `Invalid plan: ${planType}`
+      });
+    }
+
+    console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR`);
+
+    // Генерируем invoice payload (внутри уже нормализуется)
+    const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
+
+    // Создаем запись о платеже
+    await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
+
+    // Создаём invoice link через Bot API
+    const bot = require('../server').bot;
+    
+    console.log('📤 Creating invoice link via Bot API...');
+
+    try {
+      const invoiceLink = await bot.createInvoiceLink(
+        plan.name, // title
+        `${plan.features.join('\n• ')}`, // description
+        invoicePayload, // payload
+        '', // provider_token (пустой для Stars)
+        'XTR', // currency
+        [{ label: plan.name, amount: price }], // prices
+        {
+          photo_url: 'https://i.imgur.com/8QF3Z1M.png',
+          photo_width: 512,
+          photo_height: 512,
+          need_name: false,
+          need_phone_number: false,
+          need_email: false,
+          need_shipping_address: false,
+          is_flexible: false,
+          send_phone_number_to_provider: false,
+          send_email_to_provider: false
+        }
+      );
+
+      console.log('✅ Invoice link created:', invoiceLink);
+
+      res.json({
+        success: true,
+        invoiceUrl: invoiceLink,
+        invoicePayload: invoicePayload,
+        price: price,
+        planName: plan.name
+      });
+
+    } catch (botError) {
+      console.error('❌ Failed to create invoice link:', botError);
+      
+      if (botError.response?.statusCode === 403) {
+        return res.status(403).json({
+          success: false,
+          error: 'User has blocked the bot',
+          code: 'bot_blocked'
+        });
+      }
+
+      throw botError;
+    }
+
+  } catch (error) {
+    console.error('💥 Create invoice error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create invoice'
+    });
+  }
+},
+
+// ... (остальной код остается без изменений)
 
   // Старый метод для отправки invoice кнопки (оставляем для обратной совместимости)
   async requestInvoiceButton(req, res) {

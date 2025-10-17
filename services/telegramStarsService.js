@@ -15,6 +15,25 @@ class TelegramStarsService {
       duration_months: 12,
       price_stars: 1,
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
+    },
+    // Добавляем алиасы для маппинга с фронтенда
+    'year': {
+      name: 'Premium for 1 Year',
+      duration_months: 12,
+      price_stars: 1,
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
+    },
+    'month': {
+      name: 'Premium for 6 Months',
+      duration_months: 6,
+      price_stars: 1,
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+    },
+    '3_months': {
+      name: 'Premium for 6 Months',
+      duration_months: 6,
+      price_stars: 1,
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     }
   };
 
@@ -30,13 +49,28 @@ class TelegramStarsService {
     return plan.price_stars;
   }
 
-  // ИСПРАВЛЕННАЯ функция генерации payload - используем разделитель который не конфликтует
+  // Нормализовать название плана (маппинг алиасов)
+  static normalizePlanType(planType) {
+    const mapping = {
+      'year': '1_year',
+      'month': '6_months',
+      '3_months': '6_months'
+    };
+    
+    return mapping[planType] || planType;
+  }
+
+  // ИСПРАВЛЕННАЯ функция генерации payload
   static generateInvoicePayload(userId, planType) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
+    
+    // ВАЖНО: Нормализуем plan type перед сохранением в payload
+    const normalizedPlan = this.normalizePlanType(planType);
+    
     // Используем | как разделитель вместо _
-    const payload = `${userId}|${planType}|${timestamp}|${randomString}`;
-    console.log(`🔑 Generated payload: ${payload}`);
+    const payload = `${userId}|${normalizedPlan}|${timestamp}|${randomString}`;
+    console.log(`🔑 Generated payload: ${payload} (normalized: ${planType} -> ${normalizedPlan})`);
     return payload;
   }
 
@@ -50,9 +84,17 @@ class TelegramStarsService {
         throw new Error('Invalid payload format');
       }
       
+      const planType = parts[1];
+      
+      // Проверяем что план существует
+      if (!this.PLANS[planType]) {
+        console.error(`❌ Unknown plan type in payload: ${planType}`);
+        throw new Error(`Invalid plan type: ${planType}`);
+      }
+      
       return {
         userId: parts[0],
-        planType: parts[1],
+        planType: planType,
         timestamp: parts[2],
         randomString: parts[3]
       };
@@ -68,6 +110,9 @@ class TelegramStarsService {
     
     try {
       await client.query('BEGIN');
+      
+      // Нормализуем plan type
+      const normalizedPlan = this.normalizePlanType(planType);
       
       // Проверяем, нет ли уже pending платежа с таким payload
       const existingPayment = await client.query(
@@ -86,12 +131,12 @@ class TelegramStarsService {
           user_id, invoice_payload, currency, total_amount, plan_type, status, created_at
         ) VALUES ($1, $2, 'XTR', $3, $4, 'pending', CURRENT_TIMESTAMP)
         RETURNING id`,
-        [userId, invoicePayload, amount, planType]
+        [userId, invoicePayload, amount, normalizedPlan]
       );
       
       await client.query('COMMIT');
       
-      console.log(`✅ Payment record created: ID ${result.rows[0].id}, Amount: ${amount} XTR`);
+      console.log(`✅ Payment record created: ID ${result.rows[0].id}, Plan: ${normalizedPlan}, Amount: ${amount} XTR`);
       return result.rows[0].id;
       
     } catch (error) {
@@ -164,7 +209,18 @@ class TelegramStarsService {
       console.log(`👤 Processing payment for user: ${user.first_name} (ID: ${user.id})`);
 
       // 3. ИСПРАВЛЕННЫЙ парсинг invoice_payload
-      const parsed = this.parseInvoicePayload(invoice_payload);
+      let parsed;
+      try {
+        parsed = this.parseInvoicePayload(invoice_payload);
+      } catch (parseError) {
+        await client.query('ROLLBACK');
+        console.error(`❌ Failed to parse invoice payload: ${invoice_payload}`, parseError);
+        return {
+          success: false,
+          error: 'Invalid invoice payload format'
+        };
+      }
+      
       const planType = parsed.planType;
 
       if (!this.PLANS[planType]) {
@@ -172,12 +228,12 @@ class TelegramStarsService {
         console.error(`❌ Invalid plan type: ${planType}`);
         return {
           success: false,
-          error: 'Invalid plan type'
+          error: `Invalid subscription plan: ${planType}`
         };
       }
 
       const plan = this.PLANS[planType];
-      console.log(`📦 Plan: ${plan.name}`);
+      console.log(`📦 Plan: ${plan.name} (${planType})`);
 
       // 4. Обновляем/создаем запись платежа
       await client.query(
