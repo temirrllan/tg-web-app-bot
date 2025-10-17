@@ -102,13 +102,13 @@ const telegramPaymentController = {
     }
   },
 
-  // Отправить invoice кнопку пользователю
+  // Создать invoice для оплаты
   async requestInvoiceButton(req, res) {
     try {
       const { planType } = req.body;
       const userId = req.user.id;
 
-      console.log(`📨 Sending invoice button to user ${userId}, plan: ${planType}`);
+      console.log(`📨 Creating invoice for user ${userId}, plan: ${planType}`);
 
       // Получаем telegram_id пользователя
       const userResult = await db.query(
@@ -144,60 +144,21 @@ const telegramPaymentController = {
       // Создаем запись о платеже
       await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
 
-      // Отправляем invoice через бота
-      const bot = require('../server').bot;
+      console.log(`✅ Invoice created with payload: ${invoicePayload}`);
 
-      try {
-        await bot.sendInvoice(
-          telegram_id,
-          plan.name, // title
-          plan.features.join('\n• '), // description
-          invoicePayload, // payload
-          '', // provider_token (пустой для Stars)
-          'XTR', // currency
-          [{ label: plan.name, amount: price }], // prices
-          {
-            photo_url: 'https://i.imgur.com/8QF3Z1M.png',
-            photo_width: 512,
-            photo_height: 512,
-            need_name: false,
-            need_phone_number: false,
-            need_email: false,
-            need_shipping_address: false,
-            is_flexible: false,
-            send_phone_number_to_provider: false,
-            send_email_to_provider: false
-          }
-        );
-
-        console.log('✅ Invoice sent successfully');
-
-        res.json({
-          success: true,
-          message: 'Invoice sent to user',
-          invoicePayload: invoicePayload
-        });
-
-      } catch (botError) {
-        console.error('❌ Failed to send invoice:', botError);
-        
-        // Проверяем если пользователь заблокировал бота
-        if (botError.response?.statusCode === 403) {
-          return res.status(403).json({
-            success: false,
-            error: 'User has blocked the bot',
-            code: 'bot_blocked'
-          });
-        }
-
-        throw botError;
-      }
+      // Возвращаем payload для использования в openInvoice
+      res.json({
+        success: true,
+        invoicePayload: invoicePayload,
+        price: price,
+        planName: plan.name
+      });
 
     } catch (error) {
-      console.error('💥 Send invoice error:', error);
+      console.error('💥 Create invoice error:', error);
       res.status(500).json({
         success: false,
-        error: 'Failed to send invoice'
+        error: 'Failed to create invoice'
       });
     }
   },
