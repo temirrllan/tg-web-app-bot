@@ -79,31 +79,26 @@ const telegramPaymentController = {
             console.log('✅ Confirmation message sent to user');
           } catch (botError) {
             console.error('Failed to send confirmation:', botError.message);
-            // Не критично, продолжаем
           }
 
           return res.status(200).json({ success: true });
         } else {
           console.error('❌ Payment processing failed:', result.error);
-          
-          // Всё равно возвращаем 200 чтобы Telegram не повторял запрос
           return res.status(200).json({ success: false, error: result.error });
         }
       }
 
-      // Если это не successful_payment, просто подтверждаем получение
       console.log('ℹ️ Not a payment update, acknowledging');
       res.status(200).json({ success: true, message: 'Update received' });
 
     } catch (error) {
       console.error('💥 Webhook error:', error);
-      // ВАЖНО: Всегда возвращаем 200, иначе Telegram будет повторять запрос
       res.status(200).json({ success: false, error: error.message });
     }
   },
 
-  // Создать invoice для оплаты
-  async requestInvoiceButton(req, res) {
+  // Создать invoice и получить invoice URL
+  async createInvoice(req, res) {
     try {
       const { planType } = req.body;
       const userId = req.user.id;
@@ -144,21 +139,156 @@ const telegramPaymentController = {
       // Создаем запись о платеже
       await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
 
-      console.log(`✅ Invoice created with payload: ${invoicePayload}`);
+      // Создаём invoice link через Bot API
+      const bot = require('../server').bot;
+      
+      console.log('📤 Creating invoice link via Bot API...');
 
-      // Возвращаем payload для использования в openInvoice
-      res.json({
-        success: true,
-        invoicePayload: invoicePayload,
-        price: price,
-        planName: plan.name
-      });
+      try {
+        const invoiceLink = await bot.createInvoiceLink(
+          plan.name, // title
+          `${plan.features.join('\n• ')}`, // description
+          invoicePayload, // payload
+          '', // provider_token (пустой для Stars)
+          'XTR', // currency
+          [{ label: plan.name, amount: price }], // prices
+          {
+            photo_url: 'https://i.imgur.com/8QF3Z1M.png',
+            photo_width: 512,
+            photo_height: 512,
+            need_name: false,
+            need_phone_number: false,
+            need_email: false,
+            need_shipping_address: false,
+            is_flexible: false,
+            send_phone_number_to_provider: false,
+            send_email_to_provider: false
+          }
+        );
+
+        console.log('✅ Invoice link created:', invoiceLink);
+
+        res.json({
+          success: true,
+          invoiceUrl: invoiceLink,
+          invoicePayload: invoicePayload,
+          price: price,
+          planName: plan.name
+        });
+
+      } catch (botError) {
+        console.error('❌ Failed to create invoice link:', botError);
+        
+        if (botError.response?.statusCode === 403) {
+          return res.status(403).json({
+            success: false,
+            error: 'User has blocked the bot',
+            code: 'bot_blocked'
+          });
+        }
+
+        throw botError;
+      }
 
     } catch (error) {
       console.error('💥 Create invoice error:', error);
       res.status(500).json({
         success: false,
         error: 'Failed to create invoice'
+      });
+    }
+  },
+
+  // Старый метод для отправки invoice кнопки (оставляем для обратной совместимости)
+  async requestInvoiceButton(req, res) {
+    try {
+      const { planType } = req.body;
+      const userId = req.user.id;
+
+      console.log(`📨 Sending invoice button to user ${userId}, plan: ${planType}`);
+
+      const userResult = await db.query(
+        'SELECT telegram_id, first_name FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+
+      const { telegram_id, first_name } = userResult.rows[0];
+
+      const price = TelegramStarsService.getPlanPrice(planType);
+      const plan = TelegramStarsService.PLANS[planType];
+
+      if (!price || !plan) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid plan'
+        });
+      }
+
+      console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR`);
+
+      const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
+
+      await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
+
+      const bot = require('../server').bot;
+
+      try {
+        await bot.sendInvoice(
+          telegram_id,
+          plan.name,
+          plan.features.join('\n• '),
+          invoicePayload,
+          '',
+          'XTR',
+          [{ label: plan.name, amount: price }],
+          {
+            photo_url: 'https://i.imgur.com/8QF3Z1M.png',
+            photo_width: 512,
+            photo_height: 512,
+            need_name: false,
+            need_phone_number: false,
+            need_email: false,
+            need_shipping_address: false,
+            is_flexible: false,
+            send_phone_number_to_provider: false,
+            send_email_to_provider: false
+          }
+        );
+
+        console.log('✅ Invoice sent successfully');
+
+        res.json({
+          success: true,
+          message: 'Invoice sent to user',
+          invoicePayload: invoicePayload
+        });
+
+      } catch (botError) {
+        console.error('❌ Failed to send invoice:', botError);
+        
+        if (botError.response?.statusCode === 403) {
+          return res.status(403).json({
+            success: false,
+            error: 'User has blocked the bot',
+            code: 'bot_blocked'
+          });
+        }
+
+        throw botError;
+      }
+
+    } catch (error) {
+      console.error('💥 Send invoice error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to send invoice'
       });
     }
   },

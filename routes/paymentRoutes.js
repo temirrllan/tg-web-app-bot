@@ -4,13 +4,15 @@ const telegramPaymentController = require('../controllers/telegramPaymentControl
 const authMiddleware = require('../middleware/authMiddleware');
 
 // Webhook от Telegram (без auth middleware!)
-// ВАЖНО: этот роут должен быть БЕЗ authMiddleware
 router.post('/webhook', telegramPaymentController.handleWebhook);
 
-// Отправить invoice кнопку (требует авторизации)
+// Создать invoice и получить URL (НОВЫЙ эндпоинт)
+router.post('/create-invoice', authMiddleware, telegramPaymentController.createInvoice);
+
+// Отправить invoice кнопку (старый метод, оставляем для совместимости)
 router.post('/request-invoice-button', authMiddleware, telegramPaymentController.requestInvoiceButton);
 
-// Проверить статус платежа по payload (требует авторизации)
+// Проверить статус платежа по payload
 router.get('/check-status', authMiddleware, telegramPaymentController.checkPaymentStatusByPayload);
 
 module.exports = router;
