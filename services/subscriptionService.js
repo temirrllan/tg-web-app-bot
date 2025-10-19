@@ -1,5 +1,5 @@
 const db = require('../config/database');
-
+const TelegramStarsService = require('./telegramStarsService');
 class SubscriptionService {
   // Конфигурация планов подписки
   static PLANS = {
@@ -145,7 +145,6 @@ static async checkUserSubscription(userId) {
   try {
     console.log(`🔍 Checking subscription for user ${userId}`);
     
-    // Получаем актуальные данные из таблицы users
     const result = await db.query(
       `SELECT 
         u.id,
@@ -172,18 +171,16 @@ static async checkUserSubscription(userId) {
     const userData = result.rows[0];
     const now = new Date();
     
-    console.log(`📊 User ${userId} subscription data:`, {
+    console.log(`📊 User ${userId} data:`, {
       is_premium: userData.is_premium,
       subscription_type: userData.subscription_type,
       subscription_expires_at: userData.subscription_expires_at
     });
     
-    // Проверяем актуальность подписки
     let isActive = false;
     let subscription = null;
     
     if (userData.is_premium && userData.subscription_type) {
-      // Проверяем срок действия
       if (userData.subscription_expires_at) {
         const expiresAt = new Date(userData.subscription_expires_at);
         isActive = expiresAt > now;
@@ -191,17 +188,20 @@ static async checkUserSubscription(userId) {
         if (isActive) {
           const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
           
+          const plan = TelegramStarsService.PLANS[userData.subscription_type];
+          
           subscription = {
             isActive: true,
             planType: userData.subscription_type,
-            planName: this.PLANS[userData.subscription_type]?.name || 'Premium',
+            planName: plan ? plan.display_name : 'Premium',
+            fullPlanName: plan ? plan.name : 'Premium',
             expiresAt: userData.subscription_expires_at,
             daysLeft: daysLeft > 0 ? daysLeft : 0,
-            isTrial: userData.subscription_type === 'trial_7_days'
+            isTrial: false
           };
         } else {
-          // Подписка истекла - деактивируем
-          console.log(`⏰ Subscription expired for user ${userId}`);
+          // Подписка истекла - автоматически деактивируем
+          console.log(`⏰ Subscription expired for user ${userId}, deactivating...`);
           await db.query(
             `UPDATE users 
              SET is_premium = false, 
@@ -210,14 +210,21 @@ static async checkUserSubscription(userId) {
              WHERE id = $1`,
             [userId]
           );
+          
+          await db.query(
+            'UPDATE subscriptions SET is_active = false, cancelled_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND is_active = true',
+            [userId]
+          );
         }
       } else {
         // Lifetime подписка
         isActive = true;
+        const plan = TelegramStarsService.PLANS[userData.subscription_type];
         subscription = {
           isActive: true,
           planType: userData.subscription_type,
-          planName: this.PLANS[userData.subscription_type]?.name || 'Lifetime Premium',
+          planName: plan ? plan.display_name : 'Lifetime Premium',
+          fullPlanName: plan ? plan.name : 'Lifetime Premium',
           expiresAt: null,
           daysLeft: null,
           isTrial: false

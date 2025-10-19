@@ -2,6 +2,7 @@ const TelegramStarsService = require('../services/telegramStarsService');
 const db = require('../config/database');
 
 const telegramPaymentController = {
+  // Обработка webhook от Telegram
   async handleWebhook(req, res) {
     try {
       console.log('📥 ========== TELEGRAM PAYMENT WEBHOOK ==========');
@@ -13,6 +14,7 @@ const telegramPaymentController = {
       let payment = null;
       let from_user_id = null;
 
+      // ВАЖНО: Проверяем successful_payment в разных местах
       if (update.message?.successful_payment) {
         payment = update.message.successful_payment;
         from_user_id = update.message.from.id;
@@ -22,10 +24,9 @@ const telegramPaymentController = {
         from_user_id = update.callback_query.from.id;
         console.log('✅ Found successful_payment in callback_query');
       } else if (update.pre_checkout_query) {
-        console.log('📋 Received pre_checkout_query - answering OK');
-        const bot = require('../server').bot;
-        await bot.answerPreCheckoutQuery(update.pre_checkout_query.id, true);
-        return res.status(200).json({ success: true, message: 'Pre-checkout approved' });
+        console.log('📋 Received pre_checkout_query - handling in bot.on handler');
+        // Pre-checkout обрабатывается в server.js через bot.on('pre_checkout_query')
+        return res.status(200).json({ success: true, message: 'Pre-checkout handled by bot' });
       }
 
       if (payment) {
@@ -38,13 +39,27 @@ const telegramPaymentController = {
           from_user_id: from_user_id
         };
 
-        console.log('💳 Processing payment:', paymentData);
+        console.log('💳 Processing successful payment:', paymentData);
 
+        // КРИТИЧЕСКИ ВАЖНО: Обрабатываем платёж
         const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
 
         if (result.success) {
           console.log('✅ Payment processed successfully');
+          console.log('✅ User ID:', result.user_id);
+          console.log('✅ Subscription ID:', result.subscription_id);
+          console.log('✅ Plan type:', result.plan_type);
+          console.log('✅ Expires at:', result.expires_at);
           
+          // ВАЖНО: Проверяем что данные действительно обновились
+          const verificationResult = await db.query(
+            'SELECT id, is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1',
+            [result.user_id]
+          );
+          
+          console.log('🔍 Verification after payment:', verificationResult.rows[0]);
+          
+          // Отправляем уведомление пользователю
           try {
             const bot = require('../server').bot;
             
@@ -55,16 +70,20 @@ const telegramPaymentController = {
             
             const lang = userResult.rows.length > 0 ? userResult.rows[0].language : 'en';
             
-            const message = lang === 'ru'
-              ? '🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\nТеперь у вас есть:\n✅ Безлимитные привычки\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪'
-              : '🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\nYou now have:\n✅ Unlimited habits\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪';
+            const messages = {
+              ru: '🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\n✅ Безлимитные привычки\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪',
+              en: '🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\n✅ Unlimited habits\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪',
+              kk: '🎉 <b>Төлем сәтті өтті!</b>\n\nСіздің Premium жазылымыңыз белсендірілді!\n\n✅ Шексіз әдеттер\n✅ Кеңейтілген статистика\n✅ Басым қолдау\n\nҚосымшаны ашып, ләззат алыңыз! 💪'
+            };
+            
+            const message = messages[lang] || messages['en'];
             
             await bot.sendMessage(from_user_id, message, {
               parse_mode: 'HTML',
               reply_markup: {
                 inline_keyboard: [[
                   {
-                    text: '📱 Open App',
+                    text: lang === 'ru' ? '📱 Открыть приложение' : lang === 'kk' ? '📱 Қосымшаны ашу' : '📱 Open App',
                     web_app: { 
                       url: process.env.WEBAPP_URL || process.env.FRONTEND_URL 
                     }
@@ -75,10 +94,14 @@ const telegramPaymentController = {
             
             console.log('✅ Confirmation message sent to user');
           } catch (botError) {
-            console.error('Failed to send confirmation:', botError.message);
+            console.error('⚠️ Failed to send confirmation (non-critical):', botError.message);
           }
 
-          return res.status(200).json({ success: true });
+          return res.status(200).json({ 
+            success: true,
+            user_id: result.user_id,
+            subscription_id: result.subscription_id
+          });
         } else {
           console.error('❌ Payment processing failed:', result.error);
           return res.status(200).json({ success: false, error: result.error });
@@ -90,16 +113,18 @@ const telegramPaymentController = {
 
     } catch (error) {
       console.error('💥 Webhook error:', error);
+      console.error('Stack:', error.stack);
       res.status(200).json({ success: false, error: error.message });
     }
   },
 
+  // Создать invoice и получить invoice URL
   async createInvoice(req, res) {
     try {
       const { planType } = req.body;
       const userId = req.user.id;
 
-      console.log(`📨 Creating invoice for user ${userId}, plan: ${planType}`);
+      console.log(`📨 Creating Telegram Stars invoice for user ${userId}, plan: ${planType}`);
 
       const userResult = await db.query(
         'SELECT telegram_id, first_name FROM users WHERE id = $1',
@@ -129,7 +154,7 @@ const telegramPaymentController = {
         });
       }
 
-      console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR`);
+      console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR (Telegram Stars)`);
 
       const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
 
@@ -137,7 +162,7 @@ const telegramPaymentController = {
 
       const bot = require('../server').bot;
       
-      console.log('📤 Creating invoice link via Bot API...');
+      console.log('📤 Creating Telegram Stars invoice link...');
       console.log('Invoice params:', {
         title: plan.name,
         description: plan.features.join('\n'),
@@ -147,23 +172,26 @@ const telegramPaymentController = {
       });
 
       try {
+        // КРИТИЧЕСКИ ВАЖНО: Для Telegram Stars provider_token должен быть ПУСТОЙ строкой
         const invoiceLink = await bot.createInvoiceLink(
-          plan.name,
-          plan.features.join('\n'),
-          invoicePayload,
-          '',
-          'XTR',
-          [{ label: plan.name, amount: price }]
+          plan.name,                           // title
+          plan.features.join('\n'),            // description  
+          invoicePayload,                      // payload
+          '',                                  // provider_token - ПУСТАЯ строка для Stars
+          'XTR',                               // currency - ОБЯЗАТЕЛЬНО XTR
+          [{ label: plan.name, amount: price }] // prices
+          // Telegram Stars НЕ поддерживает дополнительные параметры
         );
 
-        console.log('✅ Invoice link created:', invoiceLink);
+        console.log('✅ Telegram Stars invoice link created:', invoiceLink);
 
         res.json({
           success: true,
           invoiceUrl: invoiceLink,
           invoicePayload: invoicePayload,
           price: price,
-          planName: plan.name
+          planName: plan.name,
+          currency: 'XTR'
         });
 
       } catch (botError) {
@@ -171,8 +199,18 @@ const telegramPaymentController = {
         console.error('Bot error details:', {
           message: botError.message,
           response: botError.response?.body,
-          statusCode: botError.response?.statusCode
+          statusCode: botError.response?.statusCode,
+          description: botError.response?.description
         });
+        
+        // Специфичные ошибки Telegram Stars
+        if (botError.message.includes('CURRENCY_TOTAL_AMOUNT_INVALID')) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid amount for Telegram Stars. Minimum is 1 XTR.',
+            code: 'invalid_amount'
+          });
+        }
         
         if (botError.response?.statusCode === 403) {
           return res.status(403).json({
@@ -182,9 +220,18 @@ const telegramPaymentController = {
           });
         }
 
+        if (botError.message.includes('PAYMENT_PROVIDER_INVALID')) {
+          return res.status(400).json({
+            success: false,
+            error: 'Telegram Stars payment is not properly configured. Please ensure your bot supports Star payments.',
+            code: 'payment_provider_invalid'
+          });
+        }
+
         return res.status(500).json({
           success: false,
-          error: `Bot API error: ${botError.message}`
+          error: `Failed to create invoice: ${botError.message}`,
+          code: 'invoice_creation_failed'
         });
       }
 
@@ -198,6 +245,7 @@ const telegramPaymentController = {
     }
   },
 
+  // Старый метод для отправки invoice кнопки (оставляем для обратной совместимости)
   async requestInvoiceButton(req, res) {
     try {
       const { planType } = req.body;
@@ -280,6 +328,7 @@ const telegramPaymentController = {
     }
   },
 
+  // Проверить статус платежа по payload
   async checkPaymentStatusByPayload(req, res) {
     try {
       const { payload } = req.query;
@@ -294,9 +343,11 @@ const telegramPaymentController = {
       const result = await db.query(
         `SELECT 
           tp.*,
-          s.is_active as subscription_active
+          s.is_active as subscription_active,
+          u.is_premium
          FROM telegram_payments tp
          LEFT JOIN subscriptions s ON s.telegram_payment_charge_id = tp.telegram_payment_charge_id
+         LEFT JOIN users u ON u.id = tp.user_id
          WHERE tp.invoice_payload = $1
          ORDER BY tp.created_at DESC
          LIMIT 1`,
@@ -317,7 +368,8 @@ const telegramPaymentController = {
         success: true,
         status: payment.status,
         paid: payment.status === 'completed',
-        subscriptionActive: payment.subscription_active || false
+        subscriptionActive: payment.subscription_active || false,
+        isPremium: payment.is_premium || false
       });
 
     } catch (error) {

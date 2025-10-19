@@ -119,14 +119,23 @@ const reminderService = new ReminderService(bot);
 
 // ВАЖНО: Обработчик pre_checkout_query
 bot.on('pre_checkout_query', async (query) => {
-  console.log('💳 ========== PRE-CHECKOUT QUERY ==========');
+  console.log('💳 ========== PRE-CHECKOUT QUERY (Telegram Stars) ==========');
   console.log('Query ID:', query.id);
   console.log('From:', query.from.id, query.from.first_name);
   console.log('Currency:', query.currency);
-  console.log('Total amount:', query.total_amount);
+  console.log('Total amount:', query.total_amount, 'XTR');
   console.log('Invoice payload:', query.invoice_payload);
   
   try {
+    // Проверяем что это Telegram Stars
+    if (query.currency !== 'XTR') {
+      console.error('❌ Wrong currency:', query.currency);
+      await bot.answerPreCheckoutQuery(query.id, false, {
+        error_message: 'Only Telegram Stars (XTR) payments are accepted.'
+      });
+      return;
+    }
+
     const TelegramStarsService = require('./services/telegramStarsService');
     
     let parsed;
@@ -143,10 +152,10 @@ bot.on('pre_checkout_query', async (query) => {
     const userId = parseInt(parsed.userId);
     const planType = parsed.planType;
     
-    console.log('Parsed payment data:', { userId, planType });
+    console.log('📋 Parsed payment data:', { userId, planType });
     
     const userResult = await db.query(
-      'SELECT id FROM users WHERE id = $1',
+      'SELECT id, first_name FROM users WHERE id = $1',
       [userId]
     );
     
@@ -180,8 +189,9 @@ bot.on('pre_checkout_query', async (query) => {
       return;
     }
     
+    // ВСЁ ХОРОШО - разрешаем оплату
     await bot.answerPreCheckoutQuery(query.id, true);
-    console.log('✅ Pre-checkout query approved');
+    console.log('✅ Pre-checkout query approved - payment can proceed');
     
   } catch (error) {
     console.error('❌ Pre-checkout error:', error);

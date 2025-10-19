@@ -4,37 +4,42 @@ const crypto = require('crypto');
 class TelegramStarsService {
   // Тарифные планы с МИНИМАЛЬНЫМИ ценами для тестирования
   static PLANS = {
-    '6_months': {
-      name: 'Premium for 6 Months',
-      duration_months: 6,
-      price_stars: 1, // МИНИМУМ: 1 Star
-      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
-    },
-    '1_year': {
-      name: 'Premium for 1 Year',
-      duration_months: 12,
-      price_stars: 1, // МИНИМУМ: 1 Star
-      features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
-    },
-    'year': {
-      name: 'Premium for 1 Year',
-      duration_months: 12,
-      price_stars: 1,
-      features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
-    },
-    'month': {
-      name: 'Premium for 6 Months',
-      duration_months: 6,
-      price_stars: 1,
-      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
-    },
-    '3_months': {
-      name: 'Premium for 6 Months',
-      duration_months: 6,
-      price_stars: 1,
-      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
-    }
-  };
+  '6_months': {
+    name: 'Premium for 6 Months',
+    display_name: 'For 6 Months',
+    duration_months: 6,
+    price_stars: 1, // МИНИМУМ 1 для теста, потом можно увеличить до 600
+    features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+  },
+  '1_year': {
+    name: 'Premium for 1 Year',
+    display_name: 'For 1 Year',
+    duration_months: 12,
+    price_stars: 1, // МИНИМУМ 1 для теста, потом можно увеличить до 350
+    features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
+  },
+  'year': {
+    name: 'Premium for 1 Year',
+    display_name: 'For 1 Year',
+    duration_months: 12,
+    price_stars: 1,
+    features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
+  },
+  'month': {
+    name: 'Premium for 6 Months',
+    display_name: 'For 6 Months',
+    duration_months: 6,
+    price_stars: 1,
+    features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+  },
+  '3_months': {
+    name: 'Premium for 6 Months',
+    display_name: 'For 6 Months',
+    duration_months: 6,
+    price_stars: 1,
+    features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+  }
+};
 
   static getPlanPrice(planType) {
     const plan = this.PLANS[planType];

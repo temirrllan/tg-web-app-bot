@@ -13,7 +13,8 @@
     "check-env": "node scripts/check-env.js",
     "test-payment": "node scripts/test-payment-flow.js",
     "test-webhook": "node scripts/test-webhook.js",
-    "pre-launch": "node scripts/pre-launch-check.js"
+    "pre-launch": "node scripts/pre-launch-check.js",
+    "verify-db": "node scripts/verify-subscription-tables.js"
   },
   "keywords": [],
   "author": "",

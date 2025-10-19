@@ -1074,98 +1074,19 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
     
-    // Получаем актуальные данные пользователя и подписки
-    const userResult = await db.query(
-      `SELECT 
-        u.id,
-        u.is_premium,
-        u.subscription_type,
-        u.subscription_expires_at,
-        (SELECT COUNT(*) FROM habits WHERE user_id = u.id AND is_active = true) as habit_count
-       FROM users u
-       WHERE u.id = $1`,
-      [userId]
-    );
+    // Используем обновлённый метод проверки
+    const status = await SubscriptionService.checkUserSubscription(userId);
     
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-    
-    const userData = userResult.rows[0];
-    
-    // Проверяем актуальность подписки
-    let isActive = false;
-    let subscription = null;
-    
-    if (userData.is_premium && userData.subscription_type) {
-      const now = new Date();
-      
-      // Если есть дата окончания, проверяем её
-      if (userData.subscription_expires_at) {
-        isActive = new Date(userData.subscription_expires_at) > now;
-        
-        if (isActive) {
-          const expiresAt = new Date(userData.subscription_expires_at);
-          const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-          
-          subscription = {
-            isActive: true,
-            planType: userData.subscription_type,
-            planName: getPlanName(userData.subscription_type),
-            expiresAt: userData.subscription_expires_at,
-            daysLeft: daysLeft > 0 ? daysLeft : 0,
-            isTrial: false
-          };
-        }
-      } else {
-        // Lifetime подписка
-        isActive = true;
-        subscription = {
-          isActive: true,
-          planType: userData.subscription_type,
-          planName: getPlanName(userData.subscription_type),
-          expiresAt: null,
-          daysLeft: null,
-          isTrial: false
-        };
-      }
-      
-      // Если подписка истекла, обновляем статус в БД
-      if (!isActive) {
-        await db.query(
-          `UPDATE users 
-           SET is_premium = false, 
-               subscription_type = NULL,
-               subscription_expires_at = NULL
-           WHERE id = $1`,
-          [userId]
-        );
-      }
-    }
-    
-    const habitCount = parseInt(userData.habit_count);
-    const limit = isActive ? 999 : 3;
-    
-    console.log(`📊 Subscription check for user ${userId}:`, {
-      is_premium: userData.is_premium,
-      subscription_type: userData.subscription_type,
-      expires_at: userData.subscription_expires_at,
-      isActive,
-      habitCount,
-      limit
-    });
+    console.log(`📊 Subscription check result for user ${userId}:`, status);
     
     res.json({
       success: true,
-      hasSubscription: isActive,
-      subscription: subscription,
-      isPremium: isActive,
-      habitCount,
-      limit,
-      canCreateMore: habitCount < limit
+      hasSubscription: status.isPremium,
+      subscription: status.subscription,
+      isPremium: status.isPremium,
+      habitCount: status.habitCount,
+      limit: status.limit,
+      canCreateMore: status.canCreateMore
     });
   } catch (error) {
     console.error('💥 Subscription check error:', error);
@@ -1366,19 +1287,24 @@ router.get('/subscription/history', authMiddleware, async (req, res) => {
     
     const result = await db.query(
       `SELECT 
-        sh.*,
+        s.id as subscription_id,
         s.plan_type,
-        s.expires_at,
-        s.started_at,
+        s.plan_name,
         s.price_stars,
-        s.is_trial
-       FROM subscription_history sh
-       JOIN subscriptions s ON sh.subscription_id = s.id
-       WHERE sh.user_id = $1
-       ORDER BY sh.created_at DESC
+        s.started_at as created_at,
+        s.expires_at,
+        s.is_active,
+        s.payment_method,
+        tp.telegram_payment_charge_id
+       FROM subscriptions s
+       LEFT JOIN telegram_payments tp ON tp.telegram_payment_charge_id = s.telegram_payment_charge_id
+       WHERE s.user_id = $1
+       ORDER BY s.created_at DESC
        LIMIT 20`,
       [userId]
     );
+    
+    console.log(`📜 Found ${result.rows.length} subscription history records for user ${userId}`);
     
     res.json({
       success: true,
