@@ -2,21 +2,20 @@ const db = require('../config/database');
 const crypto = require('crypto');
 
 class TelegramStarsService {
-  // Тарифные планы с минимальными ценами для теста
+  // Тарифные планы с МИНИМАЛЬНЫМИ ценами для тестирования
   static PLANS = {
     '6_months': {
       name: 'Premium for 6 Months',
       duration_months: 6,
-      price_stars: 1,
+      price_stars: 1, // МИНИМУМ: 1 Star
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
       name: 'Premium for 1 Year',
       duration_months: 12,
-      price_stars: 1,
+      price_stars: 1, // МИНИМУМ: 1 Star
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
     },
-    // Добавляем алиасы для маппинга с фронтенда
     'year': {
       name: 'Premium for 1 Year',
       duration_months: 12,
@@ -37,7 +36,6 @@ class TelegramStarsService {
     }
   };
 
-  // Получить цену плана
   static getPlanPrice(planType) {
     const plan = this.PLANS[planType];
     if (!plan) {
@@ -49,7 +47,6 @@ class TelegramStarsService {
     return plan.price_stars;
   }
 
-  // Нормализовать название плана (маппинг алиасов)
   static normalizePlanType(planType) {
     const mapping = {
       'year': '1_year',
@@ -60,24 +57,17 @@ class TelegramStarsService {
     return mapping[planType] || planType;
   }
 
-  // ИСПРАВЛЕННАЯ функция генерации payload
   static generateInvoicePayload(userId, planType) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
-    
-    // ВАЖНО: Нормализуем plan type перед сохранением в payload
     const normalizedPlan = this.normalizePlanType(planType);
-    
-    // Используем | как разделитель вместо _
     const payload = `${userId}|${normalizedPlan}|${timestamp}|${randomString}`;
     console.log(`🔑 Generated payload: ${payload} (normalized: ${planType} -> ${normalizedPlan})`);
     return payload;
   }
 
-  // ИСПРАВЛЕННАЯ функция парсинга payload
   static parseInvoicePayload(payload) {
     try {
-      // Парсим по |
       const parts = payload.split('|');
       
       if (parts.length < 2) {
@@ -86,7 +76,6 @@ class TelegramStarsService {
       
       const planType = parts[1];
       
-      // Проверяем что план существует
       if (!this.PLANS[planType]) {
         console.error(`❌ Unknown plan type in payload: ${planType}`);
         throw new Error(`Invalid plan type: ${planType}`);
@@ -104,17 +93,14 @@ class TelegramStarsService {
     }
   }
 
-  // Создать запись о платеже
   static async createPaymentRecord(userId, planType, invoicePayload, amount) {
     const client = await db.getClient();
     
     try {
       await client.query('BEGIN');
       
-      // Нормализуем plan type
       const normalizedPlan = this.normalizePlanType(planType);
       
-      // Проверяем, нет ли уже pending платежа с таким payload
       const existingPayment = await client.query(
         'SELECT id FROM telegram_payments WHERE invoice_payload = $1',
         [invoicePayload]
@@ -148,7 +134,6 @@ class TelegramStarsService {
     }
   }
 
-  // Обработать успешный платеж
   static async processSuccessfulPayment(paymentData) {
     const {
       telegram_payment_charge_id,
@@ -170,7 +155,6 @@ class TelegramStarsService {
     try {
       await client.query('BEGIN');
 
-      // 1. Проверяем, не обработали ли уже этот платеж (защита от дублей)
       const existingPayment = await client.query(
         'SELECT id, status FROM telegram_payments WHERE telegram_payment_charge_id = $1',
         [telegram_payment_charge_id]
@@ -190,7 +174,6 @@ class TelegramStarsService {
         }
       }
 
-      // 2. Находим пользователя по telegram_id
       const userResult = await client.query(
         'SELECT id, telegram_id, first_name FROM users WHERE telegram_id = $1',
         [from_user_id.toString()]
@@ -208,7 +191,6 @@ class TelegramStarsService {
       const user = userResult.rows[0];
       console.log(`👤 Processing payment for user: ${user.first_name} (ID: ${user.id})`);
 
-      // 3. ИСПРАВЛЕННЫЙ парсинг invoice_payload
       let parsed;
       try {
         parsed = this.parseInvoicePayload(invoice_payload);
@@ -235,7 +217,6 @@ class TelegramStarsService {
       const plan = this.PLANS[planType];
       console.log(`📦 Plan: ${plan.name} (${planType})`);
 
-      // 4. Обновляем/создаем запись платежа
       await client.query(
         `INSERT INTO telegram_payments (
           user_id, telegram_payment_charge_id, provider_payment_charge_id,
@@ -257,7 +238,6 @@ class TelegramStarsService {
       );
       console.log(`✅ Payment record updated to completed`);
 
-      // 5. Вычисляем дату окончания подписки
       let expiresAt = null;
       const startedAt = new Date();
       
@@ -268,13 +248,11 @@ class TelegramStarsService {
 
       console.log(`📅 Subscription period: ${startedAt.toISOString()} to ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
-      // 6. Деактивируем старые подписки
       await client.query(
         'UPDATE subscriptions SET is_active = false WHERE user_id = $1 AND is_active = true',
         [user.id]
       );
 
-      // 7. Создаем новую подписку
       const subscriptionResult = await client.query(
         `INSERT INTO subscriptions (
           user_id, plan_type, plan_name, price_stars, 
@@ -294,7 +272,6 @@ class TelegramStarsService {
       );
       console.log(`✅ Subscription created: ID ${subscriptionResult.rows[0].id}`);
 
-      // 8. Обновляем статус пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = true,
@@ -305,7 +282,6 @@ class TelegramStarsService {
       );
       console.log(`✅ User premium status updated`);
 
-      // 9. Записываем в историю
       await client.query(
         `INSERT INTO subscription_history (
           subscription_id, user_id, action, plan_type, price_stars, created_at
@@ -337,7 +313,6 @@ class TelegramStarsService {
     }
   }
 
-  // Проверить статус платежа
   static async checkPaymentStatus(telegram_payment_charge_id) {
     try {
       const result = await db.query(

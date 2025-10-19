@@ -2,7 +2,6 @@ const TelegramStarsService = require('../services/telegramStarsService');
 const db = require('../config/database');
 
 const telegramPaymentController = {
-  // Обработка webhook от Telegram
   async handleWebhook(req, res) {
     try {
       console.log('📥 ========== TELEGRAM PAYMENT WEBHOOK ==========');
@@ -11,29 +10,21 @@ const telegramPaymentController = {
 
       const update = req.body;
 
-      // Проверяем наличие successful_payment
       let payment = null;
       let from_user_id = null;
 
-      // Вариант 1: В message
       if (update.message?.successful_payment) {
         payment = update.message.successful_payment;
         from_user_id = update.message.from.id;
         console.log('✅ Found successful_payment in message');
-      }
-      // Вариант 2: В callback_query
-      else if (update.callback_query?.message?.successful_payment) {
+      } else if (update.callback_query?.message?.successful_payment) {
         payment = update.callback_query.message.successful_payment;
         from_user_id = update.callback_query.from.id;
         console.log('✅ Found successful_payment in callback_query');
-      }
-      // Вариант 3: В pre_checkout_query (НОВОЕ)
-      else if (update.pre_checkout_query) {
+      } else if (update.pre_checkout_query) {
         console.log('📋 Received pre_checkout_query - answering OK');
-        
         const bot = require('../server').bot;
         await bot.answerPreCheckoutQuery(update.pre_checkout_query.id, true);
-        
         return res.status(200).json({ success: true, message: 'Pre-checkout approved' });
       }
 
@@ -49,17 +40,14 @@ const telegramPaymentController = {
 
         console.log('💳 Processing payment:', paymentData);
 
-        // Обрабатываем платеж
         const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
 
         if (result.success) {
           console.log('✅ Payment processed successfully');
           
-          // Отправляем уведомление пользователю
           try {
             const bot = require('../server').bot;
             
-            // Получаем язык пользователя
             const userResult = await db.query(
               'SELECT language FROM users WHERE telegram_id = $1',
               [from_user_id.toString()]
@@ -106,7 +94,6 @@ const telegramPaymentController = {
     }
   },
 
-  // Создать invoice и получить invoice URL
   async createInvoice(req, res) {
     try {
       const { planType } = req.body;
@@ -114,7 +101,6 @@ const telegramPaymentController = {
 
       console.log(`📨 Creating invoice for user ${userId}, plan: ${planType}`);
 
-      // Получаем telegram_id пользователя
       const userResult = await db.query(
         'SELECT telegram_id, first_name FROM users WHERE id = $1',
         [userId]
@@ -129,11 +115,9 @@ const telegramPaymentController = {
 
       const { telegram_id, first_name } = userResult.rows[0];
 
-      // ВАЖНО: Нормализуем plan type
       const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
       console.log(`🔄 Plan mapping: ${planType} -> ${normalizedPlan}`);
 
-      // Получаем данные плана и цену (используем нормализованный план)
       const price = TelegramStarsService.getPlanPrice(normalizedPlan);
       const plan = TelegramStarsService.PLANS[normalizedPlan];
 
@@ -147,13 +131,10 @@ const telegramPaymentController = {
 
       console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR`);
 
-      // Генерируем invoice payload
       const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
 
-      // Создаем запись о платеже
       await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
 
-      // Создаём invoice link через Bot API
       const bot = require('../server').bot;
       
       console.log('📤 Creating invoice link via Bot API...');
@@ -167,20 +148,12 @@ const telegramPaymentController = {
 
       try {
         const invoiceLink = await bot.createInvoiceLink(
-          plan.name, // title
-          plan.features.join('\n'), // description - БЕЗ bullet points
-          invoicePayload, // payload
-          '', // provider_token - ПУСТАЯ СТРОКА для Stars
-          'XTR', // currency
-          [{ label: plan.name, amount: price }], // prices
-          {
-            // Эти поля НЕ поддерживаются для Stars, убираем их
-            need_name: false,
-            need_phone_number: false,
-            need_email: false,
-            need_shipping_address: false,
-            is_flexible: false
-          }
+          plan.name,
+          plan.features.join('\n'),
+          invoicePayload,
+          '',
+          'XTR',
+          [{ label: plan.name, amount: price }]
         );
 
         console.log('✅ Invoice link created:', invoiceLink);
@@ -225,7 +198,6 @@ const telegramPaymentController = {
     }
   },
 
-  // Старый метод для отправки invoice кнопки (оставляем для обратной совместимости)
   async requestInvoiceButton(req, res) {
     try {
       const { planType } = req.body;
@@ -274,14 +246,7 @@ const telegramPaymentController = {
           invoicePayload,
           '',
           'XTR',
-          [{ label: plan.name, amount: price }],
-          {
-            need_name: false,
-            need_phone_number: false,
-            need_email: false,
-            need_shipping_address: false,
-            is_flexible: false
-          }
+          [{ label: plan.name, amount: price }]
         );
 
         console.log('✅ Invoice sent successfully');
@@ -315,7 +280,6 @@ const telegramPaymentController = {
     }
   },
 
-  // Проверить статус платежа по payload
   async checkPaymentStatusByPayload(req, res) {
     try {
       const { payload } = req.query;

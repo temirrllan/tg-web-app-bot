@@ -17,6 +17,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_SECRET = process.env.BOT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const WEBAPP_URL = process.env.WEBAPP_URL || FRONTEND_URL;
+const BACKEND_PUBLIC_URL = process.env.BACKEND_PUBLIC_URL;
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не найден в переменных окружения!');
@@ -61,7 +62,7 @@ const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
-    console.log('🔔 WEBHOOK RECEIVED:', JSON.stringify(req.body, null, 2)); // ДОБАВЬТЕ ЭТУ СТРОКУ
+    console.log('🔔 WEBHOOK RECEIVED:', JSON.stringify(req.body, null, 2));
     
     const secretHeader = req.get('x-telegram-bot-api-secret-token');
     
@@ -71,7 +72,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     }
     
     if (secretHeader !== BOT_SECRET) {
-      console.error('❌ Invalid webhook secret');
+      console.error('❌ Invalid webhook secret. Expected:', BOT_SECRET, 'Got:', secretHeader);
       return res.status(401).json({ success: false, error: 'Unauthorized webhook' });
     }
     
@@ -126,10 +127,8 @@ bot.on('pre_checkout_query', async (query) => {
   console.log('Invoice payload:', query.invoice_payload);
   
   try {
-    // Проверяем валидность платежа
     const TelegramStarsService = require('./services/telegramStarsService');
     
-    // Парсим payload
     let parsed;
     try {
       parsed = TelegramStarsService.parseInvoicePayload(query.invoice_payload);
@@ -146,7 +145,6 @@ bot.on('pre_checkout_query', async (query) => {
     
     console.log('Parsed payment data:', { userId, planType });
     
-    // Проверяем существование пользователя
     const userResult = await db.query(
       'SELECT id FROM users WHERE id = $1',
       [userId]
@@ -160,7 +158,6 @@ bot.on('pre_checkout_query', async (query) => {
       return;
     }
     
-    // Проверяем валидность плана
     const plan = TelegramStarsService.PLANS[planType];
     
     if (!plan) {
@@ -171,7 +168,6 @@ bot.on('pre_checkout_query', async (query) => {
       return;
     }
     
-    // Проверяем сумму
     const expectedAmount = TelegramStarsService.getPlanPrice(planType);
     if (query.total_amount !== expectedAmount) {
       console.error('❌ Amount mismatch:', {
@@ -184,7 +180,6 @@ bot.on('pre_checkout_query', async (query) => {
       return;
     }
     
-    // Всё хорошо - разрешаем оплату
     await bot.answerPreCheckoutQuery(query.id, true);
     console.log('✅ Pre-checkout query approved');
     
@@ -246,19 +241,26 @@ bot.on('message', async (msg) => {
       console.log('✅ Welcome message sent');
     } catch (error) {
       console.error('❌ /start error:', error);
+      await bot.sendMessage(chatId, '❌ An error occurred. Please try again later.');
     }
     return;
   }
 
   if (text === '❓ Help' || text === '/help') {
-    await bot.sendMessage(chatId, 'Help info here');
+    await bot.sendMessage(
+      chatId,
+      '📖 **Habit Tracker Help**\n\n' +
+      '• Use /start to open the app\n' +
+      '• Track your daily habits\n' +
+      '• Build streaks and achieve goals\n' +
+      '• Upgrade to Premium for unlimited habits'
+    );
     return;
   }
 
   console.log('⚠️ Unknown command');
 });
 
-// Обработчик callback кнопок из напоминаний
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
@@ -448,31 +450,34 @@ const server = app.listen(PORT, async () => {
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API URL: http://localhost:${PORT}/api`);
   
-  // Запускаем фоновые сервисы
   keepAliveService.start();
-  
-  // Запускаем сервис напоминаний после старта сервера
   reminderService.start();
-  
-  // Запускаем cron для проверки подписок
   subscriptionCron.start();
   
-  try {
-    // Устанавливаем webhook для бота
-    const publicBase = process.env.BACKEND_PUBLIC_URL || '';
-    
-    if (publicBase) {
-      const webhookUrl = `${publicBase}${WEBHOOK_PATH}`;
+  // АВТОМАТИЧЕСКАЯ УСТАНОВКА WEBHOOK
+  if (BACKEND_PUBLIC_URL && BOT_TOKEN && BOT_SECRET) {
+    try {
+      const webhookUrl = `${BACKEND_PUBLIC_URL}${WEBHOOK_PATH}`;
       
       console.log(`\n🔗 Setting webhook to: ${webhookUrl}`);
+      console.log(`🔑 Using secret: ${BOT_SECRET}`);
       
-      await bot.setWebHook(webhookUrl, {
+      // Сначала удаляем старый webhook
+      await bot.deleteWebHook({ drop_pending_updates: true });
+      console.log('🗑️ Old webhook deleted');
+      
+      // Устанавливаем новый
+      const result = await bot.setWebHook(webhookUrl, {
         secret_token: BOT_SECRET,
         drop_pending_updates: true,
-        allowed_updates: ['message', 'callback_query', 'pre_checkout_query']
+        allowed_updates: ['message', 'callback_query', 'pre_checkout_query', 'successful_payment']
       });
       
-      console.log('✅ Webhook установлен успешно');
+      if (result) {
+        console.log('✅ Webhook установлен успешно');
+      } else {
+        console.error('❌ Failed to set webhook');
+      }
       
       // Проверяем webhook
       const webhookInfo = await bot.getWebhookInfo();
@@ -480,15 +485,25 @@ const server = app.listen(PORT, async () => {
         url: webhookInfo.url,
         has_custom_certificate: webhookInfo.has_custom_certificate,
         pending_update_count: webhookInfo.pending_update_count,
-        allowed_updates: webhookInfo.allowed_updates
+        allowed_updates: webhookInfo.allowed_updates,
+        last_error_date: webhookInfo.last_error_date,
+        last_error_message: webhookInfo.last_error_message
       });
       
-    } else {
-      console.log('ℹ️ BACKEND_PUBLIC_URL не задан — webhook не установлен');
-      console.log('⚠️ Для работы бота в production необходимо установить BACKEND_PUBLIC_URL');
+      // Если есть ошибки в webhook, выводим их
+      if (webhookInfo.last_error_message) {
+        console.error('⚠️ Last webhook error:', webhookInfo.last_error_message);
+      }
+      
+    } catch (e) {
+      console.error('❌ Ошибка установки webhook:', e.message);
+      console.error('Stack:', e.stack);
     }
-  } catch (e) {
-    console.error('❌ Ошибка установки webhook:', e);
+  } else {
+    console.log('⚠️ Webhook не установлен - отсутствуют необходимые параметры:');
+    console.log('BACKEND_PUBLIC_URL:', BACKEND_PUBLIC_URL);
+    console.log('BOT_TOKEN:', BOT_TOKEN ? 'Present' : 'Missing');
+    console.log('BOT_SECRET:', BOT_SECRET ? 'Present' : 'Missing');
   }
 });
 
@@ -509,5 +524,4 @@ process.on('SIGINT', () => {
   server.close(() => process.exit(0));
 });
 
-// Экспортируем бота для использования в других модулях
 module.exports.bot = bot;
