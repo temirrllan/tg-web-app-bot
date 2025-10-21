@@ -2,41 +2,41 @@ const db = require('../config/database');
 const crypto = require('crypto');
 
 class TelegramStarsService {
-  // ВАЖНО: Установите реальные цены для продакшена
+  // ТЕСТОВЫЕ ЦЕНЫ - для продакшена измените на реальные
   static PLANS = {
     '6_months': {
       name: 'Premium for 6 Months',
       display_name: 'For 6 Months',
       duration_months: 6,
-      price_stars: 600, // Реальная цена: 600 звёзд
+      price_stars: 100, // Минимум для теста (было 600)
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
       name: 'Premium for 1 Year',
       display_name: 'For 1 Year',
       duration_months: 12,
-      price_stars: 350, // Реальная цена: 350 звёзд (скидка 42%)
+      price_stars: 1, // ТЕСТОВАЯ ЦЕНА - 1 звезда (было 350)
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 42%']
     },
     'year': {
       name: 'Premium for 1 Year',
       display_name: 'For 1 Year',
       duration_months: 12,
-      price_stars: 350,
+      price_stars: 1, // ТЕСТОВАЯ ЦЕНА - 1 звезда (было 350)
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 42%']
     },
     'month': {
-      name: 'Premium for 6 Months',
-      display_name: 'For 6 Months',
-      duration_months: 6,
-      price_stars: 600,
+      name: 'Premium for 1 Month',
+      display_name: 'For 1 Month',
+      duration_months: 1,
+      price_stars: 50, // Минимальный тариф для теста
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     },
     '3_months': {
       name: 'Premium for 3 Months',
       display_name: 'For 3 Months',
       duration_months: 3,
-      price_stars: 350,
+      price_stars: 100, // Минимум 100 для теста (было 350)
       features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
     }
   };
@@ -56,7 +56,9 @@ class TelegramStarsService {
     const mapping = {
       'year': '1_year',
       'month': '6_months',
-      '3_months': '3_months'
+      '3_months': '3_months',
+      '6_months': '6_months',
+      '1_year': '1_year'
     };
     
     return mapping[planType] || planType;
