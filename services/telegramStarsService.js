@@ -2,44 +2,44 @@ const db = require('../config/database');
 const crypto = require('crypto');
 
 class TelegramStarsService {
-  // Тарифные планы с МИНИМАЛЬНЫМИ ценами для тестирования
+  // ВАЖНО: Установите реальные цены для продакшена
   static PLANS = {
-  '6_months': {
-    name: 'Premium for 6 Months',
-    display_name: 'For 6 Months',
-    duration_months: 6,
-    price_stars: 1, // МИНИМУМ 1 для теста, потом можно увеличить до 600
-    features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
-  },
-  '1_year': {
-    name: 'Premium for 1 Year',
-    display_name: 'For 1 Year',
-    duration_months: 12,
-    price_stars: 1, // МИНИМУМ 1 для теста, потом можно увеличить до 350
-    features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
-  },
-  'year': {
-    name: 'Premium for 1 Year',
-    display_name: 'For 1 Year',
-    duration_months: 12,
-    price_stars: 1,
-    features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 40%']
-  },
-  'month': {
-    name: 'Premium for 6 Months',
-    display_name: 'For 6 Months',
-    duration_months: 6,
-    price_stars: 1,
-    features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
-  },
-  '3_months': {
-    name: 'Premium for 6 Months',
-    display_name: 'For 6 Months',
-    duration_months: 6,
-    price_stars: 1,
-    features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
-  }
-};
+    '6_months': {
+      name: 'Premium for 6 Months',
+      display_name: 'For 6 Months',
+      duration_months: 6,
+      price_stars: 600, // Реальная цена: 600 звёзд
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+    },
+    '1_year': {
+      name: 'Premium for 1 Year',
+      display_name: 'For 1 Year',
+      duration_months: 12,
+      price_stars: 350, // Реальная цена: 350 звёзд (скидка 42%)
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 42%']
+    },
+    'year': {
+      name: 'Premium for 1 Year',
+      display_name: 'For 1 Year',
+      duration_months: 12,
+      price_stars: 350,
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support', 'Save 42%']
+    },
+    'month': {
+      name: 'Premium for 6 Months',
+      display_name: 'For 6 Months',
+      duration_months: 6,
+      price_stars: 600,
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+    },
+    '3_months': {
+      name: 'Premium for 3 Months',
+      display_name: 'For 3 Months',
+      duration_months: 3,
+      price_stars: 350,
+      features: ['Unlimited habits', 'Advanced statistics', 'Priority support']
+    }
+  };
 
   static getPlanPrice(planType) {
     const plan = this.PLANS[planType];
@@ -56,7 +56,7 @@ class TelegramStarsService {
     const mapping = {
       'year': '1_year',
       'month': '6_months',
-      '3_months': '6_months'
+      '3_months': '3_months'
     };
     
     return mapping[planType] || planType;
@@ -222,6 +222,7 @@ class TelegramStarsService {
       const plan = this.PLANS[planType];
       console.log(`📦 Plan: ${plan.name} (${planType})`);
 
+      // Сохраняем информацию о платеже
       await client.query(
         `INSERT INTO telegram_payments (
           user_id, telegram_payment_charge_id, provider_payment_charge_id,
@@ -243,6 +244,7 @@ class TelegramStarsService {
       );
       console.log(`✅ Payment record updated to completed`);
 
+      // Вычисляем даты подписки
       let expiresAt = null;
       const startedAt = new Date();
       
@@ -253,11 +255,13 @@ class TelegramStarsService {
 
       console.log(`📅 Subscription period: ${startedAt.toISOString()} to ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
+      // Деактивируем старые подписки
       await client.query(
         'UPDATE subscriptions SET is_active = false WHERE user_id = $1 AND is_active = true',
         [user.id]
       );
 
+      // Создаём новую подписку
       const subscriptionResult = await client.query(
         `INSERT INTO subscriptions (
           user_id, plan_type, plan_name, price_stars, 
@@ -277,22 +281,27 @@ class TelegramStarsService {
       );
       console.log(`✅ Subscription created: ID ${subscriptionResult.rows[0].id}`);
 
+      // Обновляем статус пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = true,
              subscription_type = $2,
-             subscription_expires_at = $3
+             subscription_expires_at = $3,
+             subscription_start_date = $4
          WHERE id = $1`,
-        [user.id, planType, expiresAt]
+        [user.id, planType, expiresAt, startedAt]
       );
       console.log(`✅ User premium status updated`);
 
+      // Добавляем в историю подписок
       await client.query(
-        `INSERT INTO subscription_history (
-          subscription_id, user_id, action, plan_type, price_stars, created_at
-        ) VALUES ($1, $2, 'purchased', $3, $4, CURRENT_TIMESTAMP)`,
-        [subscriptionResult.rows[0].id, user.id, planType, total_amount]
+        `INSERT INTO subscriptions_history (
+          user_id, subscription_id, plan_type, plan_name, price_stars, 
+          action, status, payment_method, started_at, expires_at, created_at
+        ) VALUES ($1, $2, $3, $4, $5, 'purchased', 'completed', 'telegram_stars', $6, $7, CURRENT_TIMESTAMP)`,
+        [user.id, subscriptionResult.rows[0].id, planType, plan.name, total_amount, startedAt, expiresAt]
       );
+      console.log(`✅ Added to subscriptions history`);
 
       await client.query('COMMIT');
 
