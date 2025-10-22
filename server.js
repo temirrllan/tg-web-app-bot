@@ -79,7 +79,93 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     console.log('✅ Telegram webhook authorized');
     
     const update = req.body;
-    
+    // КРИТИЧЕСКИ ВАЖНО: Обрабатываем successful_payment
+    if (update.message?.successful_payment) {
+      console.log('💳 ========== SUCCESSFUL PAYMENT DETECTED ==========');
+      const payment = update.message.successful_payment;
+      const from_user_id = update.message.from.id;
+      
+      console.log('Payment details:', {
+        currency: payment.currency,
+        total_amount: payment.total_amount,
+        invoice_payload: payment.invoice_payload,
+        telegram_payment_charge_id: payment.telegram_payment_charge_id,
+        from_user_id: from_user_id
+      });
+      
+      // Проверяем что это Telegram Stars
+      if (payment.currency === 'XTR') {
+        const paymentData = {
+          telegram_payment_charge_id: payment.telegram_payment_charge_id,
+          provider_payment_charge_id: payment.provider_payment_charge_id,
+          invoice_payload: payment.invoice_payload,
+          total_amount: payment.total_amount,
+          currency: payment.currency,
+          from_user_id: from_user_id
+        };
+        
+        console.log('💰 Processing Telegram Stars payment...');
+        
+        // Обрабатываем платёж
+        const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
+        
+        if (result.success) {
+          console.log('✅ Payment processed successfully');
+          console.log('✅ User ID:', result.user_id);
+          console.log('✅ Subscription ID:', result.subscription_id);
+          console.log('✅ Plan type:', result.plan_type);
+          console.log('✅ Expires at:', result.expires_at);
+          
+          // Проверяем что данные обновились
+          const verificationResult = await db.query(
+            'SELECT id, is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1',
+            [result.user_id]
+          );
+          
+          console.log('🔍 User verification after payment:', verificationResult.rows[0]);
+          
+          // Отправляем подтверждение пользователю
+          try {
+            const userResult = await db.query(
+              'SELECT language FROM users WHERE telegram_id = $1',
+              [from_user_id.toString()]
+            );
+            
+            const lang = userResult.rows.length > 0 ? userResult.rows[0].language : 'en';
+            
+            const messages = {
+              ru: '🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\n✅ Безлимитные привычки\n✅ Безлимитные друзья\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪',
+              en: '🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\n✅ Unlimited habits\n✅ Unlimited friends\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪',
+              kk: '🎉 <b>Төлем сәтті өтті!</b>\n\nСіздің Premium жазылымыңыз белсендірілді!\n\n✅ Шексіз әдеттер\n✅ Шексіз достар\n✅ Кеңейтілген статистика\n✅ Басым қолдау\n\nҚосымшаны ашып, ләззат алыңыз! 💪'
+            };
+            
+            const message = messages[lang] || messages['en'];
+            
+            await bot.sendMessage(from_user_id, message, {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[
+                  {
+                    text: lang === 'ru' ? '📱 Открыть приложение' : lang === 'kk' ? '📱 Қосымшаны ашу' : '📱 Open App',
+                    web_app: { 
+                      url: process.env.WEBAPP_URL || process.env.FRONTEND_URL 
+                    }
+                  }
+                ]]
+              }
+            });
+            
+            console.log('✅ Confirmation message sent to user');
+          } catch (botError) {
+            console.error('⚠️ Failed to send confirmation (non-critical):', botError.message);
+          }
+        } else {
+          console.error('❌ Payment processing failed:', result.error);
+        }
+      } else {
+        console.log('⚠️ Non-XTR payment, skipping');
+      }
+    }
     bot.processUpdate(update);
     
     res.status(200).json({ success: true });
@@ -113,7 +199,8 @@ app.use('/api/payment', paymentRoutes);
 console.log('\n🤖 Запуск Telegram бота (webhook)...');
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
-
+// Экспортируем бота для использования в других модулях
+module.exports.bot = bot;
 const ReminderService = require('./services/reminderService');
 const reminderService = new ReminderService(bot);
 
@@ -136,7 +223,7 @@ bot.on('pre_checkout_query', async (query) => {
       return;
     }
 
-    const TelegramStarsService = require('./services/telegramStarsService');
+    // const TelegramStarsService = require('./services/telegramStarsService');
     
     let parsed;
     try {
@@ -205,11 +292,39 @@ bot.on('pre_checkout_query', async (query) => {
     }
   }
 });
-
+// Обработчик successful_payment через bot.on
+bot.on('successful_payment', async (msg) => {
+  console.log('💳 ========== SUCCESSFUL PAYMENT EVENT ==========');
+  console.log('Payment received from:', msg.from.id, msg.from.first_name);
+  
+  const payment = msg.successful_payment;
+  
+  if (payment.currency === 'XTR') {
+    const paymentData = {
+      telegram_payment_charge_id: payment.telegram_payment_charge_id,
+      provider_payment_charge_id: payment.provider_payment_charge_id,
+      invoice_payload: payment.invoice_payload,
+      total_amount: payment.total_amount,
+      currency: payment.currency,
+      from_user_id: msg.from.id
+    };
+    
+    console.log('💰 Processing payment through bot.on handler...');
+    
+    const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
+    
+    if (result.success) {
+      console.log('✅ Payment processed successfully via bot.on');
+    }
+  }
+});
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
-  
+  // Пропускаем сообщения с successful_payment - они обрабатываются отдельно
+  if (msg.successful_payment) {
+    return;
+  }
   console.log(`📨 NEW MESSAGE: "${text}" from ${chatId}`);
 
   if (text.startsWith('/start')) {
@@ -265,6 +380,39 @@ bot.on('message', async (msg) => {
       '• Build streaks and achieve goals\n' +
       '• Upgrade to Premium for unlimited habits'
     );
+    return;
+  }
+// Команда для проверки подписки (для отладки)
+  if (text === '/check_subscription') {
+    try {
+      const userResult = await db.query(
+        `SELECT is_premium, subscription_type, subscription_expires_at 
+         FROM users WHERE telegram_id = $1`,
+        [chatId.toString()]
+      );
+      
+      if (userResult.rows.length > 0) {
+        const user = userResult.rows[0];
+        let message = `📊 <b>Your subscription status:</b>\n\n`;
+        message += `Premium: ${user.is_premium ? '✅ Yes' : '❌ No'}\n`;
+        
+        if (user.is_premium && user.subscription_type) {
+          message += `Plan: ${user.subscription_type}\n`;
+          if (user.subscription_expires_at) {
+            message += `Expires: ${new Date(user.subscription_expires_at).toLocaleDateString()}\n`;
+          } else {
+            message += `Expires: Never (Lifetime)\n`;
+          }
+        }
+        
+        await bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+      } else {
+        await bot.sendMessage(chatId, 'User not found in database.');
+      }
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      await bot.sendMessage(chatId, 'Error checking subscription status.');
+    }
     return;
   }
 
@@ -473,13 +621,13 @@ const server = app.listen(PORT, async () => {
       console.log(`🔑 Using secret: ${BOT_SECRET}`);
       
       // Сначала удаляем старый webhook
-      await bot.deleteWebHook({ drop_pending_updates: true });
+      await bot.deleteWebHook({ drop_pending_updates: false });
       console.log('🗑️ Old webhook deleted');
       
       // Устанавливаем новый
       const result = await bot.setWebHook(webhookUrl, {
         secret_token: BOT_SECRET,
-        drop_pending_updates: true,
+        drop_pending_updates: false,
         allowed_updates: ['message', 'callback_query', 'pre_checkout_query', 'successful_payment']
       });
       
@@ -532,6 +680,6 @@ process.on('SIGINT', () => {
   keepAliveService.stop();
   subscriptionCron.stop();
   server.close(() => process.exit(0));
-});
+}); 
 
-module.exports.bot = bot;
+// module.exports.bot = bot;
