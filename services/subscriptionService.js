@@ -24,7 +24,7 @@ class SubscriptionService {
     },
     'lifetime': {
       name: 'Lifetime Premium',
-      duration_months: null, 
+      duration_months: null, // бессрочная
       price_stars: 1500,
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'One-time payment', 'Forever access']
     },
