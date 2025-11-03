@@ -19,11 +19,189 @@ router.use(authMiddleware);
 router.post('/habits', createHabitLimiter, checkSubscriptionLimit, habitController.create);
 router.get('/habits', habitController.getAll);
 router.get('/habits/today', habitController.getTodayHabits);
-router.patch('/habits/:id', habitController.update);
+
+// 🆕 ОБНОВЛЁННЫЙ РОУТ РЕДАКТИРОВАНИЯ с проверкой владельца и уведомлениями
+router.patch('/habits/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const updates = req.body;
+
+    console.log('🔧 Updating habit:', { habitId: id, userId, updates });
+
+    // Валидация
+    if (updates.title !== undefined && (!updates.title || updates.title.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title cannot be empty'
+      });
+    }
+
+    if (updates.goal !== undefined && (!updates.goal || updates.goal.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Goal cannot be empty'
+      });
+    }
+
+    // Проверяем, что пользователь - владелец привычки
+    const habitCheck = await db.query(
+      'SELECT * FROM habits WHERE id = $1',
+      [id]
+    );
+
+    if (habitCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
+
+    const habit = habitCheck.rows[0];
+
+    // Проверка прав на редактирование
+    if (habit.user_id !== userId) {
+      console.log('❌ User is not the owner of this habit');
+      return res.status(403).json({
+        success: false,
+        error: 'Only the habit creator can edit this habit',
+        isOwner: false
+      });
+    }
+
+    // Обновляем привычку
+    const Habit = require('../models/Habit');
+    const updatedHabit = await Habit.update(id, userId, updates);
+
+    if (!updatedHabit) {
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
+
+    console.log('✅ Habit updated successfully:', updatedHabit.id);
+
+    // 🔔 Отправляем уведомления всем участникам (кроме создателя)
+    try {
+      const bot = require('../server').bot;
+      
+      // Получаем владельца привычки
+      const ownerResult = await db.query(
+        'SELECT first_name, language FROM users WHERE id = $1',
+        [userId]
+      );
+      
+      const ownerName = ownerResult.rows.length > 0 
+        ? ownerResult.rows[0].first_name 
+        : 'Creator';
+
+      // Определяем, какая привычка является родительской
+      const targetHabitId = habit.parent_habit_id || habit.id;
+
+      // Получаем всех участников связанных привычек
+      const membersResult = await db.query(
+        `SELECT DISTINCT u.id, u.telegram_id, u.first_name, u.language, h.id as habit_id
+         FROM habit_members hm
+         JOIN users u ON hm.user_id = u.id
+         JOIN habits h ON h.user_id = u.id
+         WHERE hm.habit_id IN (
+           SELECT id FROM habits 
+           WHERE parent_habit_id = $1 OR id = $1
+         )
+         AND hm.is_active = true
+         AND u.id != $2
+         AND h.parent_habit_id = $1`,
+        [targetHabitId, userId]
+      );
+
+      console.log(`📤 Sending notifications to ${membersResult.rows.length} members`);
+
+      // Отправляем уведомления каждому участнику
+      for (const member of membersResult.rows) {
+        try {
+          const lang = member.language || 'en';
+          
+          // Подготавливаем текст уведомления на разных языках
+          const messages = {
+            en: `📝 <b>Habit Updated!</b>\n\n${ownerName} has updated the shared habit:\n<b>"${updatedHabit.title}"</b>\n\n${updates.goal ? `New goal: ${updates.goal}\n\n` : ''}The changes have been applied to your habit as well.`,
+            ru: `📝 <b>Привычка обновлена!</b>\n\n${ownerName} изменил(а) совместную привычку:\n<b>"${updatedHabit.title}"</b>\n\n${updates.goal ? `Новая цель: ${updates.goal}\n\n` : ''}Изменения применены и к вашей привычке.`,
+            kk: `📝 <b>Әдет жаңартылды!</b>\n\n${ownerName} ортақ әдетті өзгертті:\n<b>"${updatedHabit.title}"</b>\n\n${updates.goal ? `Жаңа мақсат: ${updates.goal}\n\n` : ''}Өзгерістер сіздің әдетіңізге де қолданылды.`
+          };
+
+          const message = messages[lang] || messages['en'];
+
+          await bot.sendMessage(
+            member.telegram_id,
+            message,
+            {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[
+                  {
+                    text: lang === 'ru' ? '📱 Открыть приложение' : lang === 'kk' ? '📱 Қосымшаны ашу' : '📱 Open App',
+                    web_app: { 
+                      url: process.env.WEBAPP_URL || process.env.FRONTEND_URL 
+                    }
+                  }
+                ]]
+              }
+            }
+          );
+
+          console.log(`✅ Notification sent to ${member.first_name} (ID: ${member.id})`);
+
+          // Обновляем привычку участника
+          await db.query(
+            `UPDATE habits 
+             SET title = $1, 
+                 goal = $2,
+                 schedule_type = $3,
+                 schedule_days = $4,
+                 reminder_time = $5,
+                 reminder_enabled = $6
+             WHERE id = $7`,
+            [
+              updates.title || habit.title,
+              updates.goal || habit.goal,
+              updates.schedule_type || habit.schedule_type,
+              updates.schedule_days || habit.schedule_days,
+              updates.reminder_time !== undefined ? updates.reminder_time : habit.reminder_time,
+              updates.reminder_enabled !== undefined ? updates.reminder_enabled : habit.reminder_enabled,
+              member.habit_id
+            ]
+          );
+
+        } catch (notifError) {
+          console.error(`❌ Failed to notify member ${member.first_name}:`, notifError.message);
+        }
+      }
+
+    } catch (notificationError) {
+      console.error('❌ Notification error (non-critical):', notificationError.message);
+    }
+
+    res.json({
+      success: true,
+      habit: updatedHabit,
+      membersNotified: true
+    });
+
+  } catch (error) {
+    console.error('💥 Update habit error:', error.message);
+    console.error('Error stack:', error.stack);
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update habit',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+});
+
 router.delete('/habits/:id', habitController.delete);
 
 // Новый эндпоинт для получения отметок по дате
-// Получение отметок привычек для конкретной даты
 router.get('/habits/marks', async (req, res) => {
   try {
     const { date } = req.query;
@@ -38,8 +216,6 @@ router.get('/habits/marks', async (req, res) => {
     
     console.log(`Getting marks for user ${userId} on date ${date}`);
     
-    // Получаем все отметки пользователя для указанной даты
-    // ВАЖНО: Возвращаем только отметки для конкретной даты
     const result = await db.query(
       `SELECT 
         hm.habit_id,
@@ -49,7 +225,7 @@ router.get('/habits/marks', async (req, res) => {
        FROM habit_marks hm
        JOIN habits h ON hm.habit_id = h.id
        WHERE h.user_id = $1 
-       AND hm.date = $2::date`, // Явно приводим к типу date
+       AND hm.date = $2::date`,
       [userId, date]
     );
     
@@ -72,20 +248,17 @@ router.get('/habits/marks', async (req, res) => {
 });
 
 // Получение привычек для конкретной даты
-// Получение привычек для конкретной даты с их актуальными статусами
 router.get('/habits/date/:date', async (req, res) => {
   try {
     const { date } = req.params;
     const userId = req.user.id;
     
-    // Парсим дату для получения дня недели
     const [year, month, day] = date.split('-');
     const targetDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
     const dayOfWeek = targetDate.getDay() || 7;
     
     console.log(`Getting habits for user ${userId} on date ${date}, day of week: ${dayOfWeek}`);
     
-    // Получаем привычки для этого дня недели со статусами и количеством участников
     const result = await db.query(
       `SELECT 
         h.id,
@@ -108,11 +281,9 @@ router.get('/habits/date/:date', async (req, res) => {
         c.name_en, 
         c.icon as category_icon, 
         c.color,
-        -- Получаем актуальный статус из habit_marks
         COALESCE(hm.status, 'pending') as today_status,
         hm.id as mark_id,
         hm.marked_at,
-        -- Подсчитываем участников для связанных привычек
         CASE 
           WHEN h.parent_habit_id IS NOT NULL THEN
             (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
@@ -141,7 +312,6 @@ router.get('/habits/date/:date', async (req, res) => {
       [userId, dayOfWeek, date]
     );
     
-    // Логируем статусы для отладки
     console.log(`Found ${result.rows.length} habits for ${date}:`);
     result.rows.forEach(h => {
       console.log(`- "${h.title}" (ID: ${h.id}): ${h.today_status}, Members: ${h.members_count}`);
@@ -180,7 +350,6 @@ router.get('/habits/:id/marks', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     
-    // Проверяем, что привычка принадлежит пользователю
     const habitCheck = await db.query(
       'SELECT id, title FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
@@ -193,7 +362,6 @@ router.get('/habits/:id/marks', authMiddleware, async (req, res) => {
       });
     }
     
-    // Получаем все отметки для этой привычки
     const marks = await db.query(
       `SELECT 
         id,
@@ -223,13 +391,13 @@ router.get('/habits/:id/marks', authMiddleware, async (req, res) => {
     });
   }
 });
+
 // Получение статистики привычки
 router.get('/habits/:id/statistics', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     
-    // Проверяем, что привычка принадлежит пользователю
     const habitCheck = await db.query(
       'SELECT id, title, streak_current FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
@@ -245,7 +413,6 @@ router.get('/habits/:id/statistics', async (req, res) => {
     const habit = habitCheck.rows[0];
     const now = new Date();
     
-    // Текущая неделя
     const weekStart = new Date(now);
     weekStart.setDate(now.getDate() - now.getDay() + 1);
     weekStart.setHours(0, 0, 0, 0);
@@ -254,15 +421,12 @@ router.get('/habits/:id/statistics', async (req, res) => {
     weekEnd.setDate(weekStart.getDate() + 6);
     weekEnd.setHours(23, 59, 59, 999);
     
-    // Текущий месяц
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     
-    // Текущий год
     const yearStart = new Date(now.getFullYear(), 0, 1);
     const yearEnd = new Date(now.getFullYear(), 11, 31);
     
-    // Получаем статистику
     const weekStats = await db.query(
       `SELECT COUNT(*) as completed 
        FROM habit_marks 
@@ -309,7 +473,7 @@ router.get('/habits/:id/statistics', async (req, res) => {
     });
   }
 });
-// Присоединиться к привычке по коду
+
 // Присоединиться к привычке по коду
 router.post('/habits/join', authMiddleware, async (req, res) => {
   try {
@@ -323,7 +487,6 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
       });
     }
     
-    // Получаем информацию о привычке по коду
     const shareResult = await db.query(
       `SELECT sh.*, h.* 
        FROM shared_habits sh
@@ -341,34 +504,29 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
     
     const originalHabit = shareResult.rows[0];
     
-    // Проверяем, не является ли пользователь уже участником (включая неактивных)
     const memberCheck = await db.query(
       'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
       [originalHabit.habit_id, userId]
     );
     
     if (memberCheck.rows.length > 0) {
-      // Если запись существует но неактивна - реактивируем
       if (!memberCheck.rows[0].is_active) {
         await db.query(
           'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
           [originalHabit.habit_id, userId]
         );
         
-        // Проверяем привычку пользователя
         const userHabitCheck = await db.query(
           'SELECT * FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
           [userId, originalHabit.habit_id]
         );
         
         if (userHabitCheck.rows.length > 0) {
-          // Реактивируем привычку
           const reactivatedHabit = await db.query(
             'UPDATE habits SET is_active = true WHERE id = $1 RETURNING *',
             [userHabitCheck.rows[0].id]
           );
           
-          // Восстанавливаем связь владельца с привычкой пользователя
           await db.query(
             `INSERT INTO habit_members (habit_id, user_id) 
              VALUES ($1, $2) 
@@ -383,9 +541,7 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
             habit: reactivatedHabit.rows[0]
           });
         }
-        // Если привычки нет - продолжаем создание новой (код ниже выполнится)
       } else {
-        // Пользователь уже активный участник
         return res.json({ 
           success: true, 
           message: 'Already a member',
@@ -394,7 +550,6 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
       }
     }
     
-    // Создаем копию привычки для нового пользователя
     const newHabitResult = await db.query(
       `INSERT INTO habits (
         user_id, category_id, title, goal, schedule_type, 
@@ -412,19 +567,17 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
         originalHabit.reminder_time,
         originalHabit.reminder_enabled,
         originalHabit.is_bad_habit,
-        originalHabit.habit_id // Ссылка на оригинальную привычку
+        originalHabit.habit_id
       ]
     );
     
     const newHabit = newHabitResult.rows[0];
     
-    // Добавляем пользователя как участника оригинальной привычки
     await db.query(
       'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
       [originalHabit.habit_id, userId]
     );
     
-    // Добавляем владельца оригинальной привычки как участника новой привычки
     await db.query(
       'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
       [newHabit.id, originalHabit.owner_user_id]
@@ -443,10 +596,6 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
     });
   }
 });
-// Добавьте в routes/habitRoutes.js после других роутов
-
-// Обновить язык пользователя
-// Добавьте в routes/habitRoutes.js после других роутов
 
 // Получить профиль пользователя
 router.get('/user/profile', authMiddleware, async (req, res) => {
@@ -484,7 +633,6 @@ router.patch('/user/language', authMiddleware, async (req, res) => {
     const userId = req.user.id;
     const { language } = req.body;
     
-    // Валидация языка
     const validLanguages = ['en', 'ru', 'kk'];
     if (!validLanguages.includes(language)) {
       return res.status(400).json({
@@ -495,7 +643,6 @@ router.patch('/user/language', authMiddleware, async (req, res) => {
     
     console.log(`Updating language for user ${userId} to ${language}`);
     
-    // Обновляем язык в базе данных
     const result = await db.query(
       'UPDATE users SET language = $1 WHERE id = $2 RETURNING id, language',
       [language, userId]
@@ -521,10 +668,76 @@ router.patch('/user/language', authMiddleware, async (req, res) => {
       success: false,
       error: 'Failed to update language'
     });
-  }})
+  }
+});
+
 // Удалить участника из привычки
-// Удалить участника из привычки
-// Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
+router.delete('/habits/:habitId/members/:memberId', authMiddleware, async (req, res) => {
+  const client = await db.getClient();
+  
+  try {
+    const { habitId, memberId } = req.params;
+    const userId = req.user.id;
+    
+    console.log(`🗑️ Removing member ${memberId} from habit ${habitId} by user ${userId}`);
+    
+    await client.query('BEGIN');
+    
+    const habitCheck = await client.query(
+      'SELECT id, parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
+      [habitId, userId]
+    );
+    
+    if (habitCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found or access denied'
+      });
+    }
+    
+    const habit = habitCheck.rows[0];
+    const parentHabitId = habit.parent_habit_id || habit.id;
+    
+    await client.query(
+      `UPDATE habit_members 
+       SET is_active = false 
+       WHERE user_id = $1 
+       AND habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = $2 OR id = $2
+       )`,
+      [memberId, parentHabitId]
+    );
+    
+    await client.query(
+      `UPDATE habits 
+       SET is_active = false 
+       WHERE user_id = $1 
+       AND (parent_habit_id = $2 OR 
+            parent_habit_id = (SELECT parent_habit_id FROM habits WHERE id = $2 AND parent_habit_id IS NOT NULL))`,
+      [memberId, habitId]
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Member ${memberId} removed from habit ${habitId}`);
+    
+    res.json({
+      success: true,
+      message: 'Member removed successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Remove member error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove member'
+    });
+  } finally {
+    client.release();
+  }
+});
 
 router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
   try {
@@ -533,10 +746,8 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
     
     console.log(`🥊 Punch request from user ${fromUserId} to user ${targetUserId} for habit ${habitId}`);
     
-    // Сначала проверяем, выполнена ли привычка у друга сегодня
     const today = new Date().toISOString().split('T')[0];
     
-    // Находим привычку друга, связанную с этой группой привычек
     const targetHabitResult = await db.query(
       `SELECT h.id, h.title, h.parent_habit_id
        FROM habits h
@@ -568,7 +779,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
     
     console.log(`📋 Found target habit: ${targetHabitId} - "${habitTitle}"`);
     
-    // Проверяем статус выполнения привычки друга на сегодня
     const statusResult = await db.query(
       `SELECT status 
        FROM habit_marks 
@@ -577,7 +787,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       [targetHabitId, today]
     );
     
-    // Получаем имя друга для персонализированных сообщений
     const friendResult = await db.query(
       'SELECT first_name, telegram_id FROM users WHERE id = $1',
       [targetUserId]
@@ -591,7 +800,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       ? friendResult.rows[0].telegram_id 
       : null;
     
-    // Получаем имя отправителя
     const senderResult = await db.query(
       'SELECT first_name FROM users WHERE id = $1',
       [fromUserId]
@@ -601,7 +809,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       ? senderResult.rows[0].first_name 
       : 'Your friend';
     
-    // Если привычка уже выполнена - НЕ отправляем punch
     if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'completed') {
       console.log(`✅ Habit already completed by ${friendName}, not sending punch`);
       
@@ -616,7 +823,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       });
     }
     
-    // Если привычка пропущена (skipped) - ОТПРАВЛЯЕМ punch с особым сообщением
     let messageText;
     let toastMessage;
     
@@ -631,7 +837,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       
       toastMessage = `Панч отправлен ${friendName}! Привычка была пропущена 🔄`;
     } else {
-      // Обычный punch для pending статуса
       console.log(`📤 Sending regular punch to ${friendName}`);
       
       messageText = `👊 <b>Напоминание от ${senderName}!</b>\n\n` +
@@ -642,7 +847,6 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
       toastMessage = `Панч отправлен ${friendName}! 👊`;
     }
     
-    // Отправляем уведомление через бота
     if (friendTelegramId) {
       console.log(`📱 Sending Telegram notification to ${friendTelegramId}`);
       
@@ -676,11 +880,9 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
         console.log('✅ Telegram notification sent successfully');
       } catch (botError) {
         console.error('❌ Failed to send Telegram notification:', botError.message);
-        // Продолжаем выполнение даже если не удалось отправить уведомление
       }
     }
     
-    // Сохраняем в историю
     await db.query(
       'INSERT INTO habit_punches (habit_id, from_user_id, to_user_id) VALUES ($1, $2, $3)',
       [habitId, fromUserId, targetUserId]
@@ -708,198 +910,12 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
   }
 });
 
-// Обновляем эндпоинт для punch с отправкой уведомления
-// Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
-
-// Найдите в файле routes/habitRoutes.js эндпоинт router.post('/habits/:habitId/punch/:userId' и замените его полностью:
-
-router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
-  try {
-    const { habitId, userId: targetUserId } = req.params;
-    const fromUserId = req.user.id;
-    
-    console.log(`🥊 Punch request from user ${fromUserId} to user ${targetUserId} for habit ${habitId}`);
-    
-    // Сначала проверяем, выполнена ли привычка у друга сегодня
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Находим привычку друга, связанную с этой группой привычек
-    const targetHabitResult = await db.query(
-      `SELECT h.id, h.title, h.parent_habit_id
-       FROM habits h
-       WHERE h.user_id = $1
-       AND (
-         h.parent_habit_id = (SELECT parent_habit_id FROM habits WHERE id = $2)
-         OR h.parent_habit_id = $2
-         OR h.id = (SELECT parent_habit_id FROM habits WHERE id = $2)
-         OR (h.parent_habit_id IS NULL AND h.id = $2)
-       )
-       AND h.is_active = true
-       LIMIT 1`,
-      [targetUserId, habitId]
-    );
-    
-    if (targetHabitResult.rows.length === 0) {
-      console.log('❌ Target habit not found');
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Friend habit not found',
-        showToast: true,
-        toastMessage: 'Friend\'s habit not found 😕',
-        toastType: 'error'
-      });
-    }
-    
-    const targetHabitId = targetHabitResult.rows[0].id;
-    const habitTitle = targetHabitResult.rows[0].title;
-    
-    console.log(`📋 Found target habit: ${targetHabitId} - "${habitTitle}"`);
-    
-    // Проверяем статус выполнения привычки друга на сегодня
-    const statusResult = await db.query(
-      `SELECT status 
-       FROM habit_marks 
-       WHERE habit_id = $1 
-       AND date = $2::date`,
-      [targetHabitId, today]
-    );
-    
-    // Получаем имя друга для персонализированных сообщений
-    const friendResult = await db.query(
-      'SELECT first_name FROM users WHERE id = $1',
-      [targetUserId]
-    );
-    
-    const friendName = friendResult.rows.length > 0 
-      ? friendResult.rows[0].first_name 
-      : 'Your friend';
-    
-    // Если привычка уже выполнена - НЕ отправляем punch
-    if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'completed') {
-      console.log(`✅ Habit already completed by ${friendName}, not sending punch`);
-      
-      return res.json({ 
-        success: false,
-        alreadyCompleted: true,
-        showToast: true,
-        toastType: 'info',
-        toastMessage: `У ${friendName} уже выполнено 👌`,
-        friendName: friendName,
-        habitTitle: habitTitle
-      });
-    }
-    
-    // Если привычка пропущена (skipped)
-    if (statusResult.rows.length > 0 && statusResult.rows[0].status === 'skipped') {
-      console.log(`⏭ Habit skipped by ${friendName}`);
-      
-      return res.json({ 
-        success: false,
-        isSkipped: true,
-        showToast: true,
-        toastType: 'warning',
-        toastMessage: `${friendName} пропустил эту привычку сегодня 😔`,
-        friendName: friendName,
-        habitTitle: habitTitle
-      });
-    }
-    
-    console.log(`📤 Sending punch to ${friendName}`);
-    
-    // Если привычка еще не выполнена - отправляем punch
-    // Получаем информацию для уведомления
-    const userData = await db.query(
-      `SELECT u.telegram_id, u2.first_name as from_name
-       FROM users u
-       JOIN users u2 ON u2.id = $2
-       WHERE u.id = $1`,
-      [targetUserId, fromUserId]
-    );
-    
-    if (userData.rows.length > 0) {
-      const { telegram_id, from_name } = userData.rows[0];
-      
-      console.log(`📱 Sending Telegram notification to ${telegram_id}`);
-      
-      // Отправляем уведомление через бота
-      const bot = require('../server').bot;
-      
-      try {
-        await bot.sendMessage(
-          telegram_id,
-          `👊 <b>Напоминание от ${from_name}!</b>\n\n` +
-          `Твой друг хочет, чтобы ты выполнил:\n` +
-          `📝 <b>"${habitTitle}"</b>\n\n` +
-          `Не подведи его! Выполни сейчас! 💪`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { 
-                    text: '✅ Отметить выполненным', 
-                    callback_data: `quick_done_${targetHabitId}_${today}` 
-                  }
-                ],
-                [
-                  {
-                    text: '📱 Открыть приложение',
-                    web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                  }
-                ]
-              ]
-            }
-          }
-        );
-        
-        console.log('✅ Telegram notification sent successfully');
-      } catch (botError) {
-        console.error('❌ Failed to send Telegram notification:', botError.message);
-        // Продолжаем выполнение даже если не удалось отправить уведомление
-      }
-      
-      // Сохраняем в историю
-      await db.query(
-        'INSERT INTO habit_punches (habit_id, from_user_id, to_user_id) VALUES ($1, $2, $3)',
-        [habitId, fromUserId, targetUserId]
-      );
-      
-      console.log('✅ Punch saved to database');
-      
-      return res.json({ 
-        success: true,
-        showToast: true,
-        toastType: 'success',
-        toastMessage: `Панч отправлен ${friendName}! 👊`,
-        friendName: friendName
-      });
-    }
-    
-    // Fallback если не нашли пользователя
-    return res.json({ 
-      success: true,
-      showToast: true,
-      toastType: 'success',
-      toastMessage: 'Панч отправлен! 👊'
-    });
-  } catch (error) {
-    console.error('❌ Punch error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to send punch',
-      showToast: true,
-      toastType: 'error',
-      toastMessage: 'Не удалось отправить панч. Попробуйте ещё раз.'
-    });
-  }
-});
 // Создать ссылку для шаринга
 router.post('/habits/:id/share', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     
-    // Проверяем владельца
     const habit = await db.query(
       'SELECT * FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
@@ -909,7 +925,6 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Habit not found' });
     }
     
-    // Проверяем существующий share code
     let shareResult = await db.query(
       'SELECT share_code FROM shared_habits WHERE habit_id = $1',
       [id]
@@ -917,7 +932,6 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
     
     let shareCode;
     if (shareResult.rows.length === 0) {
-      // Генерируем уникальный код
       shareCode = `${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       await db.query(
@@ -925,7 +939,6 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
         [id, userId, shareCode]
       );
       
-      // Добавляем владельца как первого участника
       await db.query(
         'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
         [id, userId]
@@ -942,13 +955,11 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
 });
 
 // Получить участников привычки
-// Получить участников привычки (включая связанные привычки)
 router.get('/habits/:id/members', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     
-    // Получаем информацию о привычке и её связях
     const habitInfo = await db.query(
       'SELECT parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
@@ -962,11 +973,8 @@ router.get('/habits/:id/members', authMiddleware, async (req, res) => {
     }
     
     const parentHabitId = habitInfo.rows[0].parent_habit_id;
-    
-    // Определяем, какую привычку использовать для получения участников
     const targetHabitId = parentHabitId || id;
     
-    // Получаем всех участников связанной группы привычек
     const members = await db.query(
       `SELECT DISTINCT u.id, u.first_name, u.last_name, u.username, u.photo_url
        FROM habit_members hm
@@ -976,7 +984,7 @@ router.get('/habits/:id/members', authMiddleware, async (req, res) => {
          WHERE parent_habit_id = $1 OR id = $1
        )
        AND hm.is_active = true
-       AND u.id != $2`,  // Исключаем текущего пользователя из списка
+       AND u.id != $2`,
       [targetHabitId, userId]
     );
     
@@ -992,43 +1000,13 @@ router.get('/habits/:id/members', authMiddleware, async (req, res) => {
     });
   }
 });
-// Punch друга
-router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) => {
-  try {
-    const { habitId, userId: targetUserId } = req.params;
-    const fromUserId = req.user.id;
-    
-    // Сохраняем punch
-    await db.query(
-      'INSERT INTO habit_punches (habit_id, from_user_id, to_user_id) VALUES ($1, $2, $3)',
-      [habitId, fromUserId, targetUserId]
-    );
-    
-    // Отправляем уведомление через бота
-    const targetUser = await db.query(
-      'SELECT telegram_id FROM users WHERE id = $1',
-      [targetUserId]
-    );
-    
-    if (targetUser.rows.length > 0) {
-      // Здесь вызываем метод бота для отправки уведомления
-      // bot.sendMessage(targetUser.rows[0].telegram_id, '👊 Your friend reminded you to complete your habit!');
-    }
-    
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Punch error:', error);
-    res.status(500).json({ success: false, error: 'Failed to send punch' });
-  }
-});
+
 // Эндпоинт для активации премиум подписки
-// Эндпоинт для активации премиум подписки с выбранным планом
 router.post('/subscription/activate', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { plan } = req.body; // 'month' или 'year' из фронтенда
+    const { plan } = req.body;
     
-    // Маппинг старых названий на новые
     const planMapping = {
       'month': '6_months',
       'year': '1_year'
@@ -1038,14 +1016,12 @@ router.post('/subscription/activate', authMiddleware, async (req, res) => {
     
     console.log(`💎 Activating subscription for user ${userId}, plan: ${planType}`);
     
-    // Создаем подписку через сервис
     const result = await SubscriptionService.createSubscription(userId, planType);
     
     if (!result.success) {
       throw new Error('Failed to create subscription');
     }
     
-    // Проверяем что данные обновились
     const verifyResult = await db.query(
       'SELECT is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1',
       [userId]
@@ -1068,13 +1044,11 @@ router.post('/subscription/activate', authMiddleware, async (req, res) => {
   }
 });
 
-// Эндпоинт для проверки лимитов пользователя
 // Эндпоинт для проверки статуса подписки
 router.get('/subscription/check', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
     
-    // Используем обновлённый метод проверки
     const status = await SubscriptionService.checkUserSubscription(userId);
     
     console.log(`📊 Subscription check result for user ${userId}:`, status);
@@ -1097,7 +1071,6 @@ router.get('/subscription/check', authMiddleware, async (req, res) => {
   }
 });
 
-// Вспомогательная функция для получения названия плана
 function getPlanName(planType) {
   const plans = {
     '6_months': 'Premium for 6 Months',
@@ -1108,97 +1081,17 @@ function getPlanName(planType) {
   return plans[planType] || 'Premium';
 }
 
-// Эндпоинт для активации премиум подписки с выбранным планом
-// Эндпоинт для активации премиум подписки с выбранным планом
-router.post('/subscription/activate', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { plan } = req.body; // '6_months' или '1_year' из фронтенда
-    
-    console.log(`💎 Activating subscription for user ${userId}, plan: ${plan}`);
-    
-    // Проверяем корректность плана
-    const validPlans = ['6_months', '1_year', 'lifetime'];
-    if (!validPlans.includes(plan)) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid plan: ${plan}. Valid plans are: ${validPlans.join(', ')}`
-      });
-    }
-    
-    // Создаем подписку через сервис
-    const result = await SubscriptionService.createSubscription(userId, plan);
-    
-    if (!result.success) {
-      throw new Error('Failed to create subscription');
-    }
-    
-    // Проверяем что данные обновились
-    const verifyResult = await db.query(
-      'SELECT is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1',
-      [userId]
-    );
-    
-    console.log('✅ Verification after activation:', verifyResult.rows[0]);
-    
-    res.json({
-      success: true,
-      message: result.message,
-      subscription: result.subscription,
-      user: result.user
-    });
-  } catch (error) {
-    console.error('💥 Subscription activation error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to activate subscription'
-    });
-  }
-});
-
-
-
-// Эндпоинт для получения доступных планов
-router.get('/subscription/plans', async (req, res) => {
-  try {
-    const plans = SubscriptionService.PLANS;
-    
-    res.json({
-      success: true,
-      plans: Object.keys(plans).map(key => ({
-        id: key,
-        ...plans[key]
-      }))
-    });
-  } catch (error) {
-    console.error('💥 Get plans error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get subscription plans'
-    });
-  }
-});
-
-// Эндпоинт для отмены подписки
-// Найдите этот роут в routes/habitRoutes.js и убедитесь что он правильный:
-
-// Эндпоинт для отмены подписки
-// В файле routes/habitRoutes.js найдите и замените/добавьте этот эндпоинт:
-
-// Эндпоинт для отмены подписки
 router.post('/subscription/cancel', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
     
     console.log(`🚫 Starting subscription cancellation for user ${userId}`);
     
-    // Напрямую обновляем в базе данных
     const client = await db.getClient();
     
     try {
       await client.query('BEGIN');
       
-      // Проверяем текущий статус пользователя
       const userResult = await client.query(
         'SELECT id, is_premium, subscription_type FROM users WHERE id = $1',
         [userId]
@@ -1223,7 +1116,6 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
         });
       }
       
-      // Деактивируем все активные подписки пользователя
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -1232,7 +1124,6 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
         [userId]
       );
       
-      // Сбрасываем премиум статус у пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = false,
@@ -1242,7 +1133,6 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
         [userId]
       );
       
-      // Добавляем запись в историю если есть таблица subscription_history
       try {
         await client.query(
           `INSERT INTO subscription_history (user_id, action, created_at) 
@@ -1250,7 +1140,6 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
           [userId]
         );
       } catch (historyError) {
-        // Если таблицы истории нет - не критично
         console.log('History table not found, skipping');
       }
       
@@ -1280,7 +1169,6 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
 });
 
 // Эндпоинт для получения истории подписок
-// Эндпоинт для получения истории подписок с детальной информацией
 router.get('/subscription/history', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -1319,12 +1207,11 @@ router.get('/subscription/history', authMiddleware, async (req, res) => {
   }
 });
 
-// Отладочный эндпоинт для проверки подписки (УДАЛИТЬ В ПРОДАКШЕНЕ)
+// Отладочный эндпоинт для проверки подписки
 router.get('/subscription/debug', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
     
-    // Получаем все данные о пользователе и подписке
     const userResult = await db.query(
       `SELECT 
         id,
@@ -1375,7 +1262,6 @@ router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) =>
     
     console.log(`🔍 Checking friend limit for habit ${id}, user ${userId}`);
     
-    // Проверяем, что привычка принадлежит пользователю
     const habitCheck = await db.query(
       'SELECT id, parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
@@ -1391,7 +1277,6 @@ router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) =>
     const habit = habitCheck.rows[0];
     const targetHabitId = habit.parent_habit_id || habit.id;
     
-    // Получаем статус подписки пользователя
     const userResult = await db.query(
       'SELECT is_premium FROM users WHERE id = $1',
       [userId]
@@ -1399,7 +1284,6 @@ router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) =>
     
     const isPremium = userResult.rows[0]?.is_premium || false;
     
-    // Если пользователь премиум - нет ограничений
     if (isPremium) {
       return res.json({
         success: true,
@@ -1410,8 +1294,6 @@ router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) =>
       });
     }
     
-    // Для бесплатного тарифа проверяем количество друзей
-    // Считаем всех активных участников связанных привычек (кроме самого пользователя)
     const friendsCount = await db.query(
       `SELECT COUNT(DISTINCT hm.user_id) as count
        FROM habit_members hm
@@ -1426,7 +1308,7 @@ router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) =>
     );
     
     const currentCount = parseInt(friendsCount.rows[0].count);
-    const limit = 1; // Лимит для бесплатного тарифа
+    const limit = 1;
     
     console.log(`📊 Friend limit check: ${currentCount}/${limit} friends`);
     
@@ -1447,76 +1329,27 @@ router.get('/habits/:id/check-friend-limit', authMiddleware, async (req, res) =>
   }
 });
 
-// Удалить участника из привычки
-router.delete('/habits/:habitId/members/:memberId', authMiddleware, async (req, res) => {
-  const client = await db.getClient();
-  
+// Эндпоинт для получения доступных планов
+router.get('/subscription/plans', async (req, res) => {
   try {
-    const { habitId, memberId } = req.params;
-    const userId = req.user.id;
-    
-    console.log(`🗑️ Removing member ${memberId} from habit ${habitId} by user ${userId}`);
-    
-    await client.query('BEGIN');
-    
-    // Проверяем, что привычка принадлежит пользователю
-    const habitCheck = await client.query(
-      'SELECT id, parent_habit_id FROM habits WHERE id = $1 AND user_id = $2',
-      [habitId, userId]
-    );
-    
-    if (habitCheck.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({
-        success: false,
-        error: 'Habit not found or access denied'
-      });
-    }
-    
-    const habit = habitCheck.rows[0];
-    const parentHabitId = habit.parent_habit_id || habit.id;
-    
-    // Деактивируем участника во всех связанных привычках
-    await client.query(
-      `UPDATE habit_members 
-       SET is_active = false 
-       WHERE user_id = $1 
-       AND habit_id IN (
-         SELECT id FROM habits 
-         WHERE parent_habit_id = $2 OR id = $2
-       )`,
-      [memberId, parentHabitId]
-    );
-    
-    // Деактивируем привычку самого участника
-    await client.query(
-      `UPDATE habits 
-       SET is_active = false 
-       WHERE user_id = $1 
-       AND (parent_habit_id = $2 OR 
-            parent_habit_id = (SELECT parent_habit_id FROM habits WHERE id = $2 AND parent_habit_id IS NOT NULL))`,
-      [memberId, habitId]
-    );
-    
-    await client.query('COMMIT');
-    
-    console.log(`✅ Member ${memberId} removed from habit ${habitId}`);
+    const plans = SubscriptionService.PLANS;
     
     res.json({
       success: true,
-      message: 'Member removed successfully'
+      plans: Object.keys(plans).map(key => ({
+        id: key,
+        ...plans[key]
+      }))
     });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Remove member error:', error);
+    console.error('💥 Get plans error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to remove member'
+      error: 'Failed to get subscription plans'
     });
-  } finally {
-    client.release();
   }
 });
+
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
