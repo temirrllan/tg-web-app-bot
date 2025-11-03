@@ -4,7 +4,6 @@ const HabitMark = require('../models/HabitMark');
 // const Phrase = require('../models/Phrase');
 const db = require('../config/database');
 // В начале файла после существующих импортов добавьте:
-const Habit = require('../models/Habit');
 const habitController = {
   async create(req, res) {
     console.log('🎯 habitController.create called');
