@@ -1517,27 +1517,6 @@ router.delete('/habits/:habitId/members/:memberId', authMiddleware, async (req, 
     client.release();
   }
 });
-
-// Проверка прав владения привычкой
-router.get('/habits/:id/check-ownership', authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.id;
-    
-    const isOwner = await Habit.isHabitOwner(id, userId);
-    
-    res.json({
-      success: true,
-      isOwner
-    });
-  } catch (error) {
-    console.error('Check ownership error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to check ownership'
-    });
-  }
-});
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
