@@ -2,42 +2,43 @@ const db = require('../config/database');
 
 class Habit {
   static async create(userId, habitData) {
-    const {
-      category_id,
-      title,
-      goal,
-      schedule_type = 'daily',
-      schedule_days = [1, 2, 3, 4, 5, 6, 7],
-      reminder_time,
-      reminder_enabled = true,
-      is_bad_habit = false
-    } = habitData;
+  const {
+    category_id,
+    title,
+    goal,
+    schedule_type = 'daily',
+    schedule_days = [1, 2, 3, 4, 5, 6, 7],
+    reminder_time,
+    reminder_enabled = true,
+    is_bad_habit = false
+  } = habitData;
 
-    try {
-      const result = await db.query(
-        `INSERT INTO habits
-         (user_id, category_id, title, goal, schedule_type, schedule_days,
-          reminder_time, reminder_enabled, is_bad_habit)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [
-          userId,
-          category_id || null,
-          title,
-          goal,
-          schedule_type,
-          schedule_days,
-          reminder_time || null,
-          reminder_enabled,
-          is_bad_habit
-        ]
-      );
-      return result.rows[0];
-    } catch (error) {
-      console.error('Database error in Habit.create:', error);
-      throw error;
-    }
+  try {
+    const result = await db.query(
+      `INSERT INTO habits
+       (user_id, creator_id, category_id, title, goal, schedule_type, schedule_days,
+        reminder_time, reminder_enabled, is_bad_habit)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [
+        userId,
+        userId, // 🆕 creator_id = user_id для новых привычек
+        category_id || null,
+        title,
+        goal,
+        schedule_type,
+        schedule_days,
+        reminder_time || null,
+        reminder_enabled,
+        is_bad_habit
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Database error in Habit.create:', error);
+    throw error;
   }
+}
 
   static async findByUserId(userId) {
     const result = await db.query(

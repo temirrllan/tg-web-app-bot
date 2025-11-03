@@ -550,26 +550,28 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
       }
     }
     
-    const newHabitResult = await db.query(
-      `INSERT INTO habits (
-        user_id, category_id, title, goal, schedule_type, 
-        schedule_days, reminder_time, reminder_enabled, is_bad_habit,
-        parent_habit_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *`,
-      [
-        userId,
-        originalHabit.category_id,
-        originalHabit.title,
-        originalHabit.goal,
-        originalHabit.schedule_type,
-        originalHabit.schedule_days,
-        originalHabit.reminder_time,
-        originalHabit.reminder_enabled,
-        originalHabit.is_bad_habit,
-        originalHabit.habit_id
-      ]
-    );
+    // 🆕 При создании копии привычки сохраняем creator_id оригинала
+const newHabitResult = await db.query(
+  `INSERT INTO habits (
+    user_id, creator_id, category_id, title, goal, schedule_type, 
+    schedule_days, reminder_time, reminder_enabled, is_bad_habit,
+    parent_habit_id
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+  RETURNING *`,
+  [
+    userId,
+    originalHabit.user_id, // 🆕 creator_id = владелец оригинальной привычки
+    originalHabit.category_id,
+    originalHabit.title,
+    originalHabit.goal,
+    originalHabit.schedule_type,
+    originalHabit.schedule_days,
+    originalHabit.reminder_time,
+    originalHabit.reminder_enabled,
+    originalHabit.is_bad_habit,
+    originalHabit.habit_id
+  ]
+);
     
     const newHabit = newHabitResult.rows[0];
     
@@ -1350,16 +1352,25 @@ router.get('/subscription/plans', async (req, res) => {
   }
 });
 // 🆕 Получить информацию о владельце привычки
+// 🆕 Получить информацию о владельце привычки (с поддержкой creator_id)
 router.get('/habits/:id/owner', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log(`🔍 Getting owner info for habit ${id}`);
     
+    // Получаем информацию о привычке с creator_id
     const result = await db.query(
-      `SELECT h.id, h.user_id as owner_user_id, u.first_name, u.last_name, u.username
+      `SELECT 
+        h.id, 
+        h.user_id,
+        h.creator_id,
+        h.parent_habit_id,
+        u.first_name as creator_first_name,
+        u.last_name as creator_last_name,
+        u.username as creator_username
        FROM habits h
-       JOIN users u ON h.user_id = u.id
+       LEFT JOIN users u ON h.creator_id = u.id
        WHERE h.id = $1`,
       [id]
     );
@@ -1373,18 +1384,25 @@ router.get('/habits/:id/owner', authMiddleware, async (req, res) => {
     
     const habitInfo = result.rows[0];
     
+    // Если creator_id null (старые записи), используем user_id
+    const creatorId = habitInfo.creator_id || habitInfo.user_id;
+    
     console.log('✅ Owner info found:', {
       habitId: habitInfo.id,
-      ownerId: habitInfo.owner_user_id,
-      ownerName: habitInfo.first_name
+      creatorId: creatorId,
+      userId: habitInfo.user_id,
+      parentHabitId: habitInfo.parent_habit_id,
+      creatorName: habitInfo.creator_first_name
     });
     
     res.json({
       success: true,
       habit_id: habitInfo.id,
-      owner_user_id: habitInfo.owner_user_id,
-      owner_name: `${habitInfo.first_name} ${habitInfo.last_name || ''}`.trim(),
-      owner_username: habitInfo.username
+      creator_id: creatorId,
+      user_id: habitInfo.user_id,
+      parent_habit_id: habitInfo.parent_habit_id,
+      creator_name: `${habitInfo.creator_first_name || ''} ${habitInfo.creator_last_name || ''}`.trim(),
+      creator_username: habitInfo.creator_username
     });
   } catch (error) {
     console.error('Get owner info error:', error);
