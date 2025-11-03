@@ -3,7 +3,8 @@ const Habit = require('../models/Habit');
 const HabitMark = require('../models/HabitMark');
 // const Phrase = require('../models/Phrase');
 const db = require('../config/database');
-
+// В начале файла после существующих импортов добавьте:
+const Habit = require('../models/Habit');
 const habitController = {
   async create(req, res) {
     console.log('🎯 habitController.create called');
@@ -297,69 +298,91 @@ async getTodayHabits(req, res) {
 },
 
   async update(req, res) {
-    console.log('🎯 habitController.update called');
-    
-    try {
-      if (!req.user) {
-        console.error('❌ No user in request');
-        return res.status(401).json({
-          success: false,
-          error: 'User not authenticated'
-        });
-      }
-
-      const { id } = req.params;
-      const userId = req.user.id;
-      const updates = req.body;
-
-      console.log('Updating habit:', {
-        habitId: id,
-        userId: userId,
-        updates: updates
-      });
-
-      // Валидация обновляемых полей
-      if (updates.title !== undefined && (!updates.title || updates.title.trim() === '')) {
-        return res.status(400).json({
-          success: false,
-          error: 'Title cannot be empty'
-        });
-      }
-
-      if (updates.goal !== undefined && (!updates.goal || updates.goal.trim() === '')) {
-        return res.status(400).json({
-          success: false,
-          error: 'Goal cannot be empty'
-        });
-      }
-
-      const habit = await Habit.update(id, userId, updates);
-      
-      if (!habit) {
-        console.log('❌ Habit not found or user not authorized');
-        return res.status(404).json({ 
-          success: false, 
-          error: 'Habit not found' 
-        });
-      }
-
-      console.log('✅ Habit updated successfully:', habit.id);
-
-      res.json({
-        success: true,
-        habit
-      });
-    } catch (error) {
-      console.error('💥 Update habit error:', error.message);
-      console.error('Error stack:', error.stack);
-      
-      res.status(500).json({ 
-        success: false, 
-        error: 'Failed to update habit',
-        details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+  console.log('🎯 habitController.update called');
+  
+  try {
+    if (!req.user) {
+      console.error('❌ No user in request');
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
       });
     }
-  },
+
+    const { id } = req.params;
+    const userId = req.user.id;
+    const updates = req.body;
+
+    console.log('Updating habit:', {
+      habitId: id,
+      userId: userId,
+      updates: updates
+    });
+
+    // Проверяем, является ли пользователь создателем
+    const isOwner = await Habit.isHabitOwner(id, userId);
+    
+    if (!isOwner) {
+      console.log('❌ User is not the habit creator');
+      return res.status(403).json({
+        success: false,
+        error: 'Only the habit creator can edit this habit',
+        isOwner: false
+      });
+    }
+
+    // Валидация обновляемых полей
+    if (updates.title !== undefined && (!updates.title || updates.title.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title cannot be empty'
+      });
+    }
+
+    if (updates.goal !== undefined && (!updates.goal || updates.goal.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Goal cannot be empty'
+      });
+    }
+
+    const habit = await Habit.update(id, userId, updates);
+    
+    if (!habit) {
+      console.log('❌ Habit not found or user not authorized');
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Habit not found' 
+      });
+    }
+
+    console.log('✅ Habit updated successfully and synced with members');
+
+    res.json({
+      success: true,
+      habit,
+      synced: true // Указываем, что изменения синхронизированы
+    });
+  } catch (error) {
+    console.error('💥 Update habit error:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    // Проверяем специфическую ошибку прав доступа
+    if (error.message === 'Only the habit creator can edit this habit') {
+      return res.status(403).json({
+        success: false,
+        error: error.message,
+        isOwner: false
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to update habit',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+},
 
   async delete(req, res) {
     console.log('🎯 habitController.delete called');
