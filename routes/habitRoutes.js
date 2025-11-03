@@ -1349,9 +1349,56 @@ router.get('/subscription/plans', async (req, res) => {
     });
   }
 });
+// 🆕 Получить информацию о владельце привычки
+router.get('/habits/:id/owner', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`🔍 Getting owner info for habit ${id}`);
+    
+    const result = await db.query(
+      `SELECT h.id, h.user_id as owner_user_id, u.first_name, u.last_name, u.username
+       FROM habits h
+       JOIN users u ON h.user_id = u.id
+       WHERE h.id = $1`,
+      [id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
+    
+    const habitInfo = result.rows[0];
+    
+    console.log('✅ Owner info found:', {
+      habitId: habitInfo.id,
+      ownerId: habitInfo.owner_user_id,
+      ownerName: habitInfo.first_name
+    });
+    
+    res.json({
+      success: true,
+      habit_id: habitInfo.id,
+      owner_user_id: habitInfo.owner_user_id,
+      owner_name: `${habitInfo.first_name} ${habitInfo.last_name || ''}`.trim(),
+      owner_username: habitInfo.username
+    });
+  } catch (error) {
+    console.error('Get owner info error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get owner info'
+    });
+  }
+});
 
 // Отметки
 router.post('/habits/:id/mark', markController.markHabit);
 router.delete('/habits/:id/mark', markController.unmarkHabit);
+// Отметки
+
 
 module.exports = router;
