@@ -23,6 +23,8 @@ router.get('/habits/today', habitController.getTodayHabits);
 // 🆕 ОБНОВЛЁННЫЙ РОУТ РЕДАКТИРОВАНИЯ с проверкой владельца и уведомлениями
 // В controllers/habitController.js замените роут PATCH на:
 
+// В controllers/habitController.js замените роут PATCH на:
+
 router.patch('/habits/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -53,23 +55,17 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
     );
 
     if (habitCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Habit not found'
-      });
-    }
-
-    const habit = habitCheck.rows[0];
-// Проверка прав на редактирование
-if (habit.user_id !== userId) {
-  return res.status(403).json({
+  return res.status(404).json({
     success: false,
-    error: 'Only the habit creator can edit this habit',
-    isOwner: false
+    error: 'Habit not found'
   });
 }
+
+    const habit = habitCheck.rows[0];
+
     // 🔥 ИСПРАВЛЕННАЯ ЛОГИКА: Проверяем creator_id, если его нет — fallback на user_id
-    const actualCreatorId = habit.creator_id || habit.user_id;
+    // КРИТИЧНО: Приводим к числу, т.к. creator_id может быть строкой из БД
+const actualCreatorId = parseInt(habit.creator_id || habit.user_id);
     
     console.log('🔍 Permission check:', {
       habitId: id,
@@ -77,9 +73,28 @@ if (habit.user_id !== userId) {
       habitCreatorId: habit.creator_id,
       actualCreatorId: actualCreatorId,
       currentUserId: userId,
+      typesMatch: typeof actualCreatorId === typeof userId,
       isCreator: actualCreatorId === userId
     });
+console.log('🔍 Permission check:', {
+  habitId: id,
+  habitUserId: habit.user_id,
+  habitCreatorId: habit.creator_id,
+  actualCreatorId: actualCreatorId,
+  currentUserId: userId,
+  typesMatch: typeof actualCreatorId === typeof userId,
+  isCreator: actualCreatorId === userId
+});
 
+// Проверка прав: только создатель может редактировать
+if (actualCreatorId !== userId) {
+  console.log('❌ User is not the creator of this habit');
+  return res.status(403).json({
+    success: false,
+    error: 'Only the habit creator can edit this habit',
+    isOwner: false
+  });
+}
     // Проверка прав: только создатель может редактировать
     if (actualCreatorId !== userId) {
       console.log('❌ User is not the creator of this habit');
