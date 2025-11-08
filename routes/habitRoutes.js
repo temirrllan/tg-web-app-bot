@@ -21,7 +21,9 @@ router.get('/habits', habitController.getAll);
 router.get('/habits/today', habitController.getTodayHabits);
 
 // 🆕 ОБНОВЛЁННЫЙ РОУТ РЕДАКТИРОВАНИЯ с проверкой владельца и уведомлениями
-router.patch('/habits/:id', async (req, res) => {
+// В controllers/habitController.js замените роут PATCH на:
+
+router.patch('/habits/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
@@ -44,7 +46,7 @@ router.patch('/habits/:id', async (req, res) => {
       });
     }
 
-    // Проверяем, что пользователь - владелец привычки
+    // Проверяем привычку
     const habitCheck = await db.query(
       'SELECT * FROM habits WHERE id = $1',
       [id]
@@ -58,16 +60,37 @@ router.patch('/habits/:id', async (req, res) => {
     }
 
     const habit = habitCheck.rows[0];
+// Проверка прав на редактирование
+if (habit.user_id !== userId) {
+  return res.status(403).json({
+    success: false,
+    error: 'Only the habit creator can edit this habit',
+    isOwner: false
+  });
+}
+    // 🔥 ИСПРАВЛЕННАЯ ЛОГИКА: Проверяем creator_id, если его нет — fallback на user_id
+    const actualCreatorId = habit.creator_id || habit.user_id;
+    
+    console.log('🔍 Permission check:', {
+      habitId: id,
+      habitUserId: habit.user_id,
+      habitCreatorId: habit.creator_id,
+      actualCreatorId: actualCreatorId,
+      currentUserId: userId,
+      isCreator: actualCreatorId === userId
+    });
 
-    // Проверка прав на редактирование
-    if (habit.user_id !== userId) {
-      console.log('❌ User is not the owner of this habit');
+    // Проверка прав: только создатель может редактировать
+    if (actualCreatorId !== userId) {
+      console.log('❌ User is not the creator of this habit');
       return res.status(403).json({
         success: false,
         error: 'Only the habit creator can edit this habit',
         isOwner: false
       });
     }
+
+    console.log('✅ User is the creator, allowing edit');
 
     // Обновляем привычку
     const Habit = require('../models/Habit');
