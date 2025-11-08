@@ -1376,6 +1376,8 @@ router.get('/subscription/plans', async (req, res) => {
 });
 // 🆕 Получить информацию о владельце привычки
 // 🆕 Получить информацию о владельце привычки (с поддержкой creator_id)
+// В routes/habitRoutes.js замените эндпоинт на:
+
 router.get('/habits/:id/owner', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1391,9 +1393,10 @@ router.get('/habits/:id/owner', authMiddleware, async (req, res) => {
         h.parent_habit_id,
         u.first_name as creator_first_name,
         u.last_name as creator_last_name,
-        u.username as creator_username
+        u.username as creator_username,
+        u.id as creator_user_db_id
        FROM habits h
-       LEFT JOIN users u ON h.creator_id = u.id
+       LEFT JOIN users u ON COALESCE(h.creator_id, h.user_id) = u.id
        WHERE h.id = $1`,
       [id]
     );
@@ -1407,25 +1410,27 @@ router.get('/habits/:id/owner', authMiddleware, async (req, res) => {
     
     const habitInfo = result.rows[0];
     
-    // Если creator_id null (старые записи), используем user_id
-    const creatorId = habitInfo.creator_id || habitInfo.user_id;
+    // ВАЖНО: Используем creator_id, если есть, иначе user_id
+    const actualCreatorId = habitInfo.creator_id || habitInfo.user_id;
     
     console.log('✅ Owner info found:', {
       habitId: habitInfo.id,
-      creatorId: creatorId,
+      creatorId: actualCreatorId,
       userId: habitInfo.user_id,
       parentHabitId: habitInfo.parent_habit_id,
-      creatorName: habitInfo.creator_first_name
+      creatorName: habitInfo.creator_first_name,
+      creatorUserDbId: habitInfo.creator_user_db_id
     });
     
     res.json({
       success: true,
       habit_id: habitInfo.id,
-      creator_id: creatorId,
+      creator_id: actualCreatorId, // ← КРИТИЧЕСКИ ВАЖНО
       user_id: habitInfo.user_id,
       parent_habit_id: habitInfo.parent_habit_id,
       creator_name: `${habitInfo.creator_first_name || ''} ${habitInfo.creator_last_name || ''}`.trim(),
-      creator_username: habitInfo.creator_username
+      creator_username: habitInfo.creator_username,
+      creator_user_db_id: habitInfo.creator_user_db_id
     });
   } catch (error) {
     console.error('Get owner info error:', error);
