@@ -802,8 +802,10 @@ router.post('/habits/join', async (req, res) => {
         reminder_enabled, 
         is_bad_habit,
         parent_habit_id,
-        is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        is_active,
+        created_at,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *`,
       [
         userId,                          // user_id - текущий пользователь
@@ -829,6 +831,14 @@ router.post('/habits/join', async (req, res) => {
       creatorId: newHabit.creator_id,
       parentHabitId: newHabit.parent_habit_id
     });
+    
+    // 🔍 Проверяем что привычка действительно создалась
+    const verifyHabit = await client.query(
+      'SELECT * FROM habits WHERE id = $1',
+      [newHabit.id]
+    );
+    
+    console.log('🔍 Verify habit in DB:', verifyHabit.rows[0]);
     
     // 7️⃣ Добавляем записи в habit_members для связи между привычками
     
