@@ -331,12 +331,23 @@ bot.on('message', async (msg) => {
     console.log('👋 Processing /start command');
     
     try {
+      // Создаём или находим пользователя
       let userResult = await db.query(
-        'SELECT id FROM users WHERE telegram_id = $1',
+        'SELECT id, language FROM users WHERE telegram_id = $1',
         [chatId.toString()]
       );
       
+      let userLanguage = 'en';
+      
       if (userResult.rows.length === 0) {
+        const langCode = msg.from.language_code?.toLowerCase() || 'en';
+        
+        if (langCode === 'ru' || langCode.startsWith('ru-')) {
+          userLanguage = 'ru';
+        } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-')) {
+          userLanguage = 'kk';
+        }
+        
         await db.query(
           `INSERT INTO users (telegram_id, username, first_name, last_name, language, is_premium)
            VALUES ($1, $2, $3, $4, $5, false)`,
@@ -345,12 +356,91 @@ bot.on('message', async (msg) => {
             msg.from.username || null,
             msg.from.first_name || '',
             msg.from.last_name || '',
-            msg.from.language_code || 'en'
+            userLanguage
           ]
         );
         console.log('✅ New user created');
+      } else {
+        userLanguage = userResult.rows[0].language || 'en';
       }
       
+      // 🔥 НОВОЕ: Проверяем параметры команды /start
+      const params = text.split(' ');
+      const startParam = params[1]; // join_XXXXX или undefined
+      
+      // Если это приглашение в привычку
+      if (startParam && startParam.startsWith('join_')) {
+        const shareCode = startParam;
+        
+        console.log('🎯 Join habit invitation detected:', shareCode);
+        
+        // Получаем информацию о привычке
+        const shareResult = await db.query(
+          `SELECT sh.*, h.title, h.goal, u.first_name as owner_name
+           FROM shared_habits sh
+           JOIN habits h ON sh.habit_id = h.id
+           JOIN users u ON sh.owner_user_id = u.id
+           WHERE sh.share_code = $1`,
+          [shareCode]
+        );
+        
+        if (shareResult.rows.length > 0) {
+          const habitInfo = shareResult.rows[0];
+          
+          console.log('📋 Found habit:', habitInfo.title);
+          
+          // Сообщения на разных языках
+          const messages = {
+            en: `🎯 <b>Habit Invitation</b>\n\n` +
+                `${habitInfo.owner_name} invites you to join:\n` +
+                `<b>"${habitInfo.title}"</b>\n\n` +
+                `📝 Goal: ${habitInfo.goal}\n\n` +
+                `Click "Open App" to join and start tracking together! 💪`,
+            ru: `🎯 <b>Приглашение в привычку</b>\n\n` +
+                `${habitInfo.owner_name} приглашает вас присоединиться:\n` +
+                `<b>"${habitInfo.title}"</b>\n\n` +
+                `📝 Цель: ${habitInfo.goal}\n\n` +
+                `Нажмите "Открыть приложение", чтобы присоединиться! 💪`,
+            kk: `🎯 <b>Әдетке шақыру</b>\n\n` +
+                `${habitInfo.owner_name} сізді қосылуға шақырады:\n` +
+                `<b>"${habitInfo.title}"</b>\n\n` +
+                `📝 Мақсат: ${habitInfo.goal}\n\n` +
+                `Қосылу үшін "Қосымшаны ашу" түймесін басыңыз! 💪`
+          };
+          
+          const message = messages[userLanguage] || messages['en'];
+          
+          const buttonTexts = {
+            en: '📱 Open App & Join',
+            ru: '📱 Открыть и присоединиться',
+            kk: '📱 Ашу және қосылу'
+          };
+          
+          const buttonText = buttonTexts[userLanguage] || buttonTexts['en'];
+          
+          await bot.sendMessage(chatId, message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: buttonText,
+                  web_app: { 
+                    url: `${WEBAPP_URL}?startapp=${shareCode}` 
+                  }
+                }
+              ]]
+            }
+          });
+          
+          console.log('✅ Join invitation sent');
+          return;
+        } else {
+          console.log('⚠️ Share code not found:', shareCode);
+          // Продолжаем как обычный /start
+        }
+      }
+      
+      // Обычное приветственное сообщение (если не было параметра join)
       await bot.sendMessage(
         chatId,
         '👋 **Welcome to Habit Tracker!**\n\nTrack your habits, build streaks, and achieve your goals!',
@@ -382,7 +472,8 @@ bot.on('message', async (msg) => {
     );
     return;
   }
-// Команда для проверки подписки (для отладки)
+  
+  // Команда для проверки подписки (для отладки)
   if (text === '/check_subscription') {
     try {
       const userResult = await db.query(

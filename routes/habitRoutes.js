@@ -514,9 +514,13 @@ router.get('/habits/:id/statistics', async (req, res) => {
 
 // Присоединиться к привычке по коду
 router.post('/habits/join', authMiddleware, async (req, res) => {
+  const client = await db.getClient();
+  
   try {
     const { shareCode } = req.body;
     const userId = req.user.id;
+    
+    console.log('🎯 Join habit request:', { shareCode, userId });
     
     if (!shareCode) {
       return res.status(400).json({ 
@@ -525,53 +529,102 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
       });
     }
     
-    const shareResult = await db.query(
-      `SELECT sh.*, h.* 
+    await client.query('BEGIN');
+    
+    // Получаем информацию о привычке
+    const shareResult = await client.query(
+      `SELECT 
+        sh.share_code,
+        sh.habit_id,
+        sh.owner_user_id,
+        h.*,
+        u.first_name as owner_name
        FROM shared_habits sh
        JOIN habits h ON sh.habit_id = h.id
+       JOIN users u ON sh.owner_user_id = u.id
        WHERE sh.share_code = $1`,
       [shareCode]
     );
     
     if (shareResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      console.log('❌ Invalid share code:', shareCode);
       return res.status(404).json({ 
         success: false, 
-        error: 'Invalid share code' 
+        error: 'Invalid or expired share code' 
       });
     }
     
     const originalHabit = shareResult.rows[0];
     
-    const memberCheck = await db.query(
-      'SELECT * FROM habit_members WHERE habit_id = $1 AND user_id = $2',
-      [originalHabit.habit_id, userId]
+    console.log('📋 Found habit:', {
+      id: originalHabit.habit_id,
+      title: originalHabit.title,
+      owner: originalHabit.owner_name
+    });
+    
+    // Проверяем, не является ли пользователь уже владельцем
+    if (originalHabit.owner_user_id === userId) {
+      await client.query('ROLLBACK');
+      console.log('⚠️ User is the owner of this habit');
+      return res.json({
+        success: true,
+        message: 'You are already the owner of this habit',
+        habit: originalHabit,
+        alreadyMember: true
+      });
+    }
+    
+    // Проверяем существующее членство
+    const memberCheck = await client.query(
+      `SELECT hm.*, h.id as user_habit_id, h.is_active as habit_active
+       FROM habit_members hm
+       LEFT JOIN habits h ON (h.user_id = $1 AND (h.parent_habit_id = $2 OR h.id = $2))
+       WHERE hm.habit_id = $2 AND hm.user_id = $1`,
+      [userId, originalHabit.habit_id]
     );
     
     if (memberCheck.rows.length > 0) {
-      if (!memberCheck.rows[0].is_active) {
-        await db.query(
+      const membership = memberCheck.rows[0];
+      
+      if (membership.is_active && membership.habit_active) {
+        await client.query('ROLLBACK');
+        console.log('✅ User is already an active member');
+        
+        // Возвращаем существующую привычку
+        const existingHabit = await client.query(
+          `SELECT h.* FROM habits h
+           WHERE h.user_id = $1 
+           AND (h.parent_habit_id = $2 OR h.id = $2)
+           AND h.is_active = true
+           LIMIT 1`,
+          [userId, originalHabit.habit_id]
+        );
+        
+        return res.json({
+          success: true,
+          message: 'You are already a member of this habit',
+          habit: existingHabit.rows[0] || originalHabit,
+          alreadyMember: true
+        });
+      } else {
+        // Реактивируем членство
+        console.log('🔄 Reactivating membership');
+        
+        await client.query(
           'UPDATE habit_members SET is_active = true WHERE habit_id = $1 AND user_id = $2',
           [originalHabit.habit_id, userId]
         );
         
-        const userHabitCheck = await db.query(
-          'SELECT * FROM habits WHERE user_id = $1 AND parent_habit_id = $2',
-          [userId, originalHabit.habit_id]
-        );
-        
-        if (userHabitCheck.rows.length > 0) {
-          const reactivatedHabit = await db.query(
+        if (membership.user_habit_id) {
+          const reactivatedHabit = await client.query(
             'UPDATE habits SET is_active = true WHERE id = $1 RETURNING *',
-            [userHabitCheck.rows[0].id]
+            [membership.user_habit_id]
           );
           
-          await db.query(
-            `INSERT INTO habit_members (habit_id, user_id) 
-             VALUES ($1, $2) 
-             ON CONFLICT (habit_id, user_id) 
-             DO UPDATE SET is_active = true`,
-            [userHabitCheck.rows[0].id, originalHabit.owner_user_id]
-          );
+          await client.query('COMMIT');
+          
+          console.log('✅ Habit reactivated');
           
           return res.json({ 
             success: true, 
@@ -579,61 +632,137 @@ router.post('/habits/join', authMiddleware, async (req, res) => {
             habit: reactivatedHabit.rows[0]
           });
         }
-      } else {
-        return res.json({ 
-          success: true, 
-          message: 'Already a member',
-          habitId: originalHabit.habit_id 
-        });
       }
     }
     
-    // 🆕 При создании копии привычки сохраняем creator_id оригинала
-const newHabitResult = await db.query(
-  `INSERT INTO habits (
-    user_id, creator_id, category_id, title, goal, schedule_type, 
-    schedule_days, reminder_time, reminder_enabled, is_bad_habit,
-    parent_habit_id
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-  RETURNING *`,
-  [
-    userId,
-    originalHabit.user_id, // 🆕 creator_id = владелец оригинальной привычки
-    originalHabit.category_id,
-    originalHabit.title,
-    originalHabit.goal,
-    originalHabit.schedule_type,
-    originalHabit.schedule_days,
-    originalHabit.reminder_time,
-    originalHabit.reminder_enabled,
-    originalHabit.is_bad_habit,
-    originalHabit.habit_id
-  ]
-);
+    // 🔥 СОЗДАЁМ НОВУЮ ПРИВЫЧКУ ДЛЯ ПОЛЬЗОВАТЕЛЯ
+    const creatorId = originalHabit.creator_id || originalHabit.user_id;
+    
+    console.log('➕ Creating new habit copy for user');
+    
+    const newHabitResult = await client.query(
+      `INSERT INTO habits (
+        user_id, 
+        creator_id, 
+        category_id, 
+        title, 
+        goal, 
+        schedule_type, 
+        schedule_days, 
+        reminder_time, 
+        reminder_enabled, 
+        is_bad_habit,
+        parent_habit_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *`,
+      [
+        userId,                              // user_id - новый участник
+        creatorId,                           // creator_id - оригинальный создатель
+        originalHabit.category_id,
+        originalHabit.title,
+        originalHabit.goal,
+        originalHabit.schedule_type,
+        originalHabit.schedule_days,
+        originalHabit.reminder_time,
+        originalHabit.reminder_enabled,
+        originalHabit.is_bad_habit,
+        originalHabit.habit_id              // parent_habit_id
+      ]
+    );
     
     const newHabit = newHabitResult.rows[0];
     
-    await db.query(
-      'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
+    console.log('✅ New habit created:', {
+      id: newHabit.id,
+      userId: newHabit.user_id,
+      creatorId: newHabit.creator_id,
+      parentHabitId: newHabit.parent_habit_id
+    });
+    
+    // Добавляем членство для оригинальной привычки
+    await client.query(
+      `INSERT INTO habit_members (habit_id, user_id, is_active) 
+       VALUES ($1, $2, true)
+       ON CONFLICT (habit_id, user_id) 
+       DO UPDATE SET is_active = true`,
       [originalHabit.habit_id, userId]
     );
     
-    await db.query(
-      'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2)',
-      [newHabit.id, originalHabit.owner_user_id]
+    // Добавляем владельца как члена новой привычки
+    await client.query(
+      `INSERT INTO habit_members (habit_id, user_id, is_active) 
+       VALUES ($1, $2, true)
+       ON CONFLICT (habit_id, user_id) 
+       DO UPDATE SET is_active = true`,
+      [newHabit.id, creatorId]
     );
+    
+    await client.query('COMMIT');
+    
+    console.log('✅ User successfully joined habit');
+    
+    // Отправляем уведомление владельцу
+    try {
+      const bot = require('../server').bot;
+      
+      const ownerResult = await db.query(
+        'SELECT telegram_id, language FROM users WHERE id = $1',
+        [creatorId]
+      );
+      
+      if (ownerResult.rows.length > 0) {
+        const owner = ownerResult.rows[0];
+        const newMember = req.user;
+        
+        const messages = {
+          en: `👥 <b>New Member!</b>\n\n${newMember.first_name} ${newMember.last_name || ''} joined your habit:\n<b>"${originalHabit.title}"</b>\n\nTrack together and motivate each other! 💪`,
+          ru: `👥 <b>Новый участник!</b>\n\n${newMember.first_name} ${newMember.last_name || ''} присоединился к вашей привычке:\n<b>"${originalHabit.title}"</b>\n\nОтслеживайте вместе и мотивируйте друг друга! 💪`,
+          kk: `👥 <b>Жаңа қатысушы!</b>\n\n${newMember.first_name} ${newMember.last_name || ''} сіздің әдетіңізге қосылды:\n<b>"${originalHabit.title}"</b>\n\nБірге қадағалаңыз және бірін-бірі ынталандырыңыз! 💪`
+        };
+        
+        const lang = owner.language || 'en';
+        const message = messages[lang] || messages['en'];
+        
+        await bot.sendMessage(owner.telegram_id, message, {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [[
+              {
+                text: lang === 'ru' ? '📱 Открыть приложение' : 
+                      lang === 'kk' ? '📱 Қосымшаны ашу' : 
+                      '📱 Open App',
+                web_app: { 
+                  url: process.env.WEBAPP_URL || process.env.FRONTEND_URL 
+                }
+              }
+            ]]
+          }
+        });
+        
+        console.log('✅ Owner notified');
+      }
+    } catch (notifError) {
+      console.error('⚠️ Failed to notify owner (non-critical):', notifError.message);
+    }
     
     res.json({ 
       success: true, 
       habit: newHabit,
-      message: 'Successfully joined habit' 
+      message: 'Successfully joined habit',
+      habitTitle: originalHabit.title,
+      ownerName: originalHabit.owner_name
     });
+    
   } catch (error) {
-    console.error('Join habit error:', error);
+    await client.query('ROLLBACK');
+    console.error('💥 Join habit error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to join habit' 
+      error: error.message || 'Failed to join habit',
+      details: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
+  } finally {
+    client.release();
   }
 });
 
