@@ -321,10 +321,12 @@ bot.on('successful_payment', async (msg) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
-  // Пропускаем сообщения с successful_payment - они обрабатываются отдельно
+  
+  // Пропускаем сообщения с successful_payment
   if (msg.successful_payment) {
     return;
   }
+  
   console.log(`📨 NEW MESSAGE: "${text}" from ${chatId}`);
 
   if (text.startsWith('/start')) {
@@ -364,15 +366,17 @@ bot.on('message', async (msg) => {
         userLanguage = userResult.rows[0].language || 'en';
       }
       
-      // 🔥 НОВОЕ: Проверяем параметры команды /start
+      // 🔥 ВАЖНО: Проверяем параметры команды /start
       const params = text.split(' ');
       const startParam = params[1]; // join_XXXXX или undefined
       
-      // Если это приглашение в привычку
+      console.log('🔍 Start parameters:', { fullText: text, params, startParam });
+      
+      // Если это приглашение в привычку через /start join_XXXXX
       if (startParam && startParam.startsWith('join_')) {
         const shareCode = startParam;
         
-        console.log('🎯 Join habit invitation detected:', shareCode);
+        console.log('🎯 Join habit invitation detected via /start:', shareCode);
         
         // Получаем информацию о привычке
         const shareResult = await db.query(
@@ -395,17 +399,17 @@ bot.on('message', async (msg) => {
                 `${habitInfo.owner_name} invites you to join:\n` +
                 `<b>"${habitInfo.title}"</b>\n\n` +
                 `📝 Goal: ${habitInfo.goal}\n\n` +
-                `Click "Open App" to join and start tracking together! 💪`,
+                `Click "Open App & Join" to join and start tracking together! 💪`,
             ru: `🎯 <b>Приглашение в привычку</b>\n\n` +
                 `${habitInfo.owner_name} приглашает вас присоединиться:\n` +
                 `<b>"${habitInfo.title}"</b>\n\n` +
                 `📝 Цель: ${habitInfo.goal}\n\n` +
-                `Нажмите "Открыть приложение", чтобы присоединиться! 💪`,
+                `Нажмите кнопку, чтобы открыть приложение и присоединиться! 💪`,
             kk: `🎯 <b>Әдетке шақыру</b>\n\n` +
                 `${habitInfo.owner_name} сізді қосылуға шақырады:\n` +
                 `<b>"${habitInfo.title}"</b>\n\n` +
                 `📝 Мақсат: ${habitInfo.goal}\n\n` +
-                `Қосылу үшін "Қосымшаны ашу" түймесін басыңыз! 💪`
+                `Қосылу үшін түймені басыңыз! 💪`
           };
           
           const message = messages[userLanguage] || messages['en'];
@@ -418,6 +422,7 @@ bot.on('message', async (msg) => {
           
           const buttonText = buttonTexts[userLanguage] || buttonTexts['en'];
           
+          // 🔥 КРИТИЧНО: Передаём параметр в web_app URL
           await bot.sendMessage(chatId, message, {
             parse_mode: 'HTML',
             reply_markup: {
@@ -432,7 +437,7 @@ bot.on('message', async (msg) => {
             }
           });
           
-          console.log('✅ Join invitation sent');
+          console.log('✅ Join invitation sent with button');
           return;
         } else {
           console.log('⚠️ Share code not found:', shareCode);
@@ -440,18 +445,32 @@ bot.on('message', async (msg) => {
         }
       }
       
-      // Обычное приветственное сообщение (если не было параметра join)
-      await bot.sendMessage(
-        chatId,
-        '👋 **Welcome to Habit Tracker!**\n\nTrack your habits, build streaks, and achieve your goals!',
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            keyboard: [[{ text: '📱 Open Habit Tracker', web_app: { url: WEBAPP_URL } }]],
-            resize_keyboard: true
-          }
+      // Обычное приветственное сообщение
+      const welcomeMessages = {
+        en: '👋 **Welcome to Habit Tracker!**\n\nTrack your habits, build streaks, and achieve your goals!',
+        ru: '👋 **Добро пожаловать в Habit Tracker!**\n\nОтслеживайте свои привычки, стройте серии и достигайте целей!',
+        kk: '👋 **Habit Tracker-ге қош келдіңіз!**\n\nӘдеттеріңізді қадағалаңыз, сериялар құрыңыз және мақсаттарыңызға жетіңіз!'
+      };
+      
+      const openAppTexts = {
+        en: '📱 Open Habit Tracker',
+        ru: '📱 Открыть Habit Tracker',
+        kk: '📱 Habit Tracker ашу'
+      };
+      
+      const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
+      const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
+      
+      await bot.sendMessage(chatId, welcomeMessage, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          keyboard: [[{ 
+            text: openAppText, 
+            web_app: { url: WEBAPP_URL } 
+          }]],
+          resize_keyboard: true
         }
-      );
+      });
       
       console.log('✅ Welcome message sent');
     } catch (error) {
@@ -473,7 +492,7 @@ bot.on('message', async (msg) => {
     return;
   }
   
-  // Команда для проверки подписки (для отладки)
+  // Команда для проверки подписки
   if (text === '/check_subscription') {
     try {
       const userResult = await db.query(
