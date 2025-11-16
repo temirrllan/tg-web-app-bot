@@ -1080,46 +1080,88 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
 });
 
 // Создать ссылку для шаринга
+// В habitRoutes.js ЗАМЕНИТЕ эндпоинт POST /habits/:id/share
+
 router.post('/habits/:id/share', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     
+    console.log('🔗 Creating share link for habit:', id);
+    
+    // Проверяем, что привычка принадлежит пользователю
     const habit = await db.query(
-      'SELECT * FROM habits WHERE id = $1 AND user_id = $2',
+      'SELECT * FROM habits WHERE id = $1 AND user_id = $2 AND is_active = true',
       [id, userId]
     );
     
     if (habit.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Habit not found' });
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Habit not found or access denied' 
+      });
     }
     
+    const habitData = habit.rows[0];
+    
+    // Проверяем, есть ли уже share code
     let shareResult = await db.query(
       'SELECT share_code FROM shared_habits WHERE habit_id = $1',
       [id]
     );
     
     let shareCode;
+    
     if (shareResult.rows.length === 0) {
-      shareCode = `${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Генерируем уникальный share code
+      // ВАЖНО: Используем формат join_XXXXXX для правильной обработки в боте
+      shareCode = `join_${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
+      console.log('📝 Creating new share code:', shareCode);
+      
+      // Сохраняем в базу
       await db.query(
         'INSERT INTO shared_habits (habit_id, owner_user_id, share_code) VALUES ($1, $2, $3)',
         [id, userId, shareCode]
       );
       
+      // Добавляем создателя в habit_members (если ещё не добавлен)
       await db.query(
-        'INSERT INTO habit_members (habit_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        `INSERT INTO habit_members (habit_id, user_id, is_active, joined_at) 
+         VALUES ($1, $2, true, CURRENT_TIMESTAMP)
+         ON CONFLICT (habit_id, user_id) 
+         DO UPDATE SET is_active = true`,
         [id, userId]
       );
+      
+      console.log('✅ Share code created and saved');
     } else {
       shareCode = shareResult.rows[0].share_code;
+      console.log('✅ Using existing share code:', shareCode);
     }
     
-    res.json({ success: true, shareCode });
+    // 🎯 КРИТИЧНО: Правильная ссылка для Telegram
+    // Формат: https://t.me/BotUsername?start=PARAMETER
+    // Параметр передаётся в /start команду бота
+    const botUsername = process.env.BOT_USERNAME || 'CheckHabitlyBot';
+    const shareLink = `https://t.me/${botUsername}?start=${shareCode}`;
+    
+    console.log('🔗 Generated share link:', shareLink);
+    
+    res.json({ 
+      success: true, 
+      shareCode,
+      shareLink,
+      habitTitle: habitData.title,
+      message: 'Share link created successfully'
+    });
+    
   } catch (error) {
-    console.error('Create share link error:', error);
-    res.status(500).json({ success: false, error: 'Failed to create share link' });
+    console.error('💥 Create share link error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to create share link' 
+    });
   }
 });
 
