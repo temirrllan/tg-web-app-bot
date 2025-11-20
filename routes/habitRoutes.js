@@ -1108,7 +1108,7 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
     
     if (shareResult.rows.length === 0) {
       // 🔥 ВАЖНО: Создаём код С префиксом join_
-      shareCode = `join_${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  shareCode = `join_${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       console.log('➕ Creating new share code:', shareCode);
       
