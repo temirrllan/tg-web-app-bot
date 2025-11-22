@@ -25,6 +25,9 @@ router.get('/habits/today', habitController.getTodayHabits);
 
 // В controllers/habitController.js замените роут PATCH на:
 
+// Фрагмент из routes/habitRoutes.js
+// PATCH эндпоинт для редактирования привычки с улучшенными уведомлениями
+
 router.patch('/habits/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -55,17 +58,16 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
     );
 
     if (habitCheck.rows.length === 0) {
-  return res.status(404).json({
-    success: false,
-    error: 'Habit not found'
-  });
-}
+      return res.status(404).json({
+        success: false,
+        error: 'Habit not found'
+      });
+    }
 
     const habit = habitCheck.rows[0];
 
-    // 🔥 ИСПРАВЛЕННАЯ ЛОГИКА: Проверяем creator_id, если его нет — fallback на user_id
-    // КРИТИЧНО: Приводим к числу, т.к. creator_id может быть строкой из БД
-const actualCreatorId = parseInt(habit.creator_id || habit.user_id);
+    // 🔥 ПРОВЕРКА ПРАВ: creator_id с fallback на user_id
+    const actualCreatorId = parseInt(habit.creator_id || habit.user_id);
     
     console.log('🔍 Permission check:', {
       habitId: id,
@@ -76,25 +78,7 @@ const actualCreatorId = parseInt(habit.creator_id || habit.user_id);
       typesMatch: typeof actualCreatorId === typeof userId,
       isCreator: actualCreatorId === userId
     });
-console.log('🔍 Permission check:', {
-  habitId: id,
-  habitUserId: habit.user_id,
-  habitCreatorId: habit.creator_id,
-  actualCreatorId: actualCreatorId,
-  currentUserId: userId,
-  typesMatch: typeof actualCreatorId === typeof userId,
-  isCreator: actualCreatorId === userId
-});
 
-// Проверка прав: только создатель может редактировать
-if (actualCreatorId !== userId) {
-  console.log('❌ User is not the creator of this habit');
-  return res.status(403).json({
-    success: false,
-    error: 'Only the habit creator can edit this habit',
-    isOwner: false
-  });
-}
     // Проверка прав: только создатель может редактировать
     if (actualCreatorId !== userId) {
       console.log('❌ User is not the creator of this habit');
@@ -120,18 +104,18 @@ if (actualCreatorId !== userId) {
 
     console.log('✅ Habit updated successfully:', updatedHabit.id);
 
-    // 🔔 Отправляем уведомления всем участникам (кроме создателя)
+    // 🔔 УЛУЧШЕННЫЕ УВЕДОМЛЕНИЯ для участников
     try {
       const bot = require('../server').bot;
       
-      // Получаем владельца привычки
-      const ownerResult = await db.query(
-        'SELECT first_name, language FROM users WHERE id = $1',
+      // Получаем информацию о редакторе (создателе привычки)
+      const editorResult = await db.query(
+        'SELECT first_name, last_name, language FROM users WHERE id = $1',
         [userId]
       );
       
-      const ownerName = ownerResult.rows.length > 0 
-        ? ownerResult.rows[0].first_name 
+      const editorName = editorResult.rows.length > 0 
+        ? `${editorResult.rows[0].first_name} ${editorResult.rows[0].last_name || ''}`.trim()
         : 'Creator';
 
       // Определяем, какая привычка является родительской
@@ -139,7 +123,7 @@ if (actualCreatorId !== userId) {
 
       // Получаем всех участников связанных привычек
       const membersResult = await db.query(
-        `SELECT DISTINCT u.id, u.telegram_id, u.first_name, u.language, h.id as habit_id
+        `SELECT DISTINCT u.id, u.telegram_id, u.first_name, u.language, h.id as habit_id, h.title as old_title
          FROM habit_members hm
          JOIN users u ON hm.user_id = u.id
          JOIN habits h ON h.user_id = u.id
@@ -153,18 +137,71 @@ if (actualCreatorId !== userId) {
         [targetHabitId, userId]
       );
 
-      console.log(`📤 Sending notifications to ${membersResult.rows.length} members`);
+      console.log(`📤 Sending edit notifications to ${membersResult.rows.length} members`);
 
-      // Отправляем уведомления каждому участнику
+      // 🔥 УЛУЧШЕННЫЕ СООБЩЕНИЯ: показываем, КТО редактировал и ЧТО изменилось
       for (const member of membersResult.rows) {
         try {
           const lang = member.language || 'en';
           
-          // Подготавливаем текст уведомления на разных языках
+          // Формируем список изменений
+          let changesText = '';
+          
+          if (updates.title && updates.title !== habit.title) {
+            changesText += lang === 'ru' 
+              ? `\n📝 Название: "${updates.title}"`
+              : lang === 'kk' 
+              ? `\n📝 Атауы: "${updates.title}"`
+              : `\n📝 Title: "${updates.title}"`;
+          }
+          
+          if (updates.goal && updates.goal !== habit.goal) {
+            changesText += lang === 'ru' 
+              ? `\n🎯 Цель: ${updates.goal}`
+              : lang === 'kk' 
+              ? `\n🎯 Мақсат: ${updates.goal}`
+              : `\n🎯 Goal: ${updates.goal}`;
+          }
+          
+          if (updates.schedule_days && JSON.stringify(updates.schedule_days) !== JSON.stringify(habit.schedule_days)) {
+            const daysCount = updates.schedule_days.length;
+            changesText += lang === 'ru' 
+              ? `\n📅 График: ${daysCount} ${daysCount === 1 ? 'день' : daysCount < 5 ? 'дня' : 'дней'} в неделю`
+              : lang === 'kk' 
+              ? `\n📅 Кесте: аптасына ${daysCount} күн`
+              : `\n📅 Schedule: ${daysCount} day${daysCount !== 1 ? 's' : ''} per week`;
+          }
+          
+          if (updates.reminder_time !== undefined && updates.reminder_time !== habit.reminder_time) {
+            if (updates.reminder_time) {
+              changesText += lang === 'ru' 
+                ? `\n⏰ Напоминание: ${updates.reminder_time}`
+                : lang === 'kk' 
+                ? `\n⏰ Еске салу: ${updates.reminder_time}`
+                : `\n⏰ Reminder: ${updates.reminder_time}`;
+            } else {
+              changesText += lang === 'ru' 
+                ? `\n⏰ Напоминание отключено`
+                : lang === 'kk' 
+                ? `\n⏰ Еске салу өшірілді`
+                : `\n⏰ Reminder disabled`;
+            }
+          }
+
+          // Если изменений нет в заголовке, добавляем общее сообщение
+          if (!changesText) {
+            changesText = lang === 'ru' 
+              ? `\n\n✨ Настройки привычки обновлены`
+              : lang === 'kk' 
+              ? `\n\n✨ Әдет параметрлері жаңартылды`
+              : `\n\n✨ Habit settings updated`;
+          }
+          
+          // 🔥 ПОДРОБНОЕ УВЕДОМЛЕНИЕ с информацией о редакторе
           const messages = {
-            en: `📝 <b>Habit Updated!</b>\n\n${ownerName} has updated the shared habit:\n<b>"${updatedHabit.title}"</b>\n\n${updates.goal ? `New goal: ${updates.goal}\n\n` : ''}The changes have been applied to your habit as well.`,
-            ru: `📝 <b>Привычка обновлена!</b>\n\n${ownerName} изменил(а) совместную привычку:\n<b>"${updatedHabit.title}"</b>\n\n${updates.goal ? `Новая цель: ${updates.goal}\n\n` : ''}Изменения применены и к вашей привычке.`,
-            kk: `📝 <b>Әдет жаңартылды!</b>\n\n${ownerName} ортақ әдетті өзгертті:\n<b>"${updatedHabit.title}"</b>\n\n${updates.goal ? `Жаңа мақсат: ${updates.goal}\n\n` : ''}Өзгерістер сіздің әдетіңізге де қолданылды.`
+            en: `📝 <b>Habit Updated!</b>\n\n👤 <b>${editorName}</b> updated the shared habit:\n<b>"${updatedHabit.title}"</b>${changesText}\n\n💡 These changes have been applied to your habit as well.\n\nOpen the app to see the updates! 👇`,
+            ru: `📝 <b>Привычка обновлена!</b>\n\n👤 <b>${editorName}</b> изменил(а) совместную привычку:\n<b>"${updatedHabit.title}"</b>${changesText}\n\n💡 Изменения применены и к вашей привычке.\n\nОткройте приложение, чтобы увидеть обновления! 👇`,
+            kk: `📝 <b>Әдет жаңартылды!</b>\n\n👤 <b>${editorName}</b> ортақ әдетті өзгертті:\n<b>"${updatedHabit.title}"</b>${changesText}\n\n💡 Өзгерістер сіздің әдетіңізге де қолданылды.\n\nЖаңартуларды көру үшін қосымшаны ашыңыз! 👇`
           };
 
           const message = messages[lang] || messages['en'];
@@ -187,9 +224,9 @@ if (actualCreatorId !== userId) {
             }
           );
 
-          console.log(`✅ Notification sent to ${member.first_name} (ID: ${member.id})`);
+          console.log(`✅ Detailed notification sent to ${member.first_name} (ID: ${member.id})`);
 
-          // Обновляем привычку участника
+          // Обновляем привычку участника с новыми данными
           await db.query(
             `UPDATE habits 
              SET title = $1, 
@@ -197,7 +234,8 @@ if (actualCreatorId !== userId) {
                  schedule_type = $3,
                  schedule_days = $4,
                  reminder_time = $5,
-                 reminder_enabled = $6
+                 reminder_enabled = $6,
+                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $7`,
             [
               updates.title || habit.title,
@@ -209,6 +247,8 @@ if (actualCreatorId !== userId) {
               member.habit_id
             ]
           );
+
+          console.log(`✅ Habit updated for member ${member.first_name} (habit_id: ${member.habit_id})`);
 
         } catch (notifError) {
           console.error(`❌ Failed to notify member ${member.first_name}:`, notifError.message);
@@ -222,7 +262,8 @@ if (actualCreatorId !== userId) {
     res.json({
       success: true,
       habit: updatedHabit,
-      membersNotified: true
+      membersNotified: true,
+      notificationCount: membersResult ? membersResult.rows.length : 0
     });
 
   } catch (error) {
