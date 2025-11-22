@@ -25,8 +25,8 @@ router.get('/habits/today', habitController.getTodayHabits);
 
 // В controllers/habitController.js замените роут PATCH на:
 
-// Фрагмент из routes/habitRoutes.js
-// PATCH эндпоинт для редактирования привычки с улучшенными уведомлениями
+// Полная версия PATCH эндпоинта для routes/habitRoutes.js
+// Замените весь существующий router.patch('/habits/:id', ...) на этот код
 
 router.patch('/habits/:id', authMiddleware, async (req, res) => {
   try {
@@ -105,8 +105,21 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
     console.log('✅ Habit updated successfully:', updatedHabit.id);
 
     // 🔔 УЛУЧШЕННЫЕ УВЕДОМЛЕНИЯ для участников
+    let notificationCount = 0;
+    
     try {
       const bot = require('../server').bot;
+      
+      if (!bot) {
+        console.warn('⚠️ Bot not available, skipping notifications');
+        // Не бросаем ошибку, просто продолжаем без уведомлений
+        return res.json({
+          success: true,
+          habit: updatedHabit,
+          membersNotified: false,
+          notificationCount: 0
+        });
+      }
       
       // Получаем информацию о редакторе (создателе привычки)
       const editorResult = await db.query(
@@ -137,7 +150,8 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
         [targetHabitId, userId]
       );
 
-      console.log(`📤 Sending edit notifications to ${membersResult.rows.length} members`);
+      notificationCount = membersResult.rows.length;
+      console.log(`📤 Sending edit notifications to ${notificationCount} members`);
 
       // 🔥 УЛУЧШЕННЫЕ СООБЩЕНИЯ: показываем, КТО редактировал и ЧТО изменилось
       for (const member of membersResult.rows) {
@@ -252,18 +266,21 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
 
         } catch (notifError) {
           console.error(`❌ Failed to notify member ${member.first_name}:`, notifError.message);
+          // Продолжаем отправку другим участникам
         }
       }
 
     } catch (notificationError) {
       console.error('❌ Notification error (non-critical):', notificationError.message);
+      // Не прерываем выполнение - привычка уже обновлена
     }
 
+    // ✅ УСПЕШНЫЙ ОТВЕТ
     res.json({
       success: true,
       habit: updatedHabit,
-      membersNotified: true,
-      notificationCount: membersResult ? membersResult.rows.length : 0
+      membersNotified: notificationCount > 0,
+      notificationCount: notificationCount
     });
 
   } catch (error) {
