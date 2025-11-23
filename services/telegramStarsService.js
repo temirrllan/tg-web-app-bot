@@ -55,7 +55,7 @@ class TelegramStarsService {
   static normalizePlanType(planType) {
     const mapping = {
       'year': '1_year',
-      'month': '6_months',
+      'month': 'month',
       // '3_months': '3_months',
       '6_months': '6_months',
       '1_year': '1_year'
