@@ -1287,7 +1287,7 @@ router.post('/subscription/activate', authMiddleware, async (req, res) => {
     const { plan } = req.body;
     
     const planMapping = {
-      'month': '6_months',
+      'month': 'months',
       'year': '1_year'
     };
     

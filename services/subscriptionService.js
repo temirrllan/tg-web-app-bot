@@ -4,6 +4,12 @@ const TelegramStarsService = require('./telegramStarsService');
 class SubscriptionService {
   // Конфигурация планов подписки
   static PLANS = {
+    'month': {
+    name: 'Premium for 1 Month',
+    duration_months: 1,
+    price_stars: 59,   // или 50/100 — поставь вашу правильную цену
+    features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
+  },
     '6_months': {
       name: 'Premium for 6 Months',
       duration_months: 6,
