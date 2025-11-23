@@ -13,33 +13,33 @@ class SubscriptionService {
     '6_months': {
       name: 'Premium for 6 Months',
       duration_months: 6,
-      price_stars: 600,
+      price_stars: 299,
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
       name: 'Premium for 1 Year',
       duration_months: 12,
-      price_stars: 350,
+      price_stars: 500,
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'Save 42%']
     },
-    '3_months': {
-      name: 'Premium for 3 Months',
-      duration_months: 3,
-      price_stars: 350,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
-    },
-    'lifetime': {
-      name: 'Lifetime Premium',
-      duration_months: null, // бессрочная
-      price_stars: 1500,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'One-time payment', 'Forever access']
-    },
-    'trial_7_days': {
-      name: 'Free Trial (7 days)',
-      duration_days: 7,
-      price_stars: 0,
-      features: ['Unlimited habits for 7 days', 'Try all premium features']
-    }
+    // '3_months': {
+    //   name: 'Premium for 3 Months',
+    //   duration_months: 3,
+    //   price_stars: 350,
+    //   features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
+    // },
+    // 'lifetime': {
+    //   name: 'Lifetime Premium',
+    //   duration_months: null, // бессрочная
+    //   price_stars: 1500,
+    //   features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'One-time payment', 'Forever access']
+    // },
+    // 'trial_7_days': {
+    //   name: 'Free Trial (7 days)',
+    //   duration_days: 7,
+    //   price_stars: 0,
+    //   features: ['Unlimited habits for 7 days', 'Try all premium features']
+    // }
   };
 
   // Создать новую подписку
