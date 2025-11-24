@@ -30,7 +30,7 @@ class TelegramStarsService {
       display_name: 'For 1 Year',
       duration_months: 12,
       price_stars: 500,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'Save 42%']
+      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'Save 30%']
     }
   };
 
