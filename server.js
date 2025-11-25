@@ -228,6 +228,7 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 module.exports.bot = bot;
 const ReminderService = require("./services/reminderService");
 const reminderService = new ReminderService(bot);
+const TelegramStarsService = require("./services/telegramStarsService");
 
 // ВАЖНО: Обработчик pre_checkout_query
 bot.on("pre_checkout_query", async (query) => {
