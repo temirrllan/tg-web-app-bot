@@ -28,7 +28,7 @@ const authController = {
       );
 
       let userData;
-      let isNewUser = false;
+      let isNewUser = false; // ✅ ВАЖНО: Инициализируем здесь явно
 
       if (checkUser.rows.length === 0) {
         // НОВЫЙ ПОЛЬЗОВАТЕЛЬ - определяем язык по Telegram
@@ -37,9 +37,6 @@ const authController = {
         if (user.language_code) {
           const langCode = user.language_code.toLowerCase().trim();
           console.log(`🌍 Telegram language code received: "${langCode}"`);
-          
-          // ИСПРАВЛЕННАЯ ЛОГИКА: проверяем точное совпадение и префиксы
-          // Важно: проверяем сначала точные совпадения, потом префиксы
           
           // Проверка на казахский
           if (langCode === 'kk' || langCode === 'kz' || 
@@ -68,7 +65,6 @@ const authController = {
           
           console.log(`📌 Final decision: language_code="${langCode}" → language="${initialLanguage}"`);
         } else {
-          // Если language_code не передан - используем английский
           console.log('⚠️ No language_code provided, defaulting to English');
           initialLanguage = 'en';
         }
@@ -79,7 +75,7 @@ const authController = {
           initialLanguage = 'en';
         }
         
-        console.log(`✅ Creating new user with language: ${initialLanguage} (from Telegram: ${user.language_code || 'not provided'})`);
+        console.log(`✅ Creating new user with language: ${initialLanguage}`);
         
         // Создаем нового пользователя с определенным языком
         const insertUser = await pool.query(
@@ -92,31 +88,27 @@ const authController = {
             user.username || null,
             user.first_name || '',
             user.last_name || '',
-            initialLanguage, // Устанавливаем определенный язык
+            initialLanguage,
             false,
             user.photo_url || null
           ]
         );
 
         userData = insertUser.rows[0];
-        isNewUser = true;
+        isNewUser = true; // ✅ Это новый пользователь
         
         console.log(`✅ New user created:`, {
           id: userData.id,
           telegram_id: userData.telegram_id,
           language: userData.language,
           first_name: userData.first_name,
-          telegram_language_code: user.language_code
+          isNewUser: true // ✅ Логируем
         });
         
-        // Проверяем, что язык сохранился корректно
-        if (userData.language !== initialLanguage) {
-          console.error(`❌ Language mismatch! Expected: ${initialLanguage}, Got: ${userData.language}`);
-        }
       } else {
         // СУЩЕСТВУЮЩИЙ ПОЛЬЗОВАТЕЛЬ
-        // НЕ меняем язык! Используем сохраненный в БД
         userData = checkUser.rows[0];
+        isNewUser = false; // ✅ ВАЖНО: Явно указываем false
         
         // Обновляем только базовые данные (НЕ язык!)
         const updateUser = await pool.query(
@@ -142,7 +134,8 @@ const authController = {
           id: userData.id,
           telegram_id: userData.telegram_id,
           saved_language: userData.language,
-          telegram_language: user.language_code
+          telegram_language: user.language_code,
+          isNewUser: false // ✅ Логируем
         });
       }
 
@@ -151,14 +144,13 @@ const authController = {
         console.error(`❌ Invalid language in DB: "${userData.language}", forcing English`);
         userData.language = 'en';
         
-        // Обновляем в БД если нужно
         await pool.query(
           'UPDATE users SET language = $1 WHERE id = $2',
           ['en', userData.id]
         );
       }
 
-      // ВАЖНО: Всегда возвращаем язык пользователя из БД
+      // ВАЖНО: Всегда возвращаем язык пользователя из БД И флаг isNewUser
       const responseData = {
         success: true,
         user: {
@@ -167,14 +159,19 @@ const authController = {
           username: userData.username,
           first_name: userData.first_name,
           last_name: userData.last_name,
-          language: userData.language, // Гарантированно корректный язык
+          language: userData.language,
           is_premium: userData.is_premium,
           photo_url: userData.photo_url
         },
-        isNewUser
+        isNewUser // ✅ КРИТИЧЕСКИ ВАЖНО: Возвращаем флаг
       };
       
-      console.log(`📤 Sending response with language: ${responseData.user.language}`);
+      console.log(`📤 Sending response:`, {
+        userId: responseData.user.id,
+        language: responseData.user.language,
+        isNewUser: responseData.isNewUser // ✅ Логируем
+      });
+      
       res.json(responseData);
       
     } catch (error) {
