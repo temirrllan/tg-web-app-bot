@@ -118,7 +118,7 @@ class SubscriptionService {
           subscription.id, 
           planType, 
           plan.name, 
-          plan.price_stars || 0,
+          plan.price_stars, // Используем цену из плана
           transactionId ? 'telegram_stars' : 'manual',
           startedAt,
           expiresAt
