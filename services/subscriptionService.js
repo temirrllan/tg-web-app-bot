@@ -44,11 +44,34 @@ class SubscriptionService {
       
       console.log(`📝 Creating subscription: User ${userId}, Plan ${planType}`);
       
-      // Деактивируем старые подписки
-      await client.query(
-        'UPDATE subscriptions SET is_active = false, cancelled_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND is_active = true',
+      // КРИТИЧНО: Деактивируем старые подписки ПЕРЕД созданием новой
+      const oldSubscriptions = await client.query(
+        'SELECT id FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
+      
+      if (oldSubscriptions.rows.length > 0) {
+        console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s)`);
+        
+        // Деактивируем каждую старую подписку
+        for (const oldSub of oldSubscriptions.rows) {
+          await client.query(
+            'UPDATE subscriptions SET is_active = false, cancelled_at = CURRENT_TIMESTAMP WHERE id = $1',
+            [oldSub.id]
+          );
+          
+          // Добавляем запись в историю о деактивации
+          await client.query(
+            `INSERT INTO subscriptions_history (
+              user_id, subscription_id, plan_type, plan_name, 
+              price_stars, action, status, created_at
+            ) SELECT user_id, id, plan_type, plan_name, price_stars, 
+              'deactivated', 'completed', CURRENT_TIMESTAMP
+            FROM subscriptions WHERE id = $1`,
+            [oldSub.id]
+          );
+        }
+      }
       
       // Вычисляем даты
       let expiresAt = null;
@@ -73,11 +96,11 @@ class SubscriptionService {
           userId,
           planType,
           plan.name,
-          plan.price_stars || 0,
+          plan.price_stars,
           startedAt,
           expiresAt,
           true,
-          planType === 'test', // test план = trial
+          planType === 'test',
           transactionId,
           transactionId ? 'telegram_stars' : 'manual'
         ]
@@ -106,7 +129,7 @@ class SubscriptionService {
       
       console.log(`✅ User ${userId} updated to premium`);
       
-      // История
+      // История - сохраняем реальную цену из плана
       await client.query(
         `INSERT INTO subscriptions_history (
           user_id, subscription_id, plan_type, plan_name, 
@@ -118,7 +141,7 @@ class SubscriptionService {
           subscription.id, 
           planType, 
           plan.name, 
-          plan.price_stars, // Используем цену из плана
+          plan.price_stars,
           transactionId ? 'telegram_stars' : 'manual',
           startedAt,
           expiresAt
@@ -264,6 +287,13 @@ class SubscriptionService {
     try {
       await client.query('BEGIN');
       
+      // Получаем активные подписки
+      const activeSubscriptions = await client.query(
+        'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
+        [userId]
+      );
+      
+      // Деактивируем все активные подписки
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, cancelled_at = CURRENT_TIMESTAMP 
@@ -271,6 +301,18 @@ class SubscriptionService {
         [userId]
       );
       
+      // Добавляем записи в историю
+      for (const sub of activeSubscriptions.rows) {
+        await client.query(
+          `INSERT INTO subscriptions_history (
+            user_id, subscription_id, plan_type, plan_name, 
+            price_stars, action, status, created_at
+          ) VALUES ($1, $2, $3, $4, $5, 'expired', 'completed', CURRENT_TIMESTAMP)`,
+          [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
+        );
+      }
+      
+      // Обновляем статус пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = false,
@@ -322,11 +364,13 @@ class SubscriptionService {
         };
       }
       
-      const subResult = await client.query(
-        'SELECT id, plan_type, plan_name FROM subscriptions WHERE user_id = $1 AND is_active = true LIMIT 1',
+      // Получаем информацию об активных подписках
+      const activeSubscriptions = await client.query(
+        'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
       
+      // Деактивируем все активные подписки
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, cancelled_at = CURRENT_TIMESTAMP
@@ -334,6 +378,18 @@ class SubscriptionService {
         [userId]
       );
       
+      // Добавляем записи в историю для каждой отменённой подписки
+      for (const sub of activeSubscriptions.rows) {
+        await client.query(
+          `INSERT INTO subscriptions_history (
+            user_id, subscription_id, plan_type, plan_name, 
+            price_stars, action, status, cancelled_at, created_at
+          ) VALUES ($1, $2, $3, $4, $5, 'cancelled', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
+        );
+      }
+      
+      // Обновляем статус пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = false,
@@ -344,20 +400,9 @@ class SubscriptionService {
         [userId]
       );
       
-      if (subResult.rows.length > 0) {
-        const sub = subResult.rows[0];
-        await client.query(
-          `INSERT INTO subscriptions_history (
-            user_id, subscription_id, plan_type, plan_name, 
-            price_stars, action, status, cancelled_at, created_at
-          ) VALUES ($1, $2, $3, $4, 0, 'cancelled', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [userId, sub.id, sub.plan_type, sub.plan_name]
-        );
-      }
-      
       await client.query('COMMIT');
       
-      console.log(`✅ Subscription cancelled for user ${userId}`);
+      console.log(`✅ Subscription cancelled successfully for user ${userId}`);
       
       return {
         success: true,

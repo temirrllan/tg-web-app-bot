@@ -56,7 +56,7 @@ class SubscriptionCronService {
       for (const sub of expiredResult.rows) {
         console.log(`Processing expired subscription for user ${sub.user_id}`);
         
-       // Деактивируем подписку
+        // Деактивируем подписку
         await client.query(
           'UPDATE subscriptions SET is_active = false WHERE id = $1',
           [sub.subscription_id]
@@ -77,8 +77,8 @@ class SubscriptionCronService {
           `INSERT INTO subscriptions_history (
             user_id, subscription_id, plan_type, plan_name, 
             price_stars, action, status, created_at
-          ) VALUES ($1, $2, $3, $4, 0, 'expired', 'completed', CURRENT_TIMESTAMP)`,
-          [sub.user_id, sub.subscription_id, sub.plan_type, sub.plan_name]
+          ) VALUES ($1, $2, $3, $4, $5, 'expired', 'completed', CURRENT_TIMESTAMP)`,
+          [sub.user_id, sub.subscription_id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
         );
         
         console.log(`✅ Subscription ${sub.subscription_id} expired for user ${sub.user_id}`);
