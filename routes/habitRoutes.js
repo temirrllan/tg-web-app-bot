@@ -8,7 +8,7 @@ const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
 const db = require('../config/database');
 const SubscriptionService = require('../services/subscriptionService');
-
+const checkHabitLock = require('../middleware/checkHabitLock');
 // Категории
 router.get('/categories', categoryController.getAll);
 
@@ -19,7 +19,10 @@ router.use(authMiddleware);
 router.post('/habits', createHabitLimiter, checkSubscriptionLimit, habitController.create);
 router.get('/habits', habitController.getAll);
 router.get('/habits/today', habitController.getTodayHabits);
-
+// Применяем middleware к операциям с привычками
+router.post('/habits/:id/mark', authMiddleware, checkHabitLock, markController.markHabit);
+router.delete('/habits/:id/mark', authMiddleware, checkHabitLock, markController.unmarkHabit);
+router.patch('/habits/:id', authMiddleware, checkHabitLock, habitController.update);
 // 🆕 ОБНОВЛЁННЫЙ РОУТ РЕДАКТИРОВАНИЯ с проверкой владельца и уведомлениями
 // В controllers/habitController.js замените роут PATCH на:
 

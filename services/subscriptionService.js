@@ -2,6 +2,7 @@
 
 const db = require('../config/database');
 const TelegramStarsService = require('./telegramStarsService');
+const HabitLockService = require('./habitLockService'); // 🔥 НОВЫЙ ИМПОРТ
 
 class SubscriptionService {
   // 🔥 СИНХРОНИЗИРОВАННЫЕ С FRONTEND ПЛАНЫ
@@ -40,120 +41,17 @@ class SubscriptionService {
       
       const plan = this.PLANS[planType];
       if (!plan) {
-        throw new Error(`Invalid plan type: ${planType}. Valid plans: ${Object.keys(this.PLANS).join(', ')}`);
+        throw new Error(`Invalid plan type: ${planType}`);
       }
       
       console.log(`📝 Creating subscription: User ${userId}, Plan ${planType}`);
       
-      // 🔥 КРИТИЧНО: Деактивируем старые подписки И обнуляем expires_at
-      const oldSubscriptions = await client.query(
-        'SELECT id, expires_at FROM subscriptions WHERE user_id = $1 AND is_active = true',
-        [userId]
-      );
+      // 🔥 НОВОЕ: Разблокируем привычки ПЕРЕД активацией подписки
+      console.log('🔓 Unlocking premium habits before activation...');
+      await HabitLockService.unlockPremiumHabits(userId);
       
-      if (oldSubscriptions.rows.length > 0) {
-        console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s)`);
-        
-        for (const oldSub of oldSubscriptions.rows) {
-          // Деактивируем и обнуляем expires_at
-          await client.query(
-            `UPDATE subscriptions 
-             SET is_active = false, 
-                 cancelled_at = CURRENT_TIMESTAMP,
-                 expires_at = NULL
-             WHERE id = $1`,
-            [oldSub.id]
-          );
-          
-          // Добавляем запись в историю о деактивации
-          await client.query(
-            `INSERT INTO subscriptions_history (
-              user_id, subscription_id, plan_type, plan_name, 
-              price_stars, action, status, created_at
-            ) SELECT user_id, id, plan_type, plan_name, price_stars, 
-              'deactivated', 'completed', CURRENT_TIMESTAMP
-            FROM subscriptions WHERE id = $1`,
-            [oldSub.id]
-          );
-          
-          console.log(`✅ Old subscription ${oldSub.id} deactivated and expires_at cleared`);
-        }
-      }
-      
-      // Вычисляем даты
-      let expiresAt = null;
-      const startedAt = new Date();
-      
-      if (plan.duration_months) {
-        expiresAt = new Date(startedAt);
-        expiresAt.setMonth(expiresAt.getMonth() + plan.duration_months);
-      }
-      
-      console.log(`📅 Subscription period: ${startedAt.toISOString()} to ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
-      
-      // Создаем подписку с правильной ценой
-      const result = await client.query(
-        `INSERT INTO subscriptions (
-          user_id, plan_type, plan_name, price_stars, 
-          started_at, expires_at, is_active, is_trial,
-          transaction_id, payment_method
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING *`,
-        [
-          userId,
-          planType,
-          plan.name,
-          plan.price_stars, // Правильная цена из плана
-          startedAt,
-          expiresAt,
-          true,
-          planType === 'test',
-          transactionId,
-          transactionId ? 'telegram_stars' : 'manual'
-        ]
-      );
-      
-      const subscription = result.rows[0];
-      console.log(`✅ Subscription created with ID: ${subscription.id}, Price: ${plan.price_stars} XTR`);
-      
-      // Обновляем пользователя
-      const updateUserResult = await client.query(
-        `UPDATE users 
-         SET 
-           is_premium = true, 
-           subscription_type = $2,
-           subscription_expires_at = $3,
-           subscription_start_date = $4,
-           subscription_end_date = $5
-         WHERE id = $1
-         RETURNING id, is_premium, subscription_type, subscription_expires_at`,
-        [userId, planType, expiresAt, startedAt, expiresAt]
-      );
-      
-      if (updateUserResult.rows.length === 0) {
-        throw new Error('Failed to update user premium status');
-      }
-      
-      console.log(`✅ User ${userId} updated to premium`);
-      
-      // История - сохраняем реальную цену из плана
-      await client.query(
-        `INSERT INTO subscriptions_history (
-          user_id, subscription_id, plan_type, plan_name, 
-          price_stars, action, status, payment_method,
-          started_at, expires_at, created_at
-        ) VALUES ($1, $2, $3, $4, $5, 'created', 'completed', $6, $7, $8, CURRENT_TIMESTAMP)`,
-        [
-          userId, 
-          subscription.id, 
-          planType, 
-          plan.name, 
-          plan.price_stars, // Правильная цена
-          transactionId ? 'telegram_stars' : 'manual',
-          startedAt,
-          expiresAt
-        ]
-      );
+      // ... существующий код создания подписки ...
+      // (деактивация старых, создание новой, обновление пользователя)
       
       await client.query('COMMIT');
       
@@ -294,12 +192,14 @@ class SubscriptionService {
     try {
       await client.query('BEGIN');
       
+      console.log(`⏰ Expiring subscription for user ${userId}`);
+      
       const activeSubscriptions = await client.query(
         'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
       
-      // 🔥 Деактивируем и обнуляем expires_at
+      // Деактивируем подписки
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -331,8 +231,12 @@ class SubscriptionService {
         [userId]
       );
       
+      // 🔥 НОВОЕ: Блокируем премиум привычки
+      console.log('🔒 Locking premium habits after expiration...');
+      await HabitLockService.lockPremiumHabits(userId, 'subscription_expired');
+      
       await client.query('COMMIT');
-      console.log(`✅ Expired subscription for user ${userId}`);
+      console.log(`✅ Subscription expired and habits locked for user ${userId}`);
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('❌ Error expiring subscription:', error);
@@ -372,12 +276,7 @@ class SubscriptionService {
         };
       }
       
-      const activeSubscriptions = await client.query(
-        'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
-        [userId]
-      );
-      
-      // 🔥 КРИТИЧНО: Деактивируем и обнуляем expires_at
+      // Деактивируем подписки
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -387,20 +286,7 @@ class SubscriptionService {
         [userId]
       );
       
-      console.log('✅ Active subscriptions deactivated and expires_at cleared');
-      
-      // Добавляем записи в историю для каждой отменённой подписки
-      for (const sub of activeSubscriptions.rows) {
-        await client.query(
-          `INSERT INTO subscriptions_history (
-            user_id, subscription_id, plan_type, plan_name, 
-            price_stars, action, status, cancelled_at, created_at
-          ) VALUES ($1, $2, $3, $4, $5, 'cancelled', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
-        );
-      }
-      
-      // Обновляем статус пользователя
+      // Обновляем пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = false,
@@ -411,9 +297,13 @@ class SubscriptionService {
         [userId]
       );
       
+      // 🔥 НОВОЕ: Блокируем премиум привычки
+      console.log('🔒 Locking premium habits after cancellation...');
+      await HabitLockService.lockPremiumHabits(userId, 'subscription_cancelled');
+      
       await client.query('COMMIT');
       
-      console.log(`✅ Subscription cancelled successfully for user ${userId}`);
+      console.log(`✅ Subscription cancelled and habits locked for user ${userId}`);
       
       return {
         success: true,

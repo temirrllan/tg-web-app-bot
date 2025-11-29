@@ -14,7 +14,8 @@
     "test-payment": "node scripts/test-payment-flow.js",
     "test-webhook": "node scripts/test-webhook.js",
     "pre-launch": "node scripts/pre-launch-check.js",
-    "verify-db": "node scripts/verify-subscription-tables.js"
+    "verify-db": "node scripts/verify-subscription-tables.js",
+    "migrate:premium": "node scripts/run-premium-habit-migration.js"
   },
   "keywords": [],
   "author": "",

@@ -89,7 +89,8 @@ const habitController = {
     console.log('Final habit data to create:', JSON.stringify(habitData, null, 2));
 
     const habit = await Habit.create(userId, habitData);
-    
+    const HabitLockService = require('../services/habitLockService');
+await HabitLockService.markHabitAsPremiumIfNeeded(userId, habit.id);
     if (!habit) {
       throw new Error('Failed to create habit in database');
     }
@@ -201,56 +202,125 @@ async getTodayHabits(req, res) {
     
     // Получаем привычки на сегодня по расписанию с их статусами
     const result = await db.query(
-      `SELECT 
-        h.id,
-        h.user_id,
-        h.category_id,
-        h.title,
-        h.goal,
-        h.schedule_type,
-        h.schedule_days,
-        h.reminder_time,
-        h.reminder_enabled,
-        h.is_bad_habit,
-        h.streak_current,
-        h.streak_best,
-        h.is_active,
-        h.parent_habit_id,
-        h.created_at,
-        h.updated_at,
-        c.name_ru, 
-        c.name_en, 
-        c.icon as category_icon, 
-        c.color,
-        COALESCE(hm.status, 'pending') as today_status,
-        hm.id as mark_id,
-        hm.marked_at,
-        -- Подсчитываем участников для связанных привычек
-        CASE 
-          WHEN h.parent_habit_id IS NOT NULL THEN
-            (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
-             WHERE habit_id IN (
-               SELECT id FROM habits 
-               WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
-             ) AND is_active = true)
-          ELSE
-            (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
-             WHERE habit_id IN (
-               SELECT id FROM habits 
-               WHERE parent_habit_id = h.id OR id = h.id
-             ) AND is_active = true)
-        END as members_count
-       FROM habits h
-       LEFT JOIN categories c ON h.category_id = c.id
-       LEFT JOIN habit_marks hm ON (
-         hm.habit_id = h.id 
-         AND hm.date = $3::date
-       )
-       WHERE 
-         h.user_id = $1 
-         AND h.is_active = true
-         AND $2 = ANY(h.schedule_days)
-       ORDER BY h.created_at DESC`,
+      `-- Обновлённые SQL запросы для habitController.js
+
+-- 1. getTodayHabits - добавляем информацию о блокировке
+SELECT 
+  h.id,
+  h.user_id,
+  h.category_id,
+  h.title,
+  h.goal,
+  h.schedule_type,
+  h.schedule_days,
+  h.reminder_time,
+  h.reminder_enabled,
+  h.is_bad_habit,
+  h.streak_current,
+  h.streak_best,
+  h.is_active,
+  h.parent_habit_id,
+  h.created_at,
+  h.updated_at,
+  -- 🔥 НОВЫЕ ПОЛЯ
+  h.is_premium_habit,
+  h.locked_at,
+  h.locked_reason,
+  c.name_ru, 
+  c.name_en, 
+  c.icon as category_icon, 
+  c.color,
+  COALESCE(hm.status, 'pending') as today_status,
+  hm.id as mark_id,
+  hm.marked_at,
+  -- Подсчёт участников
+  CASE 
+    WHEN h.parent_habit_id IS NOT NULL THEN
+      (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+       WHERE habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
+       ) AND is_active = true)
+    ELSE
+      (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+       WHERE habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = h.id OR id = h.id
+       ) AND is_active = true)
+  END as members_count
+FROM habits h
+LEFT JOIN categories c ON h.category_id = c.id
+LEFT JOIN habit_marks hm ON (
+  hm.habit_id = h.id 
+  AND hm.date = $3::date
+)
+WHERE 
+  h.user_id = $1 
+  AND h.is_active = true
+  AND $2 = ANY(h.schedule_days)
+ORDER BY 
+  -- Заблокированные привычки показываем внизу
+  CASE WHEN h.locked_at IS NULL THEN 0 ELSE 1 END,
+  h.created_at DESC;
+
+
+-- 2. getHabitsForDate - тоже добавляем блокировку
+SELECT 
+  h.id,
+  h.user_id,
+  h.category_id,
+  h.title,
+  h.goal,
+  h.schedule_type,
+  h.schedule_days,
+  h.reminder_time,
+  h.reminder_enabled,
+  h.is_bad_habit,
+  h.streak_current,
+  h.streak_best,
+  h.is_active,
+  h.parent_habit_id,
+  h.created_at,
+  h.updated_at,
+  -- 🔥 НОВЫЕ ПОЛЯ
+  h.is_premium_habit,
+  h.locked_at,
+  h.locked_reason,
+  c.name_ru, 
+  c.name_en, 
+  c.icon as category_icon, 
+  c.color,
+  COALESCE(hm.status, 'pending') as today_status,
+  hm.id as mark_id,
+  hm.marked_at,
+  CASE 
+    WHEN h.parent_habit_id IS NOT NULL THEN
+      (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+       WHERE habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
+       ) AND is_active = true)
+    ELSE
+      (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+       WHERE habit_id IN (
+         SELECT id FROM habits 
+         WHERE parent_habit_id = h.id OR id = h.id
+       ) AND is_active = true)
+  END as members_count
+FROM habits h
+LEFT JOIN categories c ON h.category_id = c.id
+LEFT JOIN habit_marks hm ON (
+  hm.habit_id = h.id 
+  AND hm.date = $3::date
+)
+WHERE 
+  h.user_id = $1 
+  AND h.is_active = true
+  AND $2 = ANY(h.schedule_days)
+ORDER BY 
+  -- Заблокированные привычки показываем внизу
+  CASE WHEN h.locked_at IS NULL THEN 0 ELSE 1 END,
+  h.created_at DESC;`,
       [userId, dayOfWeek, todayDate]
     );
     

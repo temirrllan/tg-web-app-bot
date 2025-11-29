@@ -55,7 +55,7 @@ class SubscriptionCronService {
       
       for (const sub of expiredResult.rows) {
         console.log(`Processing expired subscription for user ${sub.user_id}`);
-        
+        await SubscriptionService.expireUserSubscription(sub.user_id);
         // Деактивируем подписку
         await client.query(
           'UPDATE subscriptions SET is_active = false WHERE id = $1',
