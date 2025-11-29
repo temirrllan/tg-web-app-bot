@@ -3,125 +3,133 @@ const Habit = require('../models/Habit');
 const HabitMark = require('../models/HabitMark');
 // const Phrase = require('../models/Phrase');
 const db = require('../config/database');
-
+const TITLE_MAX_LENGTH = 15;
+const GOAL_MAX_LENGTH = 35;
 const habitController = {
   async create(req, res) {
-    console.log('🎯 habitController.create called');
-    
-    try {
-      // Проверка аутентификации
-      if (!req.user) {
-        console.error('❌ No user in request');
-        return res.status(401).json({
-          success: false,
-          error: 'User not authenticated'
-        });
-      }
-
-      const userId = req.user.id;
-      const habitData = req.body;
-
-      console.log('Creating habit for user:', userId);
-      console.log('User details:', {
-        id: req.user.id,
-        username: req.user.username,
-        telegram_id: req.user.telegram_id
-      });
-      console.log('Habit data received:', JSON.stringify(habitData, null, 2));
-
-      // Валидация обязательных полей
-      if (!habitData.title || habitData.title.trim() === '') {
-        console.error('❌ Validation failed: title is required');
-        return res.status(400).json({
-          success: false,
-          error: 'Title is required'
-        });
-      }
-
-      if (!habitData.goal || habitData.goal.trim() === '') {
-        console.error('❌ Validation failed: goal is required');
-        return res.status(400).json({
-          success: false,
-          error: 'Goal is required'
-        });
-      }
-
-      // Обработка bad habit согласно ТЗ
-      if (habitData.is_bad_habit) {
-        console.log('📌 Processing bad habit - simplifying data');
-        habitData.schedule_type = 'daily';
-        habitData.schedule_days = [1, 2, 3, 4, 5, 6, 7];
-        habitData.reminder_enabled = false;
-        habitData.category_id = null;
-        habitData.reminder_time = null;
-      } else {
-        // Для обычных привычек проверяем дополнительные поля
-        if (!habitData.category_id) {
-          console.error('❌ Validation failed: category is required for good habits');
-          return res.status(400).json({
-            success: false,
-            error: 'Category is required for good habits'
-          });
-        }
-
-        // Проверяем расписание
-        if (!habitData.schedule_days || habitData.schedule_days.length === 0) {
-          console.log('⚠️ No schedule days provided, using default (all days)');
-          habitData.schedule_days = [1, 2, 3, 4, 5, 6, 7];
-        }
-
-        // Проверяем тип расписания
-        if (!habitData.schedule_type) {
-          console.log('⚠️ No schedule type provided, using default (daily)');
-          habitData.schedule_type = 'daily';
-        }
-      }
-
-      console.log('Final habit data to create:', JSON.stringify(habitData, null, 2));
-
-      // Создаем привычку
-      const habit = await Habit.create(userId, habitData);
-      
-      if (!habit) {
-        throw new Error('Failed to create habit in database');
-      }
-
-      console.log('✅ Habit created successfully:', {
-        id: habit.id,
-        title: habit.title,
-        user_id: habit.user_id
-      });
-      
-      res.status(201).json({
-        success: true,
-        habit
-      });
-    } catch (error) {
-      console.error('💥 Create habit error:', error.message);
-      console.error('Error stack:', error.stack);
-      
-      // Проверяем специфические ошибки базы данных
-      if (error.code === '23505') { // Unique violation
-        return res.status(400).json({ 
-          success: false, 
-          error: 'A habit with this name already exists'
-        });
-      }
-      
-      if (error.code === '23503') { // Foreign key violation
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Invalid category selected'
-        });
-      }
-      
-      res.status(500).json({ 
-        success: false, 
-        error: error.message || 'Failed to create habit',
-        details: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+  console.log('🎯 habitController.create called');
+  
+  try {
+    if (!req.user) {
+      console.error('❌ No user in request');
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
       });
     }
-  },
+
+    const userId = req.user.id;
+    const habitData = req.body;
+
+    console.log('Creating habit for user:', userId);
+    console.log('Habit data received:', JSON.stringify(habitData, null, 2));
+
+    // 🆕 Валидация длины title
+    if (!habitData.title || habitData.title.trim() === '') {
+      console.error('❌ Validation failed: title is required');
+      return res.status(400).json({
+        success: false,
+        error: 'Title is required'
+      });
+    }
+
+    if (habitData.title.length > TITLE_MAX_LENGTH) {
+      console.error(`❌ Validation failed: title too long (${habitData.title.length}/${TITLE_MAX_LENGTH})`);
+      return res.status(400).json({
+        success: false,
+        error: `Title must be ${TITLE_MAX_LENGTH} characters or less`
+      });
+    }
+
+    // 🆕 Валидация длины goal
+    if (!habitData.goal || habitData.goal.trim() === '') {
+      console.error('❌ Validation failed: goal is required');
+      return res.status(400).json({
+        success: false,
+        error: 'Goal is required'
+      });
+    }
+
+    if (habitData.goal.length > GOAL_MAX_LENGTH) {
+      console.error(`❌ Validation failed: goal too long (${habitData.goal.length}/${GOAL_MAX_LENGTH})`);
+      return res.status(400).json({
+        success: false,
+        error: `Goal must be ${GOAL_MAX_LENGTH} characters or less`
+      });
+    }
+
+    // Обработка bad habit согласно ТЗ
+    if (habitData.is_bad_habit) {
+      console.log('📌 Processing bad habit - simplifying data');
+      habitData.schedule_type = 'daily';
+      habitData.schedule_days = [1, 2, 3, 4, 5, 6, 7];
+      habitData.reminder_enabled = false;
+      habitData.category_id = null;
+      habitData.reminder_time = null;
+    } else {
+      if (!habitData.category_id) {
+        console.error('❌ Validation failed: category is required for good habits');
+        return res.status(400).json({
+          success: false,
+          error: 'Category is required for good habits'
+        });
+      }
+
+      if (!habitData.schedule_days || habitData.schedule_days.length === 0) {
+        console.log('⚠️ No schedule days provided, using default (all days)');
+        habitData.schedule_days = [1, 2, 3, 4, 5, 6, 7];
+      }
+
+      if (!habitData.schedule_type) {
+        console.log('⚠️ No schedule type provided, using default (daily)');
+        habitData.schedule_type = 'daily';
+      }
+    }
+
+    console.log('Final habit data to create:', JSON.stringify(habitData, null, 2));
+
+    const habit = await Habit.create(userId, habitData);
+    
+    if (!habit) {
+      throw new Error('Failed to create habit in database');
+    }
+
+    console.log('✅ Habit created successfully:', {
+      id: habit.id,
+      title: habit.title,
+      user_id: habit.user_id
+    });
+    
+    res.status(201).json({
+      success: true,
+      habit
+    });
+  } catch (error) {
+    console.error('💥 Create habit error:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    if (error.code === '23505') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'A habit with this name already exists'
+      });
+    }
+    
+    if (error.code === '23503') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid category selected'
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to create habit',
+      details: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+    });
+  }
+}
+  ,
 
   async getAll(req, res) {
     console.log('🎯 habitController.getAll called');
@@ -296,70 +304,90 @@ async getTodayHabits(req, res) {
   }
 },
 
-  async update(req, res) {
-    console.log('🎯 habitController.update called');
-    
-    try {
-      if (!req.user) {
-        console.error('❌ No user in request');
-        return res.status(401).json({
-          success: false,
-          error: 'User not authenticated'
-        });
-      }
-
-      const { id } = req.params;
-      const userId = req.user.id;
-      const updates = req.body;
-
-      console.log('Updating habit:', {
-        habitId: id,
-        userId: userId,
-        updates: updates
+  // Обновленный метод update с валидацией длины
+async update(req, res) {
+  console.log('🎯 habitController.update called');
+  
+  try {
+    if (!req.user) {
+      console.error('❌ No user in request');
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
       });
+    }
 
-      // Валидация обновляемых полей
-      if (updates.title !== undefined && (!updates.title || updates.title.trim() === '')) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const updates = req.body;
+
+    console.log('Updating habit:', {
+      habitId: id,
+      userId: userId,
+      updates: updates
+    });
+
+    // 🆕 Валидация title
+    if (updates.title !== undefined) {
+      if (!updates.title || updates.title.trim() === '') {
         return res.status(400).json({
           success: false,
           error: 'Title cannot be empty'
         });
       }
+      
+      if (updates.title.length > TITLE_MAX_LENGTH) {
+        return res.status(400).json({
+          success: false,
+          error: `Title must be ${TITLE_MAX_LENGTH} characters or less`
+        });
+      }
+    }
 
-      if (updates.goal !== undefined && (!updates.goal || updates.goal.trim() === '')) {
+    // 🆕 Валидация goal
+    if (updates.goal !== undefined) {
+      if (!updates.goal || updates.goal.trim() === '') {
         return res.status(400).json({
           success: false,
           error: 'Goal cannot be empty'
         });
       }
-
-      const habit = await Habit.update(id, userId, updates);
       
-      if (!habit) {
-        console.log('❌ Habit not found or user not authorized');
-        return res.status(404).json({ 
-          success: false, 
-          error: 'Habit not found' 
+      if (updates.goal.length > GOAL_MAX_LENGTH) {
+        return res.status(400).json({
+          success: false,
+          error: `Goal must be ${GOAL_MAX_LENGTH} characters or less`
         });
       }
+    }
 
-      console.log('✅ Habit updated successfully:', habit.id);
-
-      res.json({
-        success: true,
-        habit
-      });
-    } catch (error) {
-      console.error('💥 Update habit error:', error.message);
-      console.error('Error stack:', error.stack);
-      
-      res.status(500).json({ 
+    const habit = await Habit.update(id, userId, updates);
+    
+    if (!habit) {
+      console.log('❌ Habit not found or user not authorized');
+      return res.status(404).json({ 
         success: false, 
-        error: 'Failed to update habit',
-        details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+        error: 'Habit not found' 
       });
     }
-  },
+
+    console.log('✅ Habit updated successfully:', habit.id);
+
+    res.json({
+      success: true,
+      habit
+    });
+  } catch (error) {
+    console.error('💥 Update habit error:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to update habit',
+      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+},
 
   async delete(req, res) {
     console.log('🎯 habitController.delete called');
