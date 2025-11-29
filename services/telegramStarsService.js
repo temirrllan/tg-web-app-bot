@@ -1,8 +1,10 @@
+// services/telegramStarsService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+
 const db = require('../config/database');
 const crypto = require('crypto');
 
 class TelegramStarsService {
-  // 🔥 ПРАВИЛЬНЫЕ ТАРИФЫ - 4 плана (включая test)
+  // 🔥 ПРАВИЛЬНЫЕ ТАРИФЫ - все 4 плана с правильными ценами
   static PLANS = {
     'test': {
       name: 'Test Plan (1 Star)',
@@ -46,9 +48,7 @@ class TelegramStarsService {
     return plan.price_stars;
   }
 
-  // 🔥 УБИРАЕМ НОРМАЛИЗАЦИЮ - все планы обрабатываются как есть
   static normalizePlanType(planType) {
-    // Больше НЕ меняем планы - возвращаем как есть
     if (!this.PLANS[planType]) {
       console.error(`❌ Unknown plan type: ${planType}`);
       console.log('Valid plans:', Object.keys(this.PLANS));
@@ -63,7 +63,6 @@ class TelegramStarsService {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
     
-    // Валидируем план
     if (!this.PLANS[planType]) {
       console.error(`❌ Cannot generate payload for unknown plan: ${planType}`);
       throw new Error(`Invalid plan type: ${planType}`);
@@ -110,7 +109,6 @@ class TelegramStarsService {
     try {
       await client.query('BEGIN');
       
-      // Валидируем план
       if (!this.PLANS[planType]) {
         throw new Error(`Invalid plan type: ${planType}`);
       }
@@ -170,7 +168,6 @@ class TelegramStarsService {
     try {
       await client.query('BEGIN');
 
-      // Проверяем дубликаты
       const existingPayment = await client.query(
         'SELECT id, status FROM telegram_payments WHERE telegram_payment_charge_id = $1',
         [telegram_payment_charge_id]
@@ -186,7 +183,6 @@ class TelegramStarsService {
         };
       }
 
-      // Находим пользователя
       const userResult = await client.query(
         'SELECT id, telegram_id, first_name FROM users WHERE telegram_id = $1',
         [from_user_id.toString()]
@@ -204,7 +200,6 @@ class TelegramStarsService {
       const user = userResult.rows[0];
       console.log(`👤 Processing payment for user: ${user.first_name} (ID: ${user.id})`);
 
-      // Парсим payload
       let parsed;
       try {
         parsed = this.parseInvoicePayload(invoice_payload);
@@ -219,7 +214,6 @@ class TelegramStarsService {
       
       const planType = parsed.planType;
 
-      // Проверяем план
       if (!this.PLANS[planType]) {
         await client.query('ROLLBACK');
         console.error(`❌ Invalid plan type: ${planType}`);
@@ -232,13 +226,14 @@ class TelegramStarsService {
       const plan = this.PLANS[planType];
       console.log(`📦 Plan: ${plan.name} (${planType}), Expected: ${plan.price_stars} XTR, Received: ${total_amount} XTR`);
 
-      // Проверяем сумму
-      if (total_amount !== plan.price_stars) {
-        console.warn(`⚠️ Amount mismatch! Expected ${plan.price_stars}, got ${total_amount}`);
-        // Не блокируем, но логируем
+      // 🔥 КРИТИЧНО: Сохраняем РЕАЛЬНУЮ цену из платежа
+      const actualPrice = total_amount;
+
+      if (actualPrice !== plan.price_stars) {
+        console.warn(`⚠️ Amount mismatch! Expected ${plan.price_stars}, got ${actualPrice}`);
       }
 
-      // Сохраняем платеж
+      // Сохраняем платеж с РЕАЛЬНОЙ ценой
       await client.query(
         `INSERT INTO telegram_payments (
           user_id, telegram_payment_charge_id, provider_payment_charge_id,
@@ -248,17 +243,18 @@ class TelegramStarsService {
         DO UPDATE SET 
           status = 'completed',
           processed_at = CURRENT_TIMESTAMP,
+          total_amount = EXCLUDED.total_amount,
           provider_payment_charge_id = EXCLUDED.provider_payment_charge_id`,
         [
           user.id,
           telegram_payment_charge_id,
           provider_payment_charge_id,
           invoice_payload,
-          total_amount,
+          actualPrice, // 🔥 Реальная цена
           planType
         ]
       );
-      console.log(`✅ Payment record saved`);
+      console.log(`✅ Payment record saved with actual price: ${actualPrice} XTR`);
 
       // Вычисляем даты подписки
       let expiresAt = null;
@@ -271,13 +267,29 @@ class TelegramStarsService {
 
       console.log(`📅 Subscription: ${startedAt.toISOString()} → ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
-      // Деактивируем старые подписки
-      await client.query(
-        'UPDATE subscriptions SET is_active = false WHERE user_id = $1 AND is_active = true',
+      // 🔥 КРИТИЧНО: Деактивируем старые подписки И обновляем их expires_at
+      const oldSubscriptions = await client.query(
+        'SELECT id FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [user.id]
       );
 
-      // Создаём новую подписку
+      if (oldSubscriptions.rows.length > 0) {
+        console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s)`);
+        
+        // Деактивируем и обнуляем expires_at
+        await client.query(
+          `UPDATE subscriptions 
+           SET is_active = false, 
+               cancelled_at = CURRENT_TIMESTAMP,
+               expires_at = NULL
+           WHERE user_id = $1 AND is_active = true`,
+          [user.id]
+        );
+        
+        console.log('✅ Old subscriptions deactivated and expires_at cleared');
+      }
+
+      // Создаём новую подписку с РЕАЛЬНОЙ ценой
       const subscriptionResult = await client.query(
         `INSERT INTO subscriptions (
           user_id, plan_type, plan_name, price_stars, 
@@ -289,13 +301,13 @@ class TelegramStarsService {
           user.id,
           planType,
           plan.name,
-          total_amount,
+          actualPrice, // 🔥 Реальная цена
           startedAt,
           expiresAt,
           telegram_payment_charge_id
         ]
       );
-      console.log(`✅ Subscription created: ID ${subscriptionResult.rows[0].id}`);
+      console.log(`✅ Subscription created with actual price: ${actualPrice} XTR`);
 
       // Обновляем пользователя
       await client.query(
@@ -309,13 +321,13 @@ class TelegramStarsService {
       );
       console.log(`✅ User premium status updated`);
 
-      // История
+      // История с РЕАЛЬНОЙ ценой
       await client.query(
         `INSERT INTO subscriptions_history (
           user_id, subscription_id, plan_type, plan_name, price_stars, 
           action, status, payment_method, started_at, expires_at, created_at
         ) VALUES ($1, $2, $3, $4, $5, 'purchased', 'completed', 'telegram_stars', $6, $7, CURRENT_TIMESTAMP)`,
-        [user.id, subscriptionResult.rows[0].id, planType, plan.name, total_amount, startedAt, expiresAt]
+        [user.id, subscriptionResult.rows[0].id, planType, plan.name, actualPrice, startedAt, expiresAt]
       );
 
       await client.query('COMMIT');
@@ -323,7 +335,7 @@ class TelegramStarsService {
       console.log(`🎉 ========== PAYMENT PROCESSED SUCCESSFULLY ==========`);
       console.log(`User: ${user.first_name} (${user.id})`);
       console.log(`Plan: ${plan.name} (${planType})`);
-      console.log(`Amount: ${total_amount} XTR`);
+      console.log(`Amount: ${actualPrice} XTR`);
       console.log(`Valid until: ${expiresAt || 'LIFETIME'}`);
 
       return {

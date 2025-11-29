@@ -1,3 +1,5 @@
+// services/subscriptionService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+
 const db = require('../config/database');
 const TelegramStarsService = require('./telegramStarsService');
 
@@ -36,7 +38,6 @@ class SubscriptionService {
     try {
       await client.query('BEGIN');
       
-      // Проверяем план
       const plan = this.PLANS[planType];
       if (!plan) {
         throw new Error(`Invalid plan type: ${planType}. Valid plans: ${Object.keys(this.PLANS).join(', ')}`);
@@ -44,19 +45,23 @@ class SubscriptionService {
       
       console.log(`📝 Creating subscription: User ${userId}, Plan ${planType}`);
       
-      // КРИТИЧНО: Деактивируем старые подписки ПЕРЕД созданием новой
+      // 🔥 КРИТИЧНО: Деактивируем старые подписки И обнуляем expires_at
       const oldSubscriptions = await client.query(
-        'SELECT id FROM subscriptions WHERE user_id = $1 AND is_active = true',
+        'SELECT id, expires_at FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
       
       if (oldSubscriptions.rows.length > 0) {
         console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s)`);
         
-        // Деактивируем каждую старую подписку
         for (const oldSub of oldSubscriptions.rows) {
+          // Деактивируем и обнуляем expires_at
           await client.query(
-            'UPDATE subscriptions SET is_active = false, cancelled_at = CURRENT_TIMESTAMP WHERE id = $1',
+            `UPDATE subscriptions 
+             SET is_active = false, 
+                 cancelled_at = CURRENT_TIMESTAMP,
+                 expires_at = NULL
+             WHERE id = $1`,
             [oldSub.id]
           );
           
@@ -70,6 +75,8 @@ class SubscriptionService {
             FROM subscriptions WHERE id = $1`,
             [oldSub.id]
           );
+          
+          console.log(`✅ Old subscription ${oldSub.id} deactivated and expires_at cleared`);
         }
       }
       
@@ -84,7 +91,7 @@ class SubscriptionService {
       
       console.log(`📅 Subscription period: ${startedAt.toISOString()} to ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
       
-      // Создаем подписку
+      // Создаем подписку с правильной ценой
       const result = await client.query(
         `INSERT INTO subscriptions (
           user_id, plan_type, plan_name, price_stars, 
@@ -96,7 +103,7 @@ class SubscriptionService {
           userId,
           planType,
           plan.name,
-          plan.price_stars,
+          plan.price_stars, // Правильная цена из плана
           startedAt,
           expiresAt,
           true,
@@ -107,7 +114,7 @@ class SubscriptionService {
       );
       
       const subscription = result.rows[0];
-      console.log(`✅ Subscription created with ID: ${subscription.id}`);
+      console.log(`✅ Subscription created with ID: ${subscription.id}, Price: ${plan.price_stars} XTR`);
       
       // Обновляем пользователя
       const updateUserResult = await client.query(
@@ -141,7 +148,7 @@ class SubscriptionService {
           subscription.id, 
           planType, 
           plan.name, 
-          plan.price_stars,
+          plan.price_stars, // Правильная цена
           transactionId ? 'telegram_stars' : 'manual',
           startedAt,
           expiresAt
@@ -287,16 +294,17 @@ class SubscriptionService {
     try {
       await client.query('BEGIN');
       
-      // Получаем активные подписки
       const activeSubscriptions = await client.query(
         'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
       
-      // Деактивируем все активные подписки
+      // 🔥 Деактивируем и обнуляем expires_at
       await client.query(
         `UPDATE subscriptions 
-         SET is_active = false, cancelled_at = CURRENT_TIMESTAMP 
+         SET is_active = false, 
+             cancelled_at = CURRENT_TIMESTAMP,
+             expires_at = NULL
          WHERE user_id = $1 AND is_active = true`,
         [userId]
       );
@@ -364,19 +372,22 @@ class SubscriptionService {
         };
       }
       
-      // Получаем информацию об активных подписках
       const activeSubscriptions = await client.query(
         'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
       
-      // Деактивируем все активные подписки
+      // 🔥 КРИТИЧНО: Деактивируем и обнуляем expires_at
       await client.query(
         `UPDATE subscriptions 
-         SET is_active = false, cancelled_at = CURRENT_TIMESTAMP
+         SET is_active = false, 
+             cancelled_at = CURRENT_TIMESTAMP,
+             expires_at = NULL
          WHERE user_id = $1 AND is_active = true`,
         [userId]
       );
+      
+      console.log('✅ Active subscriptions deactivated and expires_at cleared');
       
       // Добавляем записи в историю для каждой отменённой подписки
       for (const sub of activeSubscriptions.rows) {
