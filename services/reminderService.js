@@ -212,7 +212,7 @@ Don't forget to mark your progress:`;
             { 
               text: '📱 Open App', 
               web_app: { 
-                url: process.env.WEBAPP_URL || process.env.FRONTEND_URL || 'https://lighthearted-phoenix-e42a4f.netlify.app'
+                url: process.env.WEBAPP_URL || process.env.FRONTEND_URL || 'https://habit-tracker-tma.vercel.app/'
               } 
             }
           ]

@@ -712,10 +712,10 @@ bot.on('message', async (msg) => {
       
       // 👋 ОБЫЧНОЕ ПРИВЕТСТВИЕ (если не было join или после обработки ошибки)
       const welcomeMessages = {
-        en: `👋 <b>Welcome to Habit Tracker!</b>\n\nI'll help you build good habits and achieve your goals.\n\n🎯 Track your progress daily\n👥 Share habits with friends\n📊 View detailed statistics\n⏰ Get reminders\n\nLet's start! 👇`,
-        ru: `👋 <b>Добро пожаловать в Habit Tracker!</b>\n\nЯ помогу вам развить полезные привычки и достичь целей.\n\n🎯 Отслеживайте прогресс каждый день\n👥 Делитесь привычками с друзьями\n📊 Смотрите детальную статистику\n⏰ Получайте напоминания\n\nДавайте начнём! 👇`,
-        kk: `👋 <b>Habit Tracker-ге қош келдіңіз!</b>\n\nМен сізге пайдалы әдеттерді қалыптастыруға және мақсаттарға жетуге көмектесемін.\n\n🎯 Күн сайын прогрессті қадағалаңыз\n👥 Достарыңызбен әдеттерді бөлісіңіз\n📊 Егжей-тегжейлі статистиканы қараңыз\n⏰ Еске салғыштар алыңыз\n\nБастайық! 👇`
-      };
+  en: `👋 <b>Welcome to Habit Tracker!</b>\n\nI'll help you build good habits and achieve your goals.\n\n🎯 Track your progress daily\n👥 Share habits with friends\n📊 View detailed statistics\n⏰ Get reminders\n\nLet's start! 👇`,
+  ru: `👋 <b>Добро пожаловать в Habit Tracker!</b>\n\nЯ помогу вам развить полезные привычки и достичь целей.\n\n🎯 Отслеживайте прогресс каждый день\n👥 Делитесь привычками с друзьями\n📊 Смотрите детальную статистику\n⏰ Получайте напоминания\n\nДавайте начнём! 👇`,
+  kk: `👋 <b>Habit Tracker-ге қош келдіңіз!</b>\n\nМен сізге пайдалы әдеттерді қалыптастыруға және мақсаттарға жетуге көмектесемін.\n\n🎯 Күн сайын прогрессті қадағалаңыз\n👥 Достарыңызбен әдеттерді бөлісіңіз\n📊 Егжей-тегжейлі статистиканы қараңыз\n⏰ Еске салғыштар алыңыз\n\nБастайық! 👇`
+};
       
       const openAppTexts = {
   en: '📱 Open Habit Tracker',
@@ -723,7 +723,7 @@ bot.on('message', async (msg) => {
   kk: '📱 Habit Tracker ашу'
 };
       
-      const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
+    const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
 const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
       
       // ✅ ЗАМЕНИТЕ НА ЭТО:
@@ -735,7 +735,8 @@ await bot.sendMessage(chatId, welcomeMessage, {
         text: openAppText, 
         web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
       }
-    ]]
+    ]],
+    // 🔥 УБИРАЕМ keyboard button полностью
   }
 });
       
@@ -746,7 +747,53 @@ await bot.sendMessage(chatId, welcomeMessage, {
     }
     return;
   }
+// После блока if (text.startsWith('/start')) { ... }
 
+// 🆕 Команда /app для быстрого открытия приложения
+if (text === '/app') {
+  console.log('📱 Processing /app command');
+  
+  try {
+    const userResult = await db.query(
+      'SELECT language FROM users WHERE telegram_id = $1',
+      [chatId.toString()]
+    );
+    
+    const userLanguage = userResult.rows.length > 0 
+      ? userResult.rows[0].language 
+      : 'en';
+    
+    const messages = {
+      en: '📱 <b>Open Habit Tracker</b>\n\nClick the button below to launch the app:',
+      ru: '📱 <b>Открыть Habit Tracker</b>\n\nНажмите кнопку ниже для запуска приложения:',
+      kk: '📱 <b>Habit Tracker ашу</b>\n\nҚосымшаны іске қосу үшін төмендегі батырманы басыңыз:'
+    };
+    
+    const openAppTexts = {
+      en: '🚀 Launch App',
+      ru: '🚀 Запустить приложение',
+      kk: '🚀 Қосымшаны іске қосу'
+    };
+    
+    await bot.sendMessage(chatId, messages[userLanguage] || messages['en'], {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { 
+            text: openAppTexts[userLanguage] || openAppTexts['en'],
+            web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
+          }
+        ]]
+      }
+    });
+    
+    console.log('✅ /app command processed');
+  } catch (error) {
+    console.error('❌ /app error:', error);
+    await bot.sendMessage(chatId, '❌ An error occurred. Please try /start');
+  }
+  return;
+}
   // Обработка других команд...
   if (text === '❓ Help' || text === '/help') {
     await bot.sendMessage(
