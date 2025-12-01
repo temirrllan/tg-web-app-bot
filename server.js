@@ -718,24 +718,26 @@ bot.on('message', async (msg) => {
       };
       
       const openAppTexts = {
-        en: '📱 Open Habit Tracker',
-        ru: '📱 Открыть Habit Tracker',
-        kk: '📱 Habit Tracker ашу'
-      };
+  en: '📱 Open Habit Tracker',
+  ru: '📱 Открыть Habit Tracker',
+  kk: '📱 Habit Tracker ашу'
+};
       
       const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
-      const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
+const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
       
-      await bot.sendMessage(chatId, welcomeMessage, {
-        parse_mode: 'HTML',
-        reply_markup: {
-          keyboard: [[{ 
-            text: openAppText, 
-            web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
-          }]],
-          resize_keyboard: true
-        }
-      });
+      // ✅ ЗАМЕНИТЕ НА ЭТО:
+await bot.sendMessage(chatId, welcomeMessage, {
+  parse_mode: 'HTML',
+  reply_markup: {
+    inline_keyboard: [[
+      { 
+        text: openAppText, 
+        web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
+      }
+    ]]
+  }
+});
       
       console.log('✅ Welcome message sent');
     } catch (error) {
