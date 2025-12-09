@@ -1,4 +1,4 @@
-// services/subscriptionService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// services/subscriptionService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ С ФИКСОМ ОТМЕНЫ
 
 const db = require('../config/database');
 const TelegramStarsService = require('./telegramStarsService');
@@ -45,27 +45,29 @@ class SubscriptionService {
       
       console.log(`📝 Creating subscription: User ${userId}, Plan ${planType}`);
       
-      // 🔥 КРИТИЧНО: Деактивируем старые подписки И обнуляем expires_at
+      // 🔥 КРИТИЧНО: Полностью деактивируем ВСЕ старые подписки
       const oldSubscriptions = await client.query(
-        'SELECT id, expires_at FROM subscriptions WHERE user_id = $1 AND is_active = true',
+        'SELECT id, expires_at, is_active FROM subscriptions WHERE user_id = $1',
         [userId]
       );
       
       if (oldSubscriptions.rows.length > 0) {
-        console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s)`);
+        console.log(`🔄 Found ${oldSubscriptions.rows.length} old subscription(s), deactivating ALL...`);
         
+        // 🔥 ВАЖНО: Деактивируем ВСЕ подписки (и активные, и неактивные)
+        await client.query(
+          `UPDATE subscriptions 
+           SET is_active = false, 
+               cancelled_at = CURRENT_TIMESTAMP,
+               expires_at = NULL
+           WHERE user_id = $1`,
+          [userId]
+        );
+        
+        console.log(`✅ ALL subscriptions for user ${userId} deactivated`);
+        
+        // Добавляем записи в историю о деактивации
         for (const oldSub of oldSubscriptions.rows) {
-          // Деактивируем и обнуляем expires_at
-          await client.query(
-            `UPDATE subscriptions 
-             SET is_active = false, 
-                 cancelled_at = CURRENT_TIMESTAMP,
-                 expires_at = NULL
-             WHERE id = $1`,
-            [oldSub.id]
-          );
-          
-          // Добавляем запись в историю о деактивации
           await client.query(
             `INSERT INTO subscriptions_history (
               user_id, subscription_id, plan_type, plan_name, 
@@ -76,7 +78,7 @@ class SubscriptionService {
             [oldSub.id]
           );
           
-          console.log(`✅ Old subscription ${oldSub.id} deactivated and expires_at cleared`);
+          console.log(`✅ History record created for subscription ${oldSub.id}`);
         }
       }
       
@@ -103,7 +105,7 @@ class SubscriptionService {
           userId,
           planType,
           plan.name,
-          plan.price_stars, // Правильная цена из плана
+          plan.price_stars,
           startedAt,
           expiresAt,
           true,
@@ -148,7 +150,7 @@ class SubscriptionService {
           subscription.id, 
           planType, 
           plan.name, 
-          plan.price_stars, // Правильная цена
+          plan.price_stars,
           transactionId ? 'telegram_stars' : 'manual',
           startedAt,
           expiresAt
@@ -341,6 +343,7 @@ class SubscriptionService {
     }
   }
   
+  // 🔥 ИСПРАВЛЕННЫЙ МЕТОД cancelSubscription
   static async cancelSubscription(userId) {
     const client = await db.getClient();
     
@@ -364,40 +367,54 @@ class SubscriptionService {
       
       const user = userResult.rows[0];
       
-      if (!user.is_premium) {
-        await client.query('ROLLBACK');
-        return {
-          success: false,
-          error: 'No active subscription found'
-        };
-      }
-      
-      const activeSubscriptions = await client.query(
-        'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1 AND is_active = true',
+      // 🔥 КРИТИЧНО: Получаем ВСЕ подписки пользователя (не только активные)
+      const allSubscriptions = await client.query(
+        'SELECT id, plan_type, plan_name, price_stars, is_active FROM subscriptions WHERE user_id = $1',
         [userId]
       );
       
-      // 🔥 КРИТИЧНО: Деактивируем и обнуляем expires_at
-      await client.query(
+      console.log(`📊 Found ${allSubscriptions.rows.length} total subscriptions for user ${userId}:`);
+      allSubscriptions.rows.forEach(sub => {
+        console.log(`  - ID: ${sub.id}, Active: ${sub.is_active}, Plan: ${sub.plan_type}`);
+      });
+      
+      if (allSubscriptions.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: 'No subscriptions found for this user'
+        };
+      }
+      
+      // 🔥 ВАЖНО: Деактивируем ВСЕ подписки (не только активные)
+      const updateResult = await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
              cancelled_at = CURRENT_TIMESTAMP,
              expires_at = NULL
-         WHERE user_id = $1 AND is_active = true`,
+         WHERE user_id = $1
+         RETURNING id, plan_type`,
         [userId]
       );
       
-      console.log('✅ Active subscriptions deactivated and expires_at cleared');
+      console.log(`✅ Deactivated ${updateResult.rows.length} subscription(s)`);
       
-      // Добавляем записи в историю для каждой отменённой подписки
-      for (const sub of activeSubscriptions.rows) {
-        await client.query(
-          `INSERT INTO subscriptions_history (
-            user_id, subscription_id, plan_type, plan_name, 
-            price_stars, action, status, cancelled_at, created_at
-          ) VALUES ($1, $2, $3, $4, $5, 'cancelled', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
-        );
+      // Добавляем записи в историю для ВСЕХ подписок
+      for (const sub of allSubscriptions.rows) {
+        try {
+          await client.query(
+            `INSERT INTO subscriptions_history (
+              user_id, subscription_id, plan_type, plan_name, 
+              price_stars, action, status, cancelled_at, created_at
+            ) VALUES ($1, $2, $3, $4, $5, 'cancelled', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
+          );
+          
+          console.log(`✅ History record created for subscription ${sub.id}`);
+        } catch (histError) {
+          console.error(`⚠️ Failed to create history record for subscription ${sub.id}:`, histError.message);
+          // Не прерываем транзакцию, продолжаем
+        }
       }
       
       // Обновляем статус пользователя
@@ -414,15 +431,24 @@ class SubscriptionService {
       await client.query('COMMIT');
       
       console.log(`✅ Subscription cancelled successfully for user ${userId}`);
+      console.log(`📝 Total subscriptions deactivated: ${updateResult.rows.length}`);
       
       return {
         success: true,
-        message: 'Subscription cancelled successfully'
+        message: 'Subscription cancelled successfully',
+        deactivatedCount: updateResult.rows.length
       };
       
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('❌ Error cancelling subscription:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        detail: error.detail,
+        constraint: error.constraint
+      });
+      
       return {
         success: false,
         error: error.message || 'Failed to cancel subscription'

@@ -1,4 +1,4 @@
-// services/telegramStarsService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// services/telegramStarsService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ С ФИКСОМ ДУБЛИКАТОВ
 
 const db = require('../config/database');
 const crypto = require('crypto');
@@ -10,7 +10,7 @@ class TelegramStarsService {
       name: 'Test Plan (1 Star)',
       display_name: 'Test Only',
       duration_months: 1,
-      price_stars: 1, // Тестовая цена
+      price_stars: 1,
       features: ['Testing purposes only', 'Will be 59+ Stars in production']
     },
     'month': {
@@ -226,7 +226,6 @@ class TelegramStarsService {
       const plan = this.PLANS[planType];
       console.log(`📦 Plan: ${plan.name} (${planType}), Expected: ${plan.price_stars} XTR, Received: ${total_amount} XTR`);
 
-      // 🔥 КРИТИЧНО: Сохраняем РЕАЛЬНУЮ цену из платежа
       const actualPrice = total_amount;
 
       if (actualPrice !== plan.price_stars) {
@@ -250,7 +249,7 @@ class TelegramStarsService {
           telegram_payment_charge_id,
           provider_payment_charge_id,
           invoice_payload,
-          actualPrice, // 🔥 Реальная цена
+          actualPrice,
           planType
         ]
       );
@@ -267,26 +266,26 @@ class TelegramStarsService {
 
       console.log(`📅 Subscription: ${startedAt.toISOString()} → ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
-      // 🔥 КРИТИЧНО: Деактивируем старые подписки И обновляем их expires_at
+      // 🔥 КРИТИЧНО: Деактивируем ВСЕ старые подписки (не только активные)
       const oldSubscriptions = await client.query(
-        'SELECT id FROM subscriptions WHERE user_id = $1 AND is_active = true',
+        'SELECT id FROM subscriptions WHERE user_id = $1',
         [user.id]
       );
 
       if (oldSubscriptions.rows.length > 0) {
-        console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s)`);
+        console.log(`🔄 Deactivating ALL ${oldSubscriptions.rows.length} old subscription(s)...`);
         
-        // Деактивируем и обнуляем expires_at
+        // Деактивируем ВСЕ и обнуляем expires_at
         await client.query(
           `UPDATE subscriptions 
            SET is_active = false, 
                cancelled_at = CURRENT_TIMESTAMP,
                expires_at = NULL
-           WHERE user_id = $1 AND is_active = true`,
+           WHERE user_id = $1`,
           [user.id]
         );
         
-        console.log('✅ Old subscriptions deactivated and expires_at cleared');
+        console.log('✅ ALL old subscriptions deactivated and expires_at cleared');
       }
 
       // Создаём новую подписку с РЕАЛЬНОЙ ценой
@@ -301,7 +300,7 @@ class TelegramStarsService {
           user.id,
           planType,
           plan.name,
-          actualPrice, // 🔥 Реальная цена
+          actualPrice,
           startedAt,
           expiresAt,
           telegram_payment_charge_id
