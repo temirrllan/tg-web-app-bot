@@ -5,12 +5,12 @@ const HabitLockService = require('./habitLockService');
 
 class SubscriptionService {
   static PLANS = {
-    'test': {
-      name: 'Test Plan (1 Star)',
-      duration_months: 1,
-      price_stars: 1,
-      features: ['Testing purposes only']
-    },
+    // 'test': {
+    //   name: 'Test Plan (1 Star)',
+    //   duration_months: 1,
+    //   price_stars: 1,
+    //   features: ['Testing purposes only']
+    // },
     'month': {
       name: 'Premium for 1 Month',
       duration_months: 1,
