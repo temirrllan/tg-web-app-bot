@@ -723,20 +723,23 @@ bot.on('message', async (msg) => {
   kk: '📱 Habit Tracker ашу'
 };
       
-    const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
+const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
 const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
       
       // ✅ ЗАМЕНИТЕ НА ЭТО:
+const webAppUrl = process.env.WEBAPP_URL || process.env.FRONTEND_URL;
+
+console.log('🔗 Sending button with URL:', webAppUrl);
+
 await bot.sendMessage(chatId, welcomeMessage, {
   parse_mode: 'HTML',
   reply_markup: {
     inline_keyboard: [[
       { 
         text: openAppText, 
-        web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
+        web_app: { url: webAppUrl }
       }
-    ]],
-    // 🔥 УБИРАЕМ keyboard button полностью
+    ]]
   }
 });
       
