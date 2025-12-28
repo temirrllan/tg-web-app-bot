@@ -198,7 +198,13 @@ class TelegramStarsService {
       }
 
       const user = userResult.rows[0];
-      console.log(`👤 Processing payment for user: ${user.first_name} (ID: ${user.id})`);
+      const internalUserId = user.id; // 🔥 ВНУТРЕННИЙ user_id из таблицы users
+
+console.log(`👤 Processing payment for user:`, {
+        telegram_id: from_user_id,
+        internal_user_id: internalUserId,
+        first_name: user.first_name
+      });
 
       let parsed;
       try {
@@ -245,7 +251,7 @@ class TelegramStarsService {
           total_amount = EXCLUDED.total_amount,
           provider_payment_charge_id = EXCLUDED.provider_payment_charge_id`,
         [
-          user.id,
+          internalUserId,
           telegram_payment_charge_id,
           provider_payment_charge_id,
           invoice_payload,
@@ -269,7 +275,7 @@ class TelegramStarsService {
       // 🔥 КРИТИЧНО: Деактивируем ВСЕ старые подписки (не только активные)
       const oldSubscriptions = await client.query(
         'SELECT id FROM subscriptions WHERE user_id = $1',
-        [user.id]
+        [internalUserId]
       );
 
       if (oldSubscriptions.rows.length > 0) {
@@ -282,7 +288,7 @@ class TelegramStarsService {
                cancelled_at = CURRENT_TIMESTAMP,
                expires_at = NULL
            WHERE user_id = $1`,
-          [user.id]
+          [internalUserId]
         );
         
         console.log('✅ ALL old subscriptions deactivated and expires_at cleared');
@@ -297,7 +303,7 @@ class TelegramStarsService {
         ) VALUES ($1, $2, $3, $4, $5, $6, true, false, 'telegram_stars', $7)
         RETURNING id`,
         [
-          user.id,
+          internalUserId,
           planType,
           plan.name,
           actualPrice,
@@ -309,16 +315,16 @@ class TelegramStarsService {
       console.log(`✅ Subscription created with actual price: ${actualPrice} XTR`);
 
       // Обновляем пользователя
-      await client.query(
+       const updateResult = await client.query(
         `UPDATE users 
          SET is_premium = true,
              subscription_type = $2,
              subscription_expires_at = $3,
              subscription_start_date = $4
-         WHERE id = $1`,
-        [user.id, planType, expiresAt, startedAt]
+         WHERE id = $1
+         RETURNING id, telegram_id, is_premium, subscription_type`,
+        [internalUserId, planType, expiresAt, startedAt] // 🔥 ВНУТРЕННИЙ user_id
       );
-      console.log(`✅ User premium status updated`);
 
       // История с РЕАЛЬНОЙ ценой
       await client.query(
@@ -339,7 +345,7 @@ class TelegramStarsService {
 
       return {
         success: true,
-        user_id: user.id,
+        user_id: internalUserId,
         subscription_id: subscriptionResult.rows[0].id,
         plan_type: planType,
         expires_at: expiresAt
