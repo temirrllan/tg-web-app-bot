@@ -348,6 +348,9 @@ bot.on("successful_payment", async (msg) => {
 // Фрагмент из server.js - обработчик bot.on('message')
 // Этот код заменяет существующий обработчик в вашем server.js
 
+// Фрагмент из server.js - bot.on('message') - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// Замени существующий обработчик на этот код
+
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
@@ -363,7 +366,7 @@ bot.on('message', async (msg) => {
     console.log('👋 Processing /start command');
     
     try {
-      // 🔥 КРИТИЧНО: Извлекаем параметр после /start
+      // 🔥 Извлекаем параметр после /start
       const params = text.split(' ');
       const startParam = params[1]; // Может быть join_XXXXX или undefined
       
@@ -373,47 +376,20 @@ bot.on('message', async (msg) => {
         startParam 
       });
       
-      // Создаём или находим пользователя
-      let userResult = await db.query(
-        'SELECT id, language FROM users WHERE telegram_id = $1',
-        [chatId.toString()]
-      );
+      // 🔥 КРИТИЧНО: НЕ СОЗДАЕМ ПОЛЬЗОВАТЕЛЯ ЗДЕСЬ!
+      // Пользователь будет создан при первом открытии приложения через /auth/telegram
       
+      // Определяем язык для welcome message
       let userLanguage = 'en';
-      let userId = null;
+      const langCode = msg.from.language_code?.toLowerCase() || 'en';
       
-      if (userResult.rows.length === 0) {
-        const langCode = msg.from.language_code?.toLowerCase() || 'en';
-        
-        if (langCode === 'ru' || langCode.startsWith('ru-')) {
-          userLanguage = 'ru';
-        } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-')) {
-          userLanguage = 'kk';
-        }
-        
-        const insertResult = await db.query(
-          `INSERT INTO users (telegram_id, username, first_name, last_name, language, is_premium)
-           VALUES ($1, $2, $3, $4, $5, false)
-           RETURNING id, language`,
-          [
-            chatId.toString(),
-            msg.from.username || null,
-            msg.from.first_name || '',
-            msg.from.last_name || '',
-            userLanguage
-          ]
-        );
-        
-        userId = insertResult.rows[0].id;
-        userLanguage = insertResult.rows[0].language;
-        
-        console.log('✅ New user created:', { userId, userLanguage });
-      } else {
-        userId = userResult.rows[0].id;
-        userLanguage = userResult.rows[0].language || 'en';
-        
-        console.log('✅ Existing user found:', { userId, userLanguage });
+      if (langCode === 'ru' || langCode.startsWith('ru-')) {
+        userLanguage = 'ru';
+      } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-')) {
+        userLanguage = 'kk';
       }
+      
+      console.log('🌍 User language detected:', userLanguage);
       
       // 🎯 ОБРАБОТКА DEEP LINK - ПРИСОЕДИНЕНИЕ К ПРИВЫЧКЕ
       if (startParam && startParam.startsWith('join_')) {
@@ -423,9 +399,7 @@ bot.on('message', async (msg) => {
         
         // Получаем информацию о привычке
         const shareResult = await db.query(
-          `SELECT sh.*, h.title, h.goal, h.category_id, h.schedule_type, h.schedule_days, 
-                  h.reminder_time, h.reminder_enabled, h.is_bad_habit, h.user_id, h.creator_id,
-                  u.first_name as owner_name
+          `SELECT sh.*, h.title, h.goal, u.first_name as owner_name
            FROM shared_habits sh
            JOIN habits h ON sh.habit_id = h.id
            JOIN users u ON sh.owner_user_id = u.id
@@ -442,361 +416,139 @@ bot.on('message', async (msg) => {
             owner: habitInfo.owner_name
           });
           
-          // 🔥 АВТОМАТИЧЕСКИ ПРИСОЕДИНЯЕМ К ПРИВЫЧКЕ
-          try {
-            const client = await db.getClient();
-            
-            try {
-              await client.query('BEGIN');
-              
-              // Проверяем, не является ли пользователь владельцем
-              if (habitInfo.owner_user_id === userId) {
-                await client.query('ROLLBACK');
-                
-                const messages = {
-                  en: `ℹ️ <b>Already your habit</b>\n\nYou are the creator of "${habitInfo.title}".\n\nOpen the app to manage it! 👇`,
-                  ru: `ℹ️ <b>Это ваша привычка</b>\n\nВы создатель привычки "${habitInfo.title}".\n\nОткройте приложение для управления! 👇`,
-                  kk: `ℹ️ <b>Бұл сіздің әдетіңіз</b>\n\nСіз "${habitInfo.title}" әдетінің құрушысысыз.\n\nБасқару үшін қосымшаны ашыңыз! 👇`
-                };
-                
-                await bot.sendMessage(
-                  chatId,
-                  messages[userLanguage] || messages['en'],
+          // Отправляем приглашение с информацией о привычке
+          const inviteMessages = {
+            en: `🎉 <b>You've been invited!</b>\n\n${habitInfo.owner_name} wants you to join their habit:\n\n<b>"${habitInfo.title}"</b>\n📝 Goal: ${habitInfo.goal}\n\nOpen the app to join and start tracking together! 👇`,
+            ru: `🎉 <b>Вас пригласили!</b>\n\n${habitInfo.owner_name} хочет, чтобы вы присоединились к привычке:\n\n<b>"${habitInfo.title}"</b>\n📝 Цель: ${habitInfo.goal}\n\nОткройте приложение, чтобы присоединиться и начать отслеживать вместе! 👇`,
+            kk: `🎉 <b>Сізді шақырды!</b>\n\n${habitInfo.owner_name} сізді өз әдетіне қосылуға шақырады:\n\n<b>"${habitInfo.title}"</b>\n📝 Мақсат: ${habitInfo.goal}\n\nҚосылу және бірге бақылауды бастау үшін қосымшаны ашыңыз! 👇`
+          };
+          
+          const webAppUrl = `${process.env.WEBAPP_URL || process.env.FRONTEND_URL}?action=join&code=${shareCode}`;
+          
+          await bot.sendMessage(
+            chatId,
+            inviteMessages[userLanguage] || inviteMessages['en'],
+            {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[
                   {
-                    parse_mode: 'HTML',
-                    reply_markup: {
-                      inline_keyboard: [[
-                        {
-                          text: userLanguage === 'ru' ? '📱 Открыть приложение' : 
-                                userLanguage === 'kk' ? '📱 Қосымшаны ашу' : 
-                                '📱 Open App',
-                          web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                        }
-                      ]]
-                    }
+                    text: userLanguage === 'ru' ? '📱 Открыть и присоединиться' : 
+                          userLanguage === 'kk' ? '📱 Ашу және қосылу' : 
+                          '📱 Open & Join',
+                    web_app: { url: webAppUrl }
                   }
-                );
-                
-                console.log('⚠️ User tried to join own habit');
-                return;
+                ]]
               }
-              
-              // Проверяем существующее членство
-              const memberCheck = await client.query(
-                `SELECT hm.*, h.id as user_habit_id, h.is_active as habit_active
-                 FROM habit_members hm
-                 LEFT JOIN habits h ON (h.user_id = $1 AND (h.parent_habit_id = $2 OR h.id = $2))
-                 WHERE hm.user_id = $1
-                 AND hm.habit_id IN (
-                   SELECT id FROM habits 
-                   WHERE parent_habit_id = $2 OR id = $2
-                 )
-                 LIMIT 1`,
-                [userId, habitInfo.habit_id]
-              );
-              
-              if (memberCheck.rows.length > 0) {
-                const membership = memberCheck.rows[0];
-                
-                if (membership.is_active && membership.habit_active) {
-                  await client.query('ROLLBACK');
-                  
-                  const messages = {
-                    en: `✅ <b>Already joined!</b>\n\nYou are already a member of "${habitInfo.title}".\n\nOpen the app to track together! 👇`,
-                    ru: `✅ <b>Уже участник!</b>\n\nВы уже участвуете в привычке "${habitInfo.title}".\n\nОткройте приложение! 👇`,
-                    kk: `✅ <b>Қосылған!</b>\n\nСіз "${habitInfo.title}" әдетінің қатысушысысыз.\n\nҚосымшаны ашыңыз! 👇`
-                  };
-                  
-                  await bot.sendMessage(
-                    chatId,
-                    messages[userLanguage] || messages['en'],
-                    {
-                      parse_mode: 'HTML',
-                      reply_markup: {
-                        inline_keyboard: [[
-                          {
-                            text: userLanguage === 'ru' ? '📱 Открыть приложение' : 
-                                  userLanguage === 'kk' ? '📱 Қосымшаны ашу' : 
-                                  '📱 Open App',
-                            web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                          }
-                        ]]
-                      }
-                    }
-                  );
-                  
-                  console.log('ℹ️ User is already a member');
-                  return;
-                }
-              }
-              
-              // 🆕 СОЗДАЁМ КОПИЮ ПРИВЫЧКИ ДЛЯ НОВОГО УЧАСТНИКА
-              const creatorId = habitInfo.creator_id || habitInfo.user_id;
-              
-              console.log('➕ Creating habit copy for user:', {
-                userId,
-                creatorId,
-                parentHabitId: habitInfo.habit_id
-              });
-              
-              const newHabitResult = await client.query(
-                `INSERT INTO habits (
-                  user_id, 
-                  creator_id, 
-                  category_id, 
-                  title, 
-                  goal, 
-                  schedule_type, 
-                  schedule_days, 
-                  reminder_time, 
-                  reminder_enabled, 
-                  is_bad_habit,
-                  parent_habit_id,
-                  is_active
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
-                RETURNING *`,
-                [
-                  userId,                          // user_id
-                  creatorId,                       // creator_id
-                  habitInfo.category_id,
-                  habitInfo.title,
-                  habitInfo.goal,
-                  habitInfo.schedule_type,
-                  habitInfo.schedule_days,
-                  habitInfo.reminder_time,
-                  habitInfo.reminder_enabled,
-                  habitInfo.is_bad_habit,
-                  habitInfo.habit_id              // parent_habit_id
-                ]
-              );
-              
-              const newHabit = newHabitResult.rows[0];
-              
-              console.log('✅ New habit created:', {
-                id: newHabit.id,
-                userId: newHabit.user_id,
-                creatorId: newHabit.creator_id,
-                parentHabitId: newHabit.parent_habit_id
-              });
-              
-              // Добавляем членства
-              await client.query(
-                `INSERT INTO habit_members (habit_id, user_id, is_active, joined_at)
-                 VALUES ($1, $2, true, CURRENT_TIMESTAMP)
-                 ON CONFLICT (habit_id, user_id) 
-                 DO UPDATE SET is_active = true, joined_at = CURRENT_TIMESTAMP`,
-                [habitInfo.habit_id, userId]
-              );
-              
-              await client.query(
-                `INSERT INTO habit_members (habit_id, user_id, is_active, joined_at)
-                 VALUES ($1, $2, true, CURRENT_TIMESTAMP)
-                 ON CONFLICT (habit_id, user_id) 
-                 DO UPDATE SET is_active = true, joined_at = CURRENT_TIMESTAMP`,
-                [newHabit.id, creatorId]
-              );
-              
-              await client.query('COMMIT');
-              
-              console.log('🎉 User successfully joined habit via deep link');
-              
-              // Отправляем уведомление создателю
-              try {
-                const creatorResult = await db.query(
-                  'SELECT telegram_id, language FROM users WHERE id = $1',
-                  [creatorId]
-                );
-                
-                if (creatorResult.rows.length > 0 && creatorResult.rows[0].telegram_id) {
-                  const creator = creatorResult.rows[0];
-                  const creatorLang = creator.language || 'en';
-                  
-                  const creatorMessages = {
-                    en: `👥 <b>New Friend Joined!</b>\n\n${msg.from.first_name} joined your habit:\n<b>"${habitInfo.title}"</b>\n\nNow you can motivate each other! 💪`,
-                    ru: `👥 <b>Новый друг присоединился!</b>\n\n${msg.from.first_name} присоединился к вашей привычке:\n<b>"${habitInfo.title}"</b>\n\nТеперь вы можете мотивировать друг друга! 💪`,
-                    kk: `👥 <b>Жаңа дос қосылды!</b>\n\n${msg.from.first_name} сіздің әдетіңізге қосылды:\n<b>"${habitInfo.title}"</b>\n\nЕнді бір-біріңізді мотивациялай аласыздар! 💪`
-                  };
-                  
-                  await bot.sendMessage(
-                    creator.telegram_id,
-                    creatorMessages[creatorLang] || creatorMessages['en'],
-                    {
-                      parse_mode: 'HTML',
-                      reply_markup: {
-                        inline_keyboard: [[
-                          {
-                            text: creatorLang === 'ru' ? '📱 Открыть приложение' : 
-                                  creatorLang === 'kk' ? '📱 Қосымшаны ашу' : 
-                                  '📱 Open App',
-                            web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                          }
-                        ]]
-                      }
-                    }
-                  );
-                  
-                  console.log('✅ Notification sent to creator');
-                }
-              } catch (notifError) {
-                console.error('⚠️ Failed to notify creator:', notifError.message);
-              }
-              
-              // Отправляем подтверждение новому участнику
-              const successMessages = {
-                en: `🎉 <b>Successfully Joined!</b>\n\nYou've joined "${habitInfo.title}"!\n\n📝 Goal: ${habitInfo.goal}\n\nOpen the app to start tracking together! 👇`,
-                ru: `🎉 <b>Успешно присоединились!</b>\n\nВы присоединились к привычке "${habitInfo.title}"!\n\n📝 Цель: ${habitInfo.goal}\n\nОткройте приложение, чтобы отслеживать вместе! 👇`,
-                kk: `🎉 <b>Сәтті қосылдыңыз!</b>\n\nСіз "${habitInfo.title}" әдетіне қосылдыңыз!\n\n📝 Мақсат: ${habitInfo.goal}\n\nБірге бақылау үшін қосымшаны ашыңыз! 👇`
-              };
-              
-              await bot.sendMessage(
-                chatId,
-                successMessages[userLanguage] || successMessages['en'],
-                {
-                  parse_mode: 'HTML',
-                  reply_markup: {
-                    inline_keyboard: [[
-                      {
-                        text: userLanguage === 'ru' ? '📱 Открыть приложение' : 
-                              userLanguage === 'kk' ? '📱 Қосымшаны ашу' : 
-                              '📱 Open App',
-                        web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                      }
-                    ]]
-                  }
-                }
-              );
-              
-              console.log('✅ Success message sent to new member');
-              return; // Завершаем обработку, не показываем обычное приветствие
-              
-            } catch (joinError) {
-              await client.query('ROLLBACK');
-              throw joinError;
-            } finally {
-              client.release();
             }
-            
-          } catch (joinError) {
-            console.error('❌ Failed to join habit:', joinError);
-            
-            const errorMessages = {
-              en: `❌ <b>Failed to join</b>\n\nCouldn't join the habit. The link might be invalid or expired.\n\nPlease ask your friend for a new link.`,
-              ru: `❌ <b>Не удалось присоединиться</b>\n\nНе получилось присоединиться к привычке. Ссылка может быть недействительной или истёкшей.\n\nПопросите друга отправить новую ссылку.`,
-              kk: `❌ <b>Қосылу мүмкін болмады</b>\n\nӘдетке қосылу мүмкін болмады. Сілтеме жарамсыз немесе мерзімі өткен болуы мүмкін.\n\nДосыңыздан жаңа сілтеме сұраңыз.`
-            };
-            
-            await bot.sendMessage(
-              chatId,
-              errorMessages[userLanguage] || errorMessages['en'],
-              {
-                parse_mode: 'HTML',
-                reply_markup: {
-                  inline_keyboard: [[
-                    {
-                      text: userLanguage === 'ru' ? '📱 Открыть приложение' : 
-                            userLanguage === 'kk' ? '📱 Қосымшаны ашу' : 
-                            '📱 Open App',
-                      web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL }
-                    }
-                  ]]
-                }
-              }
-            );
-            return;
-          }
+          );
+          
+          console.log('✅ Invitation message sent with deep link');
+          return; // Завершаем, не показываем обычное приветствие
         } else {
           console.log('⚠️ Share code not found:', shareCode);
           // Продолжаем как обычный /start
         }
       }
       
-      // 👋 ОБЫЧНОЕ ПРИВЕТСТВИЕ (если не было join или после обработки ошибки)
+      // 👋 ОБЫЧНОЕ ПРИВЕТСТВИЕ
       const welcomeMessages = {
-  en: `👋 <b>Welcome to Habit Tracker!</b>\n\nI'll help you build good habits and achieve your goals.\n\n🎯 Track your progress daily\n👥 Share habits with friends\n📊 View detailed statistics\n⏰ Get reminders\n\nLet's start! 👇`,
-  ru: `👋 <b>Добро пожаловать в Habit Tracker!</b>\n\nЯ помогу вам развить полезные привычки и достичь целей.\n\n🎯 Отслеживайте прогресс каждый день\n👥 Делитесь привычками с друзьями\n📊 Смотрите детальную статистику\n⏰ Получайте напоминания\n\nДавайте начнём! 👇`,
-  kk: `👋 <b>Habit Tracker-ге қош келдіңіз!</b>\n\nМен сізге пайдалы әдеттерді қалыптастыруға және мақсаттарға жетуге көмектесемін.\n\n🎯 Күн сайын прогрессті қадағалаңыз\n👥 Достарыңызбен әдеттерді бөлісіңіз\n📊 Егжей-тегжейлі статистиканы қараңыз\n⏰ Еске салғыштар алыңыз\n\nБастайық! 👇`
-};
+        en: `👋 <b>Welcome to Habit Tracker!</b>\n\nI'll help you build good habits and achieve your goals.\n\n🎯 Track your progress daily\n👥 Share habits with friends\n📊 View detailed statistics\n⏰ Get reminders\n\nLet's start! 👇`,
+        ru: `👋 <b>Добро пожаловать в Habit Tracker!</b>\n\nЯ помогу вам развить полезные привычки и достичь целей.\n\n🎯 Отслеживайте прогресс каждый день\n👥 Делитесь привычками с друзьями\n📊 Смотрите детальную статистику\n⏰ Получайте напоминания\n\nДавайте начнём! 👇`,
+        kk: `👋 <b>Habit Tracker-ге қош келдіңіз!</b>\n\nМен сізге пайдалы әдеттерді қалыптастыруға және мақсаттарға жетуге көмектесемін.\n\n🎯 Күн сайын прогрессті қадағалаңыз\n👥 Достарыңызбен әдеттерді бөлісіңіз\n📊 Егжей-тегжейлі статистиканы қараңыз\n⏰ Еске салғыштар алыңыз\n\nБастайық! 👇`
+      };
       
       const openAppTexts = {
-  en: '📱 Open Habit Tracker',
-  ru: '📱 Открыть Habit Tracker',
-  kk: '📱 Habit Tracker ашу'
-};
+        en: '📱 Open Habit Tracker',
+        ru: '📱 Открыть Habit Tracker',
+        kk: '📱 Habit Tracker ашу'
+      };
       
-const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
-const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
+      const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
+      const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
       
-      // ✅ ЗАМЕНИТЕ НА ЭТО:
-const webAppUrl = process.env.WEBAPP_URL || process.env.FRONTEND_URL;
-
-console.log('🔗 Sending button with URL:', webAppUrl);
-
-await bot.sendMessage(chatId, welcomeMessage, {
-  parse_mode: 'HTML',
-  reply_markup: {
-    inline_keyboard: [[
-      { 
-        text: openAppText, 
-        web_app: { url: webAppUrl }
-      }
-    ]]
-  }
-});
+      const webAppUrl = process.env.WEBAPP_URL || process.env.FRONTEND_URL;
       
-      console.log('✅ Welcome message sent');
+      console.log('🔗 Sending button with URL:', webAppUrl);
+      
+      await bot.sendMessage(chatId, welcomeMessage, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { 
+              text: openAppText, 
+              web_app: { url: webAppUrl }
+            }
+          ]]
+        }
+      });
+      
+      console.log('✅ Welcome message sent (user will be created on first app open)');
+      
     } catch (error) {
       console.error('❌ /start error:', error);
       await bot.sendMessage(chatId, '❌ An error occurred. Please try again later.');
     }
     return;
   }
-// После блока if (text.startsWith('/start')) { ... }
 
-// 🆕 Команда /app для быстрого открытия приложения
-if (text === '/app') {
-  console.log('📱 Processing /app command');
-  
-  try {
-    const userResult = await db.query(
-      'SELECT language FROM users WHERE telegram_id = $1',
-      [chatId.toString()]
-    );
+  // 🆕 Команда /app для быстрого открытия приложения
+  if (text === '/app') {
+    console.log('📱 Processing /app command');
     
-    const userLanguage = userResult.rows.length > 0 
-      ? userResult.rows[0].language 
-      : 'en';
-    
-    const messages = {
-      en: '📱 <b>Open Habit Tracker</b>\n\nClick the button below to launch the app:',
-      ru: '📱 <b>Открыть Habit Tracker</b>\n\nНажмите кнопку ниже для запуска приложения:',
-      kk: '📱 <b>Habit Tracker ашу</b>\n\nҚосымшаны іске қосу үшін төмендегі батырманы басыңыз:'
-    };
-    
-    const openAppTexts = {
-      en: '🚀 Launch App',
-      ru: '🚀 Запустить приложение',
-      kk: '🚀 Қосымшаны іске қосу'
-    };
-    
-    await bot.sendMessage(chatId, messages[userLanguage] || messages['en'], {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [[
-          { 
-            text: openAppTexts[userLanguage] || openAppTexts['en'],
-            web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
-          }
-        ]]
+    try {
+      // Проверяем язык пользователя из БД (если есть)
+      const userResult = await db.query(
+        'SELECT language FROM users WHERE telegram_id = $1',
+        [chatId.toString()]
+      );
+      
+      let userLanguage = 'en';
+      
+      if (userResult.rows.length > 0) {
+        userLanguage = userResult.rows[0].language || 'en';
+      } else {
+        // Если пользователя нет в БД, определяем язык из Telegram
+        const langCode = msg.from.language_code?.toLowerCase() || 'en';
+        if (langCode === 'ru' || langCode.startsWith('ru-')) {
+          userLanguage = 'ru';
+        } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-')) {
+          userLanguage = 'kk';
+        }
       }
-    });
-    
-    console.log('✅ /app command processed');
-  } catch (error) {
-    console.error('❌ /app error:', error);
-    await bot.sendMessage(chatId, '❌ An error occurred. Please try /start');
+      
+      const messages = {
+        en: '📱 <b>Open Habit Tracker</b>\n\nClick the button below to launch the app:',
+        ru: '📱 <b>Открыть Habit Tracker</b>\n\nНажмите кнопку ниже для запуска приложения:',
+        kk: '📱 <b>Habit Tracker ашу</b>\n\nҚосымшаны іске қосу үшін төмендегі батырманы басыңыз:'
+      };
+      
+      const openAppTexts = {
+        en: '🚀 Launch App',
+        ru: '🚀 Запустить приложение',
+        kk: '🚀 Қосымшаны іске қосу'
+      };
+      
+      await bot.sendMessage(chatId, messages[userLanguage] || messages['en'], {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { 
+              text: openAppTexts[userLanguage] || openAppTexts['en'],
+              web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
+            }
+          ]]
+        }
+      });
+      
+      console.log('✅ /app command processed');
+    } catch (error) {
+      console.error('❌ /app error:', error);
+      await bot.sendMessage(chatId, '❌ An error occurred. Please try /start');
+    }
+    return;
   }
-  return;
-}
+
   // Обработка других команд...
   if (text === '❓ Help' || text === '/help') {
     await bot.sendMessage(
