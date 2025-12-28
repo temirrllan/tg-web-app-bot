@@ -1,4 +1,4 @@
-// controllers/authController.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// controllers/authController.js - ФИНАЛЬНАЯ ВЕРСИЯ
 
 const pool = require('../config/database');
 
@@ -33,8 +33,9 @@ const authController = {
       let isNewUser = false; // ✅ По умолчанию false
 
       if (checkUser.rows.length === 0) {
-        // 🆕 НОВЫЙ ПОЛЬЗОВАТЕЛЬ
-        console.log('🆕 Creating NEW user');
+        // 🆕 НОВЫЙ ПОЛЬЗОВАТЕЛЬ - КРИТИЧЕСКИЙ БЛОК
+        console.log('🆕 ========== NEW USER DETECTED ==========');
+        console.log('🆕 Creating NEW user with telegram_id:', user.id);
         
         let initialLanguage = 'en';
         
@@ -95,19 +96,24 @@ const authController = {
         userData = insertUser.rows[0];
         isNewUser = true; // ✅ КРИТИЧНО: Это НОВЫЙ пользователь
         
-        console.log(`✅ New user created:`, {
-          id: userData.id,
-          telegram_id: userData.telegram_id,
-          language: userData.language,
-          first_name: userData.first_name,
-          isNewUser: true
-        });
+        console.log('🆕 ========== NEW USER CREATED ==========');
+        console.log('🆕 User ID:', userData.id);
+        console.log('🆕 Telegram ID:', userData.telegram_id);
+        console.log('🆕 Language:', userData.language);
+        console.log('🆕 isNewUser flag:', isNewUser);
+        console.log('🆕 ======================================');
         
       } else {
         // 👤 СУЩЕСТВУЮЩИЙ ПОЛЬЗОВАТЕЛЬ
-        console.log('👤 Existing user found');
+        console.log('👤 ========== EXISTING USER FOUND ==========');
+        console.log('👤 User ID:', checkUser.rows[0].id);
+        console.log('👤 Telegram ID:', checkUser.rows[0].telegram_id);
+        
         userData = checkUser.rows[0];
         isNewUser = false; // ✅ КРИТИЧНО: Это НЕ новый пользователь
+        
+        console.log('👤 isNewUser flag:', isNewUser);
+        console.log('👤 ==========================================');
         
         // Обновляем только базовые данные (НЕ язык!)
         const updateUser = await pool.query(
@@ -115,7 +121,8 @@ const authController = {
              username = COALESCE($2, username),
              first_name = COALESCE($3, first_name),
              last_name = COALESCE($4, last_name),
-             photo_url = COALESCE($5, photo_url)
+             photo_url = COALESCE($5, photo_url),
+             last_login_at = CURRENT_TIMESTAMP
            WHERE telegram_id = $1
            RETURNING *`,
           [
@@ -128,13 +135,6 @@ const authController = {
         );
 
         userData = updateUser.rows[0];
-        
-        console.log(`✅ Existing user logged in:`, {
-          id: userData.id,
-          telegram_id: userData.telegram_id,
-          language: userData.language,
-          isNewUser: false // ✅ Логируем что это НЕ новый
-        });
       }
 
       // Проверяем корректность языка
@@ -164,11 +164,12 @@ const authController = {
         isNewUser // ✅ true только для СОВСЕМ новых пользователей
       };
       
-      console.log(`📤 Sending response:`, {
-        userId: responseData.user.id,
-        language: responseData.user.language,
-        isNewUser: responseData.isNewUser
-      });
+      console.log('📤 ========== SENDING RESPONSE ==========');
+      console.log('📤 User ID:', responseData.user.id);
+      console.log('📤 Language:', responseData.user.language);
+      console.log('📤 isNewUser:', responseData.isNewUser);
+      console.log('📤 isNewUser type:', typeof responseData.isNewUser);
+      console.log('📤 =======================================');
       
       res.json(responseData);
       

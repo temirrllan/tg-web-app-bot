@@ -1,4 +1,4 @@
-// middleware/authMiddleware.js
+// middleware/authMiddleware.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
 
 const db = require('../config/database');
 const crypto = require('crypto');
@@ -69,7 +69,13 @@ module.exports = async function authMiddleware(req, res, next) {
       return next();
     }
 
-    // -------- 2) Авторизация по userId --------
+    // -------- 2) Пропускаем /auth/telegram - НЕ создаем пользователя здесь! --------
+    if (path === '/api/auth/telegram') {
+      console.log('⏭️ Skipping middleware for /auth/telegram - will be handled by authController');
+      return next();
+    }
+
+    // -------- 3) Авторизация по userId (для остальных эндпоинтов) --------
     const userId = req.headers['x-user-id'];
     
     if (userId) {
@@ -82,7 +88,7 @@ module.exports = async function authMiddleware(req, res, next) {
       return res.status(401).json({ success: false, error: 'Invalid user' });
     }
 
-    // -------- 3) Обработка initData --------
+    // -------- 4) Обработка initData (для остальных эндпоинтов) --------
     const initData = req.headers['x-telegram-init-data'] || req.headers['telegram-init-data'];
     const isProduction = process.env.NODE_ENV === 'production';
     
@@ -108,7 +114,7 @@ module.exports = async function authMiddleware(req, res, next) {
       return next();
     }
 
-    // -------- 4) Проверка подписи (только в production) --------
+    // -------- 5) Проверка подписи (только в production) --------
     if (isProduction) {
       const isValid = verifyTelegramWebAppData(initData);
       
@@ -123,7 +129,7 @@ module.exports = async function authMiddleware(req, res, next) {
       console.log('✅ Telegram signature verified');
     }
 
-    // -------- 5) Извлечение данных пользователя --------
+    // -------- 6) Извлечение данных пользователя --------
     try {
       const decoded = decodeURIComponent(initData);
       console.log('📝 InitData decoded, length:', decoded.length);
@@ -150,7 +156,7 @@ module.exports = async function authMiddleware(req, res, next) {
         username: tgUser.username
       });
       
-      // -------- 6) Поиск или создание пользователя --------
+      // -------- 7) Поиск пользователя (НЕ создаем!) --------
       const existing = await db.query(
         'SELECT * FROM users WHERE telegram_id = $1',
         [String(tgUser.id)]
@@ -158,43 +164,18 @@ module.exports = async function authMiddleware(req, res, next) {
 
       if (existing.rows.length > 0) {
         req.user = existing.rows[0];
-        console.log('✅ Existing user:', req.user.id);
+        console.log('✅ Existing user found:', req.user.id);
         return next();
       }
 
-      // Создаём нового пользователя
-      console.log('🆕 Creating new user');
-      
-      let language = 'en';
-      if (tgUser.language_code) {
-        const langCode = tgUser.language_code.toLowerCase();
-        if (langCode === 'ru' || langCode.startsWith('ru-')) {
-          language = 'ru';
-        } else if (langCode === 'kk' || langCode === 'kz' || langCode.startsWith('kk-')) {
-          language = 'kk';
-        }
-      }
-      
-      const insertResult = await db.query(
-        `INSERT INTO users (
-           telegram_id, username, first_name, last_name,
-           language, is_premium, photo_url
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [
-          String(tgUser.id),
-          tgUser.username || null,
-          tgUser.first_name || '',
-          tgUser.last_name || '',
-          language,
-          Boolean(tgUser.is_premium),
-          tgUser.photo_url || null,
-        ]
-      );
-      
-      req.user = insertResult.rows[0];
-      console.log('✅ New user created:', req.user.id);
-      return next();
+      // ❌ Пользователь не найден - возвращаем ошибку
+      // Пусть фронт отправит запрос на /auth/telegram для регистрации
+      console.log('⚠️ User not found, needs registration');
+      return res.status(401).json({
+        success: false,
+        error: 'User not found. Please authenticate first.',
+        needsRegistration: true
+      });
       
     } catch (parseError) {
       console.error('❌ Error parsing initData:', parseError);
@@ -215,4 +196,4 @@ module.exports = async function authMiddleware(req, res, next) {
       error: 'Authentication failed',
     });
   }
-};
+}
