@@ -46,17 +46,34 @@ const authController = {
               langCode.startsWith('kk-') || langCode.startsWith('kk_') ||
               langCode.startsWith('kz-') || langCode.startsWith('kz_')) {
             initialLanguage = 'kk';
+            console.log('✅ Detected Kazakh language');
           }
           else if (langCode === 'ru' || langCode.startsWith('ru-') || langCode.startsWith('ru_')) {
             initialLanguage = 'ru';
+            console.log('✅ Detected Russian language');
           }
           else if (langCode === 'en' || langCode.startsWith('en-') || langCode.startsWith('en_')) {
             initialLanguage = 'en';
+            console.log('✅ Detected English language');
           }
           else {
             initialLanguage = 'en';
+            console.log(`⚠️ Unknown language code "${langCode}", defaulting to English`);
           }
+          
+          console.log(`📌 Final decision: language_code="${langCode}" → language="${initialLanguage}"`);
+        } else {
+          console.log('⚠️ No language_code provided, defaulting to English');
+          initialLanguage = 'en';
         }
+        
+        // Дополнительная проверка перед сохранением
+        if (!['en', 'ru', 'kk'].includes(initialLanguage)) {
+          console.error(`❌ Invalid language "${initialLanguage}" detected, forcing English`);
+          initialLanguage = 'en';
+        }
+        
+        console.log(`✅ Creating new user with language: ${initialLanguage}`);
         
         // Создаем нового пользователя
         const insertUser = await pool.query(
@@ -98,8 +115,7 @@ const authController = {
              username = COALESCE($2, username),
              first_name = COALESCE($3, first_name),
              last_name = COALESCE($4, last_name),
-             photo_url = COALESCE($5, photo_url),
-             last_login = CURRENT_TIMESTAMP
+             photo_url = COALESCE($5, photo_url)
            WHERE telegram_id = $1
            RETURNING *`,
           [
