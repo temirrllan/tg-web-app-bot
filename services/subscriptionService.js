@@ -106,16 +106,16 @@ class SubscriptionService {
       
       // 🔥 ШАГ 4: Обновляем пользователя
       await client.query(
-        `UPDATE users 
-         SET 
-           is_premium = true, 
-           subscription_type = $2,
-           subscription_expires_at = $3,
-           subscription_start_date = $4,
-           subscription_end_date = $5
-         WHERE id = $1`,
-        [userId, planType, expiresAt, startedAt, expiresAt]
-      );
+  `UPDATE users 
+   SET 
+     is_premium = true, 
+     subscription_type = $2,
+     subscription_expires_at = $3,
+     subscription_start_date = $4,
+     subscription_end_date = $5
+   WHERE id = $1`,
+  [userId, planType, expiresAt, startedAt, expiresAt]
+);
       
       console.log(`✅ User ${userId} upgraded to premium`);
       
@@ -255,14 +255,14 @@ class SubscriptionService {
       
       // 🔥 ШАГ 4: Обновляем пользователя
       await client.query(
-        `UPDATE users 
-         SET is_premium = false,
-             subscription_type = NULL,
-             subscription_expires_at = NULL,
-             subscription_end_date = CURRENT_TIMESTAMP
-         WHERE id = $1`,
-        [userId]
-      );
+  `UPDATE users 
+   SET is_premium = false,
+       subscription_type = NULL,
+       subscription_expires_at = NULL,
+       subscription_end_date = CURRENT_TIMESTAMP
+   WHERE id = $1`,
+  [userId]
+);
       
       console.log(`✅ User ${userId} downgraded to free`);
       
