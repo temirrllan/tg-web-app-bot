@@ -6,13 +6,13 @@ const crypto = require('crypto');
 class TelegramStarsService {
   // 🔥 ПРАВИЛЬНЫЕ ТАРИФЫ - все 4 плана с правильными ценами
   static PLANS = {
-    // 'test': {
-    //   name: 'Test Plan (1 Star)',
-    //   display_name: 'Test Only',
-    //   duration_months: 1,
-    //   price_stars: 1,
-    //   features: ['Testing purposes only', 'Will be 59+ Stars in production']
-    // },
+    'test': {
+      name: 'Test Plan (1 Star)',
+      display_name: 'Test Only',
+      duration_months: 1,
+      price_stars: 1,
+      features: ['Testing purposes only', 'Will be 59+ Stars in production']
+    },
     'month': {
       name: 'Premium for 1 Month',
       display_name: 'For 1 Month',
