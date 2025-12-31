@@ -63,8 +63,20 @@ const markController = {
       console.log("✅ Date validation passed");
 
       // ВАЖНО: Проверяем, что отметка будет для правильной даты
+      // ВАЖНО: Проверяем существующую отметку
       const existingMark = await HabitMark.getMarkForDate(id, markDate);
       console.log("Existing mark for this date:", existingMark);
+      
+      // 🆕 ЗАЩИТА: Если статус уже такой же - не дублируем
+      if (existingMark && existingMark.status === status) {
+        console.log(`⚠️ Habit ${id} already has status "${status}" for ${markDate}, skipping duplicate`);
+        return res.json({
+          success: true,
+          mark: existingMark,
+          duplicate: true,
+          message: 'Status unchanged - already set'
+        });
+      }
 
       // Отмечаем привычку для конкретной даты
       const mark = await HabitMark.mark(id, markDate, status);
@@ -85,8 +97,9 @@ const markController = {
         success: true,
         mark: {
           ...mark,
-          date: markDate, // Гарантируем возврат правильной даты
+          date: markDate,
         },
+        wasUpdate: !!existingMark
       });
     } catch (error) {
       console.error("💥 Mark habit error:", error);
@@ -135,10 +148,12 @@ const markController = {
       console.log("Mark to delete:", existingMark);
 
       if (!existingMark) {
-        console.log("❌ No mark found for this date");
-        return res.status(404).json({
-          success: false,
-          error: "No mark found for this date",
+        console.log("❌ No mark found for this date - nothing to unmark");
+        return res.json({
+          success: true,
+          deleted: false,
+          date: date,
+          message: 'No mark to delete - already pending'
         });
       }
 
