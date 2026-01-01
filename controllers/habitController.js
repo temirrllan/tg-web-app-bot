@@ -176,133 +176,149 @@ const habitController = {
   },
 
 async getTodayHabits(req, res) {
-  console.log('🎯 habitController.getTodayHabits called');
-  
-  try {
-    if (!req.user) {
-      console.error('❌ No user in request');
-      return res.status(401).json({
-        success: false,
-        error: 'User not authenticated'
+    console.log('🎯 habitController.getTodayHabits called');
+    
+    try {
+      if (!req.user) {
+        console.error('❌ No user in request');
+        return res.status(401).json({
+          success: false,
+          error: 'User not authenticated'
+        });
+      }
+
+      const userId = req.user.id;
+      
+      // 🔥 КРИТИЧНО: Получаем СЕГОДНЯШНЮЮ дату в UTC
+      const now = new Date();
+      const today = new Date(now.getTime());
+      
+      // Получаем день недели (1-7, где 1 = Monday)
+      const dayOfWeek = today.getDay() || 7; // 0 (Sunday) becomes 7
+      
+      // Форматируем дату в YYYY-MM-DD в UTC
+      const todayDate = today.toISOString().split('T')[0];
+      
+      console.log('Getting today habits for user:', userId);
+      console.log('🕐 Server time check:', {
+        serverTime: now.toISOString(),
+        todayDate: todayDate,
+        dayOfWeek: dayOfWeek,
+        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()]
       });
-    }
-
-    const userId = req.user.id;
-    const today = new Date();
-    const dayOfWeek = today.getDay() || 7; // 0 (Sunday) becomes 7
-    const todayDate = today.toISOString().split('T')[0];
-    
-    console.log('Getting today habits for user:', userId);
-    console.log('Today is:', {
-      date: todayDate,
-      dayOfWeek: dayOfWeek,
-      dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][today.getDay()]
-    });
-    
-    // Получаем привычки на сегодня по расписанию с их статусами
-    const result = await db.query(
-      `SELECT 
-        h.id,
-        h.user_id,
-        h.category_id,
-        h.title,
-        h.goal,
-        h.schedule_type,
-        h.schedule_days,
-        h.reminder_time,
-        h.reminder_enabled,
-        h.is_bad_habit,
-        h.streak_current,
-        h.streak_best,
-        h.is_active,
-        h.parent_habit_id,
-        h.created_at,
-        h.updated_at,
-        c.name_ru, 
-        c.name_en, 
-        c.icon as category_icon, 
-        c.color,
-        COALESCE(hm.status, 'pending') as today_status,
-        hm.id as mark_id,
-        hm.marked_at,
-        -- Подсчитываем участников для связанных привычек
-        CASE 
-          WHEN h.parent_habit_id IS NOT NULL THEN
-            (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
-             WHERE habit_id IN (
-               SELECT id FROM habits 
-               WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
-             ) AND is_active = true)
-          ELSE
-            (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
-             WHERE habit_id IN (
-               SELECT id FROM habits 
-               WHERE parent_habit_id = h.id OR id = h.id
-             ) AND is_active = true)
-        END as members_count
-       FROM habits h
-       LEFT JOIN categories c ON h.category_id = c.id
-       LEFT JOIN habit_marks hm ON (
-         hm.habit_id = h.id 
-         AND hm.date = $3::date
-       )
-       WHERE 
-         h.user_id = $1 
-         AND h.is_active = true
-         AND $2 = ANY(h.schedule_days)
-       ORDER BY h.created_at DESC`,
-      [userId, dayOfWeek, todayDate]
-    );
-    
-    console.log(`✅ Found ${result.rows.length} habits for today`);
-    
-    // Логируем статусы для отладки
-    result.rows.forEach(h => {
-      console.log(`Habit "${h.title}" (ID: ${h.id}) - Status: ${h.today_status}, Mark ID: ${h.mark_id}`);
-    });
-    
-    // Считаем статистику
-    const completedCount = result.rows.filter(h => h.today_status === 'completed').length;
-    const failedCount = result.rows.filter(h => h.today_status === 'failed').length;
-    const skippedCount = result.rows.filter(h => h.today_status === 'skipped').length;
-    const pendingCount = result.rows.filter(h => h.today_status === 'pending').length;
-    const totalCount = result.rows.length;
-    
-    console.log('Statistics:', {
-      total: totalCount,
-      completed: completedCount,
-      failed: failedCount,
-      skipped: skippedCount,
-      pending: pendingCount
-    });
-
-    // Получаем мотивационную фразу с учетом прогресса и цвета фона
-    const language = req.user.language || 'en';
-    const phrase = await Phrase.getRandomPhrase(language, completedCount, totalCount);
-
-    res.json({
-      success: true,
-      habits: result.rows,
-      stats: {
-        completed: completedCount,
+      
+      // 🔥 ВАЖНО: Используем CURRENT_DATE из PostgreSQL для гарантии корректной даты
+      const result = await db.query(
+        `SELECT 
+          h.id,
+          h.user_id,
+          h.category_id,
+          h.title,
+          h.goal,
+          h.schedule_type,
+          h.schedule_days,
+          h.reminder_time,
+          h.reminder_enabled,
+          h.is_bad_habit,
+          h.streak_current,
+          h.streak_best,
+          h.is_active,
+          h.parent_habit_id,
+          h.created_at,
+          h.updated_at,
+          c.name_ru, 
+          c.name_en, 
+          c.icon as category_icon, 
+          c.color,
+          COALESCE(hm.status, 'pending') as today_status,
+          hm.id as mark_id,
+          hm.marked_at,
+          CASE 
+            WHEN h.parent_habit_id IS NOT NULL THEN
+              (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+               WHERE habit_id IN (
+                 SELECT id FROM habits 
+                 WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
+               ) AND is_active = true)
+            ELSE
+              (SELECT COUNT(DISTINCT user_id) - 1 FROM habit_members 
+               WHERE habit_id IN (
+                 SELECT id FROM habits 
+                 WHERE parent_habit_id = h.id OR id = h.id
+               ) AND is_active = true)
+          END as members_count,
+          CURRENT_DATE as server_current_date
+         FROM habits h
+         LEFT JOIN categories c ON h.category_id = c.id
+         LEFT JOIN habit_marks hm ON (
+           hm.habit_id = h.id 
+           AND hm.date = CURRENT_DATE
+         )
+         WHERE 
+           h.user_id = $1 
+           AND h.is_active = true
+           AND $2 = ANY(h.schedule_days)
+         ORDER BY h.created_at DESC`,
+        [userId, dayOfWeek]
+      );
+      
+      console.log(`✅ Found ${result.rows.length} habits for today`);
+      
+      // 🔥 ЛОГИРУЕМ ФАКТИЧЕСКУЮ ДАТУ ИЗ БД
+      if (result.rows.length > 0) {
+        console.log('📅 Database CURRENT_DATE:', result.rows[0].server_current_date);
+      }
+      
+      // Логируем статусы для отладки
+      result.rows.forEach(h => {
+        console.log(`Habit "${h.title}" (ID: ${h.id}) - Status: ${h.today_status}, Mark ID: ${h.mark_id}`);
+      });
+      
+      // Считаем статистику
+      const completedCount = result.rows.filter(h => h.today_status === 'completed').length;
+      const failedCount = result.rows.filter(h => h.today_status === 'failed').length;
+      const skippedCount = result.rows.filter(h => h.today_status === 'skipped').length;
+      const pendingCount = result.rows.filter(h => h.today_status === 'pending').length;
+      const totalCount = result.rows.length;
+      
+      console.log('Statistics:', {
         total: totalCount,
+        completed: completedCount,
         failed: failedCount,
         skipped: skippedCount,
         pending: pendingCount
-      },
-      phrase
-    });
-  } catch (error) {
-    console.error('💥 Get today habits error:', error.message);
-    console.error('Error stack:', error.stack);
-    
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to load today habits',
-      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
-    });
-  }
-},
+      });
+
+      // Получаем мотивационную фразу
+      const language = req.user.language || 'en';
+      const phrase = await Phrase.getRandomPhrase(language, completedCount, totalCount);
+
+      // Удаляем server_current_date перед отправкой клиенту
+      const habits = result.rows.map(({ server_current_date, ...habit }) => habit);
+
+      res.json({
+        success: true,
+        habits: habits,
+        stats: {
+          completed: completedCount,
+          total: totalCount,
+          failed: failedCount,
+          skipped: skippedCount,
+          pending: pendingCount
+        },
+        phrase
+      });
+    } catch (error) {
+      console.error('💥 Get today habits error:', error.message);
+      console.error('Error stack:', error.stack);
+      
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to load today habits',
+        details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      });
+    }
+  },
 
   // Обновленный метод update с валидацией длины
 async update(req, res) {
