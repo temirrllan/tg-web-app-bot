@@ -349,19 +349,11 @@ router.get('/habits/date/:date', async (req, res) => {
     const { date } = req.params;
     const userId = req.user.id;
     
-    console.log(`🎯 Getting habits for date ${date}, user ${userId}`);
-    
-    // Парсим дату
     const [year, month, day] = date.split('-');
-    const targetDate = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
-    const dayOfWeek = targetDate.getUTCDay() || 7;
+    const targetDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    const dayOfWeek = targetDate.getDay() || 7;
     
-    console.log(`📅 Date info:`, {
-      requestedDate: date,
-      parsedDate: targetDate.toISOString(),
-      dayOfWeek: dayOfWeek,
-      dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][targetDate.getUTCDay()]
-    });
+    console.log(`Getting habits for user ${userId} on date ${date}, day of week: ${dayOfWeek}`);
     
     const result = await db.query(
       `SELECT 
@@ -416,7 +408,7 @@ router.get('/habits/date/:date', async (req, res) => {
       [userId, dayOfWeek, date]
     );
     
-    console.log(`✅ Found ${result.rows.length} habits for ${date}:`);
+    console.log(`Found ${result.rows.length} habits for ${date}:`);
     result.rows.forEach(h => {
       console.log(`- "${h.title}" (ID: ${h.id}): ${h.today_status}, Members: ${h.members_count}`);
     });
@@ -428,10 +420,6 @@ router.get('/habits/date/:date', async (req, res) => {
     
     console.log(`Stats: completed=${completedCount}, failed=${failedCount}, skipped=${skippedCount}, pending=${pendingCount}`);
     
-    // Получаем мотивационную фразу
-    const language = req.user.language || 'en';
-    const phrase = await Phrase.getRandomPhrase(language, completedCount, result.rows.length);
-    
     res.json({
       success: true,
       habits: result.rows,
@@ -441,8 +429,7 @@ router.get('/habits/date/:date', async (req, res) => {
         failed: failedCount,
         skipped: skippedCount,
         pending: pendingCount
-      },
-      phrase: phrase
+      }
     });
   } catch (error) {
     console.error('Get habits for date error:', error);
