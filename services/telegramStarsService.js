@@ -1,4 +1,6 @@
 // services/telegramStarsService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ (БЕЗ МАССОВОГО ОБНОВЛЕНИЯ)
+const SubscriptionLogger = require('../utils/subscriptionLogger');
+
 
 const db = require('../config/database');
 const crypto = require('crypto');
