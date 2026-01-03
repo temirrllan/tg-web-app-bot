@@ -62,25 +62,39 @@ const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
-    console.log("🔔 ========== WEBHOOK RECEIVED ==========");
-    console.log('Update:', JSON.stringify(req.body, null, 2));
+    console.log("🔔 WEBHOOK RECEIVED:", JSON.stringify(req.body, null, 2));
 
     const secretHeader = req.get("x-telegram-bot-api-secret-token");
 
-    if (secretHeader !== BOT_SECRET) {
-      console.error("❌ Invalid webhook secret");
-      return res.status(401).json({ success: false, error: "Unauthorized" });
+    if (!BOT_SECRET) {
+      console.error("❌ BOT_SECRET not configured");
+      return res
+        .status(401)
+        .json({ success: false, error: "Webhook secret is not configured" });
     }
 
-    const update = req.body;
+    if (secretHeader !== BOT_SECRET) {
+      console.error(
+        "❌ Invalid webhook secret. Expected:",
+        BOT_SECRET,
+        "Got:",
+        secretHeader
+      );
+      return res
+        .status(401)
+        .json({ success: false, error: "Unauthorized webhook" });
+    }
 
-    // 🔥 КРИТИЧНО: Обрабатываем successful_payment ЗДЕСЬ
+    console.log("✅ Telegram webhook authorized");
+
+    const update = req.body;
+    // КРИТИЧЕСКИ ВАЖНО: Обрабатываем successful_payment
     if (update.message?.successful_payment) {
-      console.log("💳 ========== SUCCESSFUL PAYMENT ==========");
+      console.log("💳 ========== SUCCESSFUL PAYMENT DETECTED ==========");
       const payment = update.message.successful_payment;
       const from_user_id = update.message.from.id;
 
-      console.log('Payment details:', {
+      console.log("Payment details:", {
         currency: payment.currency,
         total_amount: payment.total_amount,
         invoice_payload: payment.invoice_payload,
@@ -88,6 +102,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
         from_user_id: from_user_id,
       });
 
+      // Проверяем что это Telegram Stars
       if (payment.currency === "XTR") {
         const paymentData = {
           telegram_payment_charge_id: payment.telegram_payment_charge_id,
@@ -100,38 +115,43 @@ app.post(WEBHOOK_PATH, async (req, res) => {
 
         console.log("💰 Processing Telegram Stars payment...");
 
-        // 🔥 ОБРАБАТЫВАЕМ ПЛАТЁЖ
-        const result = await TelegramStarsService.processSuccessfulPayment(paymentData);
+        // Обрабатываем платёж
+        const result = await TelegramStarsService.processSuccessfulPayment(
+          paymentData
+        );
 
         if (result.success) {
-          console.log("✅ ========== PAYMENT SUCCESS ==========");
-          console.log("User ID:", result.user_id);
-          console.log("Subscription ID:", result.subscription_id);
-          console.log("Plan:", result.plan_type);
+          console.log("✅ Payment processed successfully");
+          console.log("✅ User ID:", result.user_id);
+          console.log("✅ Subscription ID:", result.subscription_id);
+          console.log("✅ Plan type:", result.plan_type);
+          console.log("✅ Expires at:", result.expires_at);
 
-          // 🔥 ПРОВЕРКА: Действительно ли обновился пользователь?
-          const verifyResult = await db.query(
-            'SELECT id, telegram_id, is_premium, subscription_type FROM users WHERE id = $1',
+          // Проверяем что данные обновились
+          const verificationResult = await db.query(
+            "SELECT id, is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1",
             [result.user_id]
           );
 
-          console.log("🔍 Verification:", verifyResult.rows[0]);
+          console.log(
+            "🔍 User verification after payment:",
+            verificationResult.rows[0]
+          );
 
-          // 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ
+          // Отправляем подтверждение пользователю
           try {
-            const bot = require("./server").bot;
-
             const userResult = await db.query(
               "SELECT language FROM users WHERE telegram_id = $1",
               [from_user_id.toString()]
             );
 
-            const lang = userResult.rows.length > 0 ? userResult.rows[0].language : "en";
+            const lang =
+              userResult.rows.length > 0 ? userResult.rows[0].language : "en";
 
             const messages = {
-              ru: "🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\n✅ Безлимитные привычки\n✅ Безлимитные друзья\n✅ Расширенная статистика\n\nОткройте приложение! 💪",
-              en: "🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\n✅ Unlimited habits\n✅ Unlimited friends\n✅ Advanced statistics\n\nOpen the app! 💪",
-              kk: "🎉 <b>Төлем сәтті!</b>\n\nPremium жазылымыңыз белсендірілді!\n\n✅ Шексіз әдеттер\n✅ Шексіз достар\n✅ Статистика\n\nҚосымшаны ашыңыз! 💪",
+              ru: "🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\n✅ Безлимитные привычки\n✅ Безлимитные друзья\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪",
+              en: "🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\n✅ Unlimited habits\n✅ Unlimited friends\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪",
+              kk: "🎉 <b>Төлем сәтті өтті!</b>\n\nСіздің Premium жазылымыңыз белсендірілді!\n\n✅ Шексіз әдеттер\n✅ Шексіз достар\n✅ Кеңейтілген статистика\n✅ Басым қолдау\n\nҚосымшаны ашып, ләззат алыңыз! 💪",
             };
 
             const message = messages[lang] || messages["en"];
@@ -139,38 +159,43 @@ app.post(WEBHOOK_PATH, async (req, res) => {
             await bot.sendMessage(from_user_id, message, {
               parse_mode: "HTML",
               reply_markup: {
-                inline_keyboard: [[
-                  {
-                    text: lang === "ru" ? "📱 Открыть" : "📱 Open App",
-                    web_app: { url: WEBAPP_URL }
-                  }
-                ]]
+                inline_keyboard: [
+                  [
+                    {
+                      text:
+                        lang === "ru"
+                          ? "📱 Открыть приложение"
+                          : lang === "kk"
+                          ? "📱 Қосымшаны ашу"
+                          : "📱 Open App",
+                      web_app: {
+                        url: process.env.WEBAPP_URL || process.env.FRONTEND_URL,
+                      },
+                    },
+                  ],
+                ],
               },
             });
 
-            console.log("✅ Confirmation sent");
+            console.log("✅ Confirmation message sent to user");
           } catch (botError) {
-            console.error("⚠️ Failed to send confirmation:", botError.message);
+            console.error(
+              "⚠️ Failed to send confirmation (non-critical):",
+              botError.message
+            );
           }
-
-          return res.status(200).json({
-            success: true,
-            user_id: result.user_id,
-          });
         } else {
           console.error("❌ Payment processing failed:", result.error);
-          return res.status(200).json({ success: false, error: result.error });
         }
+      } else {
+        console.log("⚠️ Non-XTR payment, skipping");
       }
     }
-
-    // Передаём update боту
     bot.processUpdate(update);
 
     res.status(200).json({ success: true });
   } catch (error) {
-    console.error("❌ Webhook error:", error);
-    console.error("Stack:", error.stack);
+    console.error("❌ Telegram webhook error:", error);
     res.status(200).json({ success: false, error: error.message });
   }
 });
@@ -207,20 +232,24 @@ const TelegramStarsService = require("./services/telegramStarsService");
 
 // ВАЖНО: Обработчик pre_checkout_query
 bot.on("pre_checkout_query", async (query) => {
-  console.log("💳 ========== PRE-CHECKOUT ==========");
+  console.log("💳 ========== PRE-CHECKOUT QUERY (Telegram Stars) ==========");
   console.log("Query ID:", query.id);
   console.log("From:", query.from.id, query.from.first_name);
   console.log("Currency:", query.currency);
-  console.log("Amount:", query.total_amount);
-  console.log("Payload:", query.invoice_payload);
+  console.log("Total amount:", query.total_amount, "XTR");
+  console.log("Invoice payload:", query.invoice_payload);
 
   try {
+    // Проверяем что это Telegram Stars
     if (query.currency !== "XTR") {
+      console.error("❌ Wrong currency:", query.currency);
       await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: "Only Telegram Stars (XTR) accepted.",
+        error_message: "Only Telegram Stars (XTR) payments are accepted.",
       });
       return;
     }
+
+    // const TelegramStarsService = require('./services/telegramStarsService');
 
     let parsed;
     try {
@@ -228,7 +257,7 @@ bot.on("pre_checkout_query", async (query) => {
     } catch (parseError) {
       console.error("❌ Invalid payload:", parseError);
       await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: "Invalid payment data.",
+        error_message: "Invalid payment data. Please try again.",
       });
       return;
     }
@@ -236,7 +265,7 @@ bot.on("pre_checkout_query", async (query) => {
     const userId = parseInt(parsed.userId);
     const planType = parsed.planType;
 
-    console.log("📋 Parsed:", { userId, planType });
+    console.log("📋 Parsed payment data:", { userId, planType });
 
     const userResult = await db.query(
       "SELECT id, first_name FROM users WHERE id = $1",
@@ -246,16 +275,17 @@ bot.on("pre_checkout_query", async (query) => {
     if (userResult.rows.length === 0) {
       console.error("❌ User not found:", userId);
       await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: "User not found.",
+        error_message: "User not found. Please try again.",
       });
       return;
     }
 
     const plan = TelegramStarsService.PLANS[planType];
+
     if (!plan) {
       console.error("❌ Invalid plan:", planType);
       await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: "Invalid plan.",
+        error_message: "Invalid subscription plan. Please try again.",
       });
       return;
     }
@@ -267,21 +297,23 @@ bot.on("pre_checkout_query", async (query) => {
         got: query.total_amount,
       });
       await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: "Invalid amount.",
+        error_message: "Invalid payment amount. Please try again.",
       });
       return;
     }
 
+    // ВСЁ ХОРОШО - разрешаем оплату
     await bot.answerPreCheckoutQuery(query.id, true);
-    console.log("✅ Pre-checkout approved");
+    console.log("✅ Pre-checkout query approved - payment can proceed");
   } catch (error) {
     console.error("❌ Pre-checkout error:", error);
+
     try {
       await bot.answerPreCheckoutQuery(query.id, false, {
-        error_message: "Processing error.",
+        error_message: "Payment processing error. Please try again.",
       });
     } catch (e) {
-      console.error("Failed to reject:", e);
+      console.error("Failed to reject pre-checkout:", e);
     }
   }
 });
