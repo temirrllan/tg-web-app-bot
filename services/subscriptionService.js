@@ -122,24 +122,13 @@ class SubscriptionService {
         console.warn('⚠️ Failed to unlock habits (non-critical):', unlockError.message);
       }
       
-      // 🔥 ШАГ 6: История (БЕЗ попытки вставить дубликаты)
+      // 🔥 ШАГ 6: История - только существующие поля
       try {
         await client.query(
           `INSERT INTO subscription_history (
-            user_id, subscription_id, plan_type, plan_name, 
-            price_stars, action, status, payment_method,
-            started_at, expires_at, created_at
-          ) VALUES ($1, $2, $3, $4, $5, 'created', 'completed', $6, $7, $8, CURRENT_TIMESTAMP)`,
-          [
-            userId, 
-            subscription.id, 
-            planType, 
-            plan.name, 
-            plan.price_stars,
-            transactionId ? 'telegram_stars' : 'manual',
-            startedAt,
-            expiresAt
-          ]
+            user_id, subscription_id, plan_type, price_stars, action, created_at
+          ) VALUES ($1, $2, $3, $4, 'created', CURRENT_TIMESTAMP)`,
+          [userId, subscription.id, planType, plan.price_stars]
         );
         console.log(`✅ History record created`);
       } catch (histError) {
@@ -230,7 +219,7 @@ class SubscriptionService {
         try {
           // Проверяем, есть ли уже запись
           const existingHistory = await client.query(
-            `SELECT id FROM subscriptions_history 
+            `SELECT id FROM subscription_history 
              WHERE subscription_id = $1 AND action = 'cancelled'`,
             [sub.id]
           );
@@ -238,11 +227,10 @@ class SubscriptionService {
           // Только если записи НЕТ - добавляем
           if (existingHistory.rows.length === 0) {
             await client.query(
-              `INSERT INTO subscriptions_history (
-                user_id, subscription_id, plan_type, plan_name, 
-                price_stars, action, status, cancelled_at, created_at
-              ) VALUES ($1, $2, $3, $4, $5, 'cancelled', 'completed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-              [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
+              `INSERT INTO subscription_history (
+                user_id, subscription_id, plan_type, price_stars, action, created_at
+              ) VALUES ($1, $2, $3, $4, 'cancelled', CURRENT_TIMESTAMP)`,
+              [userId, sub.id, sub.plan_type, sub.price_stars || 0]
             );
             console.log(`✅ History record created for subscription ${sub.id}`);
           } else {
@@ -346,18 +334,17 @@ class SubscriptionService {
       for (const sub of activeSubs.rows) {
         try {
           const existingHistory = await client.query(
-            `SELECT id FROM subscriptions_history 
+            `SELECT id FROM subscription_history 
              WHERE subscription_id = $1 AND action = 'expired'`,
             [sub.id]
           );
           
           if (existingHistory.rows.length === 0) {
             await client.query(
-              `INSERT INTO subscriptions_history (
-                user_id, subscription_id, plan_type, plan_name, 
-                price_stars, action, status, created_at
-              ) VALUES ($1, $2, $3, $4, $5, 'expired', 'completed', CURRENT_TIMESTAMP)`,
-              [userId, sub.id, sub.plan_type, sub.plan_name, sub.price_stars || 0]
+              `INSERT INTO subscription_history (
+                user_id, subscription_id, plan_type, price_stars, action, created_at
+              ) VALUES ($1, $2, $3, $4, 'expired', CURRENT_TIMESTAMP)`,
+              [userId, sub.id, sub.plan_type, sub.price_stars || 0]
             );
           }
         } catch (histError) {
