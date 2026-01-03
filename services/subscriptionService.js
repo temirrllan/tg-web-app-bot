@@ -100,19 +100,19 @@ class SubscriptionService {
       
       // 🔥 ШАГ 4: Обновляем пользователя - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ!
       const updateResult = await client.query(
-        `UPDATE users 
-         SET 
-           is_premium = true, 
-           subscription_type = $2,
-           subscription_expires_at = $3,
-           subscription_start_date = $4,
-           subscription_end_date = $5
-         WHERE id = $1
-         RETURNING id, telegram_id, is_premium, subscription_type`, // 🔥 ДОБАВЛЕНО WHERE id = $1
-        [userId, planType, expiresAt, startedAt, expiresAt]
-      );
-      
-      console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
+  `UPDATE users 
+   SET 
+     is_premium = true, 
+     subscription_type = $2,
+     subscription_expires_at = $3,
+     subscription_start_date = $4,
+     subscription_end_date = $5
+   WHERE id = $1
+   RETURNING id, telegram_id, is_premium, subscription_type`,
+  [userId, planType, expiresAt, startedAt, expiresAt] // ✅ Порядок правильный: $1=userId
+);
+
+console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
       
       // 🔥 ШАГ 5: Разблокируем премиум привычки
       try {
