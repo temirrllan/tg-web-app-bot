@@ -1,4 +1,4 @@
-// services/subscriptionService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// services/subscriptionService.js - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
 const db = require('../config/database');
 const TelegramStarsService = require('./telegramStarsService');
 const HabitLockService = require('./habitLockService');
@@ -41,16 +41,16 @@ class SubscriptionService {
       
       console.log(`📝 Creating subscription: User ${userId}, Plan ${planType}`);
       
-      // 🔥 ШАГ 1: ПОЛНАЯ ДЕАКТИВАЦИЯ ВСЕХ СТАРЫХ ПОДПИСОК
+      // 🔥 ШАГ 1: ПОЛНАЯ ДЕАКТИВАЦИЯ ВСЕХ СТАРЫХ ПОДПИСОК ТОЛЬКО ДЛЯ ЭТОГО ПОЛЬЗОВАТЕЛЯ
       const oldSubs = await client.query(
         'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1',
         [userId]
       );
       
       if (oldSubs.rows.length > 0) {
-        console.log(`🗑️ Found ${oldSubs.rows.length} old subscription(s), removing...`);
+        console.log(`🗑️ Found ${oldSubs.rows.length} old subscription(s) for user ${userId}, removing...`);
         
-        // Деактивируем ВСЕ подписки (обнуляем expires_at)
+        // Деактивируем только подписки ЭТОГО пользователя
         await client.query(
           `UPDATE subscriptions 
            SET is_active = false, 
@@ -60,7 +60,7 @@ class SubscriptionService {
           [userId]
         );
         
-        console.log(`✅ ALL old subscriptions deactivated`);
+        console.log(`✅ Old subscriptions deactivated for user ${userId}`);
       }
       
       // 🔥 ШАГ 2: Вычисляем даты
@@ -98,26 +98,31 @@ class SubscriptionService {
       const subscription = result.rows[0];
       console.log(`✅ New subscription created: ID ${subscription.id}`);
       
-      // 🔥 ШАГ 4: Обновляем пользователя - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ!
+      // 🔥 ШАГ 4: Обновляем ТОЛЬКО ЭТОГО пользователя
+      console.log(`🔄 Updating user ${userId} to premium...`);
       const updateResult = await client.query(
-  `UPDATE users 
-   SET 
-     is_premium = true, 
-     subscription_type = $2,
-     subscription_expires_at = $3,
-     subscription_start_date = $4,
-     subscription_end_date = $5
-   WHERE id = $1
-   RETURNING id, telegram_id, is_premium, subscription_type`,
-  [userId, planType, expiresAt, startedAt, expiresAt] // ✅ Порядок правильный: $1=userId
-);
-
-console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
+        `UPDATE users 
+         SET 
+           is_premium = true, 
+           subscription_type = $2,
+           subscription_expires_at = $3,
+           subscription_start_date = $4,
+           subscription_end_date = $5
+         WHERE id = $1
+         RETURNING id, telegram_id, is_premium, subscription_type`,
+        [userId, planType, expiresAt, startedAt, expiresAt]
+      );
+      
+      if (updateResult.rows.length === 0) {
+        throw new Error(`User ${userId} not found in database`);
+      }
+      
+      console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
       
       // 🔥 ШАГ 5: Разблокируем премиум привычки
       try {
         await HabitLockService.unlockPremiumHabits(userId);
-        console.log(`✅ Premium habits unlocked`);
+        console.log(`✅ Premium habits unlocked for user ${userId}`);
       } catch (unlockError) {
         console.warn('⚠️ Failed to unlock habits (non-critical):', unlockError.message);
       }
@@ -130,7 +135,7 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
           ) VALUES ($1, $2, $3, $4, 'created', CURRENT_TIMESTAMP)`,
           [userId, subscription.id, planType, plan.price_stars]
         );
-        console.log(`✅ History record created`);
+        console.log(`✅ History record created for user ${userId}`);
       } catch (histError) {
         console.warn('⚠️ History insert failed (non-critical):', histError.message);
       }
@@ -187,7 +192,7 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         return { success: false, error: 'No active subscription' };
       }
       
-      // 🔥 ШАГ 1: Получаем ВСЕ активные подписки
+      // 🔥 ШАГ 1: Получаем ВСЕ активные подписки ЭТОГО пользователя
       const activeSubs = await client.query(
         `SELECT id, plan_type, plan_name, price_stars 
          FROM subscriptions 
@@ -200,9 +205,9 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         return { success: false, error: 'No active subscriptions found' };
       }
       
-      console.log(`📊 Found ${activeSubs.rows.length} active subscription(s)`);
+      console.log(`📊 Found ${activeSubs.rows.length} active subscription(s) for user ${userId}`);
       
-      // 🔥 ШАГ 2: Деактивируем подписки (обнуляем expires_at)
+      // 🔥 ШАГ 2: Деактивируем подписки ТОЛЬКО ЭТОГО пользователя
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -212,19 +217,17 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         [userId]
       );
       
-      console.log(`✅ ${activeSubs.rows.length} subscription(s) deactivated`);
+      console.log(`✅ ${activeSubs.rows.length} subscription(s) deactivated for user ${userId}`);
       
       // 🔥 ШАГ 3: История - проверяем существование ПЕРЕД вставкой
       for (const sub of activeSubs.rows) {
         try {
-          // Проверяем, есть ли уже запись
           const existingHistory = await client.query(
             `SELECT id FROM subscription_history 
              WHERE subscription_id = $1 AND action = 'cancelled'`,
             [sub.id]
           );
           
-          // Только если записи НЕТ - добавляем
           if (existingHistory.rows.length === 0) {
             await client.query(
               `INSERT INTO subscription_history (
@@ -241,18 +244,24 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         }
       }
       
-      // 🔥 ШАГ 4: Обновляем пользователя - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ!
-      await client.query(
+      // 🔥 ШАГ 4: Обновляем ТОЛЬКО ЭТОГО пользователя
+      console.log(`🔄 Downgrading user ${userId} to free...`);
+      const updateResult = await client.query(
         `UPDATE users 
          SET is_premium = false,
              subscription_type = NULL,
              subscription_expires_at = NULL,
              subscription_end_date = CURRENT_TIMESTAMP
-         WHERE id = $1`, // 🔥 ДОБАВЛЕНО WHERE id = $1
+         WHERE id = $1
+         RETURNING id, is_premium`,
         [userId]
       );
       
-      console.log(`✅ User ${userId} downgraded to free`);
+      if (updateResult.rows.length === 0) {
+        throw new Error(`User ${userId} not found`);
+      }
+      
+      console.log(`✅ User ${userId} downgraded to free:`, updateResult.rows[0]);
       
       // 🔥 ШАГ 5: Блокируем премиум привычки (если больше 3)
       try {
@@ -265,7 +274,7 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         
         if (count > 3) {
           await HabitLockService.lockPremiumHabits(userId, 'subscription_cancelled');
-          console.log(`✅ Premium habits locked (total: ${count}, limit: 3)`);
+          console.log(`✅ Premium habits locked for user ${userId} (total: ${count}, limit: 3)`);
         }
       } catch (lockError) {
         console.warn('⚠️ Failed to lock habits (non-critical):', lockError.message);
@@ -320,7 +329,7 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         return { success: true, message: 'No active subscriptions' };
       }
       
-      // Деактивируем
+      // Деактивируем ТОЛЬКО подписки ЭТОГО пользователя
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -352,14 +361,14 @@ console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
         }
       }
       
-      // Обновляем пользователя - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ!
+      // Обновляем ТОЛЬКО ЭТОГО пользователя
       await client.query(
         `UPDATE users 
          SET is_premium = false,
              subscription_type = NULL,
              subscription_expires_at = NULL,
              subscription_end_date = CURRENT_TIMESTAMP
-         WHERE id = $1`, // 🔥 ДОБАВЛЕНО WHERE id = $1
+         WHERE id = $1`,
         [userId]
       );
       
