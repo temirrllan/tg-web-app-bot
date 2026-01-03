@@ -267,7 +267,7 @@ class TelegramStarsService {
 
       console.log(`📅 Subscription: ${startedAt.toISOString()} → ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
-      // 🔥 КРИТИЧНО: Деактивируем ВСЕ старые подписки ТОЛЬКО для этого пользователя
+      // 🔥 КРИТИЧНО: Деактивируем ВСЕ старые подписки ТОЛЬКО для ЭТОГО пользователя
       const oldSubscriptions = await client.query(
         'SELECT id FROM subscriptions WHERE user_id = $1',
         [internalUserId]
@@ -308,7 +308,8 @@ class TelegramStarsService {
       );
       console.log(`✅ Subscription created for user ${internalUserId}, ID: ${subscriptionResult.rows[0].id}`);
 
-      // 🔥 КРИТИЧНО: Обновляем ТОЛЬКО этого пользователя
+      // 🔥 КРИТИЧНО: Обновляем ТОЛЬКО ЭТОГО пользователя
+      console.log(`🔄 Updating user ${internalUserId} (telegram_id: ${from_user_id}) to premium...`);
       const updateResult = await client.query(
         `UPDATE users 
          SET is_premium = true,
@@ -319,6 +320,10 @@ class TelegramStarsService {
          RETURNING id, telegram_id, is_premium, subscription_type`,
         [internalUserId, planType, expiresAt, startedAt]
       );
+
+      if (updateResult.rows.length === 0) {
+        throw new Error(`Failed to update user ${internalUserId}`);
+      }
 
       console.log(`✅ User ${internalUserId} updated:`, updateResult.rows[0]);
 
