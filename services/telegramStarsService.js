@@ -17,7 +17,7 @@ class TelegramStarsService {
       name: 'Premium for 1 Month',
       display_name: 'For 1 Month',
       duration_months: 1,
-      price_stars: 1, //тута 59
+      price_stars: 1, // исправлено с 59 на 1
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
     },
     '6_months': {
