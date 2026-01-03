@@ -1,4 +1,4 @@
-// services/subscriptionService.js - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
+// services/subscriptionService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ (БЕЗ МАССОВОГО ОБНОВЛЕНИЯ)
 const db = require('../config/database');
 const TelegramStarsService = require('./telegramStarsService');
 const HabitLockService = require('./habitLockService');
@@ -26,7 +26,7 @@ class SubscriptionService {
   };
 
   /**
-   * 🆕 Создание подписки с полной очисткой старых записей
+   * 🔥 ИСПРАВЛЕНО: Создание подписки БЕЗ массового обновления
    */
   static async createSubscription(userId, planType, transactionId = null) {
     const client = await db.getClient();
@@ -41,29 +41,42 @@ class SubscriptionService {
       
       console.log(`📝 Creating subscription: User ${userId}, Plan ${planType}`);
       
-      // 🔥 ШАГ 1: ПОЛНАЯ ДЕАКТИВАЦИЯ ВСЕХ СТАРЫХ ПОДПИСОК ТОЛЬКО ДЛЯ ЭТОГО ПОЛЬЗОВАТЕЛЯ
+      // 🔥 ШАГ 1: Проверяем существование пользователя
+      const userCheck = await client.query(
+        'SELECT id, telegram_id, first_name FROM users WHERE id = $1',
+        [userId]
+      );
+      
+      if (userCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new Error(`User ${userId} not found`);
+      }
+      
+      console.log(`✅ User found: ${userCheck.rows[0].first_name} (ID: ${userId})`);
+      
+      // 🔥 ШАГ 2: Деактивируем ТОЛЬКО старые подписки ЭТОГО пользователя
       const oldSubs = await client.query(
-        'SELECT id, plan_type, plan_name, price_stars FROM subscriptions WHERE user_id = $1',
+        'SELECT id, plan_type FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [userId]
       );
       
       if (oldSubs.rows.length > 0) {
-        console.log(`🗑️ Found ${oldSubs.rows.length} old subscription(s) for user ${userId}, removing...`);
+        console.log(`🗑️ Found ${oldSubs.rows.length} old subscription(s) for user ${userId}`);
         
-        // Деактивируем только подписки ЭТОГО пользователя
+        // ✅ КРИТИЧНО: WHERE user_id = $1
         await client.query(
           `UPDATE subscriptions 
            SET is_active = false, 
                cancelled_at = CURRENT_TIMESTAMP,
                expires_at = NULL
-           WHERE user_id = $1`,
+           WHERE user_id = $1 AND is_active = true`,
           [userId]
         );
         
-        console.log(`✅ Old subscriptions deactivated for user ${userId}`);
+        console.log(`✅ Old subscriptions deactivated ONLY for user ${userId}`);
       }
       
-      // 🔥 ШАГ 2: Вычисляем даты
+      // 🔥 ШАГ 3: Вычисляем даты
       let expiresAt = null;
       const startedAt = new Date();
       
@@ -74,7 +87,7 @@ class SubscriptionService {
       
       console.log(`📅 Period: ${startedAt.toISOString()} → ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
       
-      // 🔥 ШАГ 3: Создаём НОВУЮ подписку
+      // 🔥 ШАГ 4: Создаём новую подписку
       const result = await client.query(
         `INSERT INTO subscriptions (
           user_id, plan_type, plan_name, price_stars, 
@@ -96,10 +109,11 @@ class SubscriptionService {
       );
       
       const subscription = result.rows[0];
-      console.log(`✅ New subscription created: ID ${subscription.id}`);
+      console.log(`✅ New subscription created: ID ${subscription.id} for user ${userId}`);
       
-      // 🔥 ШАГ 4: Обновляем ТОЛЬКО ЭТОГО пользователя
-      console.log(`🔄 Updating user ${userId} to premium...`);
+      // 🔥 ШАГ 5: Обновляем ТОЛЬКО ЭТОГО конкретного пользователя
+      console.log(`🔄 Updating ONLY user ${userId} to premium...`);
+      
       const updateResult = await client.query(
         `UPDATE users 
          SET 
@@ -109,17 +123,23 @@ class SubscriptionService {
            subscription_start_date = $4,
            subscription_end_date = $5
          WHERE id = $1
-         RETURNING id, telegram_id, is_premium, subscription_type`,
+         RETURNING id, telegram_id, first_name, is_premium, subscription_type`,
         [userId, planType, expiresAt, startedAt, expiresAt]
       );
       
       if (updateResult.rows.length === 0) {
-        throw new Error(`User ${userId} not found in database`);
+        throw new Error(`Failed to update user ${userId} - user disappeared`);
       }
       
-      console.log(`✅ User ${userId} upgraded to premium:`, updateResult.rows[0]);
+      console.log(`✅ User ${userId} updated to premium:`, {
+        id: updateResult.rows[0].id,
+        telegram_id: updateResult.rows[0].telegram_id,
+        first_name: updateResult.rows[0].first_name,
+        is_premium: updateResult.rows[0].is_premium,
+        subscription_type: updateResult.rows[0].subscription_type
+      });
       
-      // 🔥 ШАГ 5: Разблокируем премиум привычки
+      // 🔥 ШАГ 6: Разблокируем премиум привычки
       try {
         await HabitLockService.unlockPremiumHabits(userId);
         console.log(`✅ Premium habits unlocked for user ${userId}`);
@@ -127,7 +147,7 @@ class SubscriptionService {
         console.warn('⚠️ Failed to unlock habits (non-critical):', unlockError.message);
       }
       
-      // 🔥 ШАГ 6: История - только существующие поля
+      // 🔥 ШАГ 7: Добавляем в историю
       try {
         await client.query(
           `INSERT INTO subscription_history (
@@ -142,23 +162,34 @@ class SubscriptionService {
       
       await client.query('COMMIT');
       
-      console.log(`🎉 Subscription fully activated for user ${userId}`);
-      
-      // 🔥 ПРОВЕРКА: Подтверждаем что обновился только один пользователь
+      // 🔥 ФИНАЛЬНАЯ ПРОВЕРКА: Подтверждаем что обновился ТОЛЬКО один пользователь
       const verifyResult = await client.query(
+        `SELECT id, telegram_id, first_name, is_premium 
+         FROM users 
+         WHERE id = $1`,
+        [userId]
+      );
+      
+      console.log(`🔍 Final verification for user ${userId}:`, verifyResult.rows[0]);
+      
+      const totalPremiumCount = await client.query(
         'SELECT COUNT(*) as count FROM users WHERE is_premium = true'
       );
-      console.log(`✅ Total premium users in database: ${verifyResult.rows[0].count}`);
+      console.log(`📊 Total premium users in database: ${totalPremiumCount.rows[0].count}`);
+      
+      console.log(`🎉 Subscription successfully activated for user ${userId} ONLY`);
       
       return {
         success: true,
         subscription,
+        user: verifyResult.rows[0],
         message: `${plan.name} activated successfully!`
       };
       
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('❌ Error creating subscription:', error);
+      console.error('Stack:', error.stack);
       throw error;
     } finally {
       client.release();
@@ -166,7 +197,7 @@ class SubscriptionService {
   }
 
   /**
-   * 🆕 ИСПРАВЛЕННАЯ ОТМЕНА - без дубликатов в истории
+   * 🔥 ИСПРАВЛЕНО: Отмена подписки БЕЗ массового обновления
    */
   static async cancelSubscription(userId) {
     const client = await db.getClient();
@@ -176,9 +207,9 @@ class SubscriptionService {
       
       console.log(`🚫 Cancelling subscription for user ${userId}`);
       
-      // Проверяем пользователя
+      // 🔥 Проверяем пользователя
       const userCheck = await client.query(
-        'SELECT id, is_premium FROM users WHERE id = $1',
+        'SELECT id, telegram_id, first_name, is_premium FROM users WHERE id = $1',
         [userId]
       );
       
@@ -187,12 +218,14 @@ class SubscriptionService {
         return { success: false, error: 'User not found' };
       }
       
+      console.log(`✅ User found: ${userCheck.rows[0].first_name} (ID: ${userId})`);
+      
       if (!userCheck.rows[0].is_premium) {
         await client.query('ROLLBACK');
         return { success: false, error: 'No active subscription' };
       }
       
-      // 🔥 ШАГ 1: Получаем ВСЕ активные подписки ЭТОГО пользователя
+      // 🔥 ШАГ 1: Получаем активные подписки ТОЛЬКО ЭТОГО пользователя
       const activeSubs = await client.query(
         `SELECT id, plan_type, plan_name, price_stars 
          FROM subscriptions 
@@ -208,6 +241,7 @@ class SubscriptionService {
       console.log(`📊 Found ${activeSubs.rows.length} active subscription(s) for user ${userId}`);
       
       // 🔥 ШАГ 2: Деактивируем подписки ТОЛЬКО ЭТОГО пользователя
+      // ✅ КРИТИЧНО: WHERE user_id = $1
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -217,9 +251,9 @@ class SubscriptionService {
         [userId]
       );
       
-      console.log(`✅ ${activeSubs.rows.length} subscription(s) deactivated for user ${userId}`);
+      console.log(`✅ Subscriptions deactivated ONLY for user ${userId}`);
       
-      // 🔥 ШАГ 3: История - проверяем существование ПЕРЕД вставкой
+      // 🔥 ШАГ 3: История
       for (const sub of activeSubs.rows) {
         try {
           const existingHistory = await client.query(
@@ -235,17 +269,16 @@ class SubscriptionService {
               ) VALUES ($1, $2, $3, $4, 'cancelled', CURRENT_TIMESTAMP)`,
               [userId, sub.id, sub.plan_type, sub.price_stars || 0]
             );
-            console.log(`✅ History record created for subscription ${sub.id}`);
-          } else {
-            console.log(`ℹ️ History record already exists for subscription ${sub.id}, skipping`);
           }
         } catch (histError) {
-          console.warn(`⚠️ History insert failed for subscription ${sub.id}:`, histError.message);
+          console.warn(`⚠️ History insert failed:`, histError.message);
         }
       }
       
       // 🔥 ШАГ 4: Обновляем ТОЛЬКО ЭТОГО пользователя
-      console.log(`🔄 Downgrading user ${userId} to free...`);
+      console.log(`🔄 Downgrading ONLY user ${userId} to free...`);
+      
+      // ✅ КРИТИЧНО: WHERE id = $1
       const updateResult = await client.query(
         `UPDATE users 
          SET is_premium = false,
@@ -253,17 +286,17 @@ class SubscriptionService {
              subscription_expires_at = NULL,
              subscription_end_date = CURRENT_TIMESTAMP
          WHERE id = $1
-         RETURNING id, is_premium`,
+         RETURNING id, telegram_id, first_name, is_premium`,
         [userId]
       );
       
       if (updateResult.rows.length === 0) {
-        throw new Error(`User ${userId} not found`);
+        throw new Error(`User ${userId} not found during downgrade`);
       }
       
-      console.log(`✅ User ${userId} downgraded to free:`, updateResult.rows[0]);
+      console.log(`✅ User ${userId} downgraded:`, updateResult.rows[0]);
       
-      // 🔥 ШАГ 5: Блокируем премиум привычки (если больше 3)
+      // 🔥 ШАГ 5: Блокируем премиум привычки
       try {
         const habitCount = await client.query(
           'SELECT COUNT(*) as count FROM habits WHERE user_id = $1 AND is_active = true',
@@ -274,30 +307,27 @@ class SubscriptionService {
         
         if (count > 3) {
           await HabitLockService.lockPremiumHabits(userId, 'subscription_cancelled');
-          console.log(`✅ Premium habits locked for user ${userId} (total: ${count}, limit: 3)`);
+          console.log(`✅ Premium habits locked for user ${userId}`);
         }
       } catch (lockError) {
-        console.warn('⚠️ Failed to lock habits (non-critical):', lockError.message);
+        console.warn('⚠️ Failed to lock habits:', lockError.message);
       }
       
       await client.query('COMMIT');
       
-      console.log(`✅ Subscription cancelled successfully for user ${userId}`);
+      console.log(`✅ Subscription cancelled successfully for user ${userId} ONLY`);
       
       return {
         success: true,
         message: 'Subscription cancelled successfully',
-        deactivatedCount: activeSubs.rows.length
+        deactivatedCount: activeSubs.rows.length,
+        user: updateResult.rows[0]
       };
       
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('❌ Cancellation error:', error);
-      console.error('Error details:', {
-        message: error.message,
-        code: error.code,
-        constraint: error.constraint
-      });
+      console.error('Stack:', error.stack);
       
       return {
         success: false,
@@ -309,7 +339,7 @@ class SubscriptionService {
   }
 
   /**
-   * Автоматическое истечение подписок
+   * 🔥 ИСПРАВЛЕНО: Истечение подписки БЕЗ массового обновления
    */
   static async expireUserSubscription(userId) {
     const client = await db.getClient();
@@ -329,7 +359,7 @@ class SubscriptionService {
         return { success: true, message: 'No active subscriptions' };
       }
       
-      // Деактивируем ТОЛЬКО подписки ЭТОГО пользователя
+      // ✅ КРИТИЧНО: WHERE user_id = $1
       await client.query(
         `UPDATE subscriptions 
          SET is_active = false, 
@@ -361,7 +391,7 @@ class SubscriptionService {
         }
       }
       
-      // Обновляем ТОЛЬКО ЭТОГО пользователя
+      // ✅ КРИТИЧНО: WHERE id = $1
       await client.query(
         `UPDATE users 
          SET is_premium = false,
@@ -380,7 +410,7 @@ class SubscriptionService {
       }
       
       await client.query('COMMIT');
-      console.log(`✅ Subscription expired for user ${userId}`);
+      console.log(`✅ Subscription expired ONLY for user ${userId}`);
       
       return { success: true };
       

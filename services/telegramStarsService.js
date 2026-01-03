@@ -1,4 +1,4 @@
-// services/telegramStarsService.js - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
+// services/telegramStarsService.js - ИСПРАВЛЕННАЯ ВЕРСИЯ (БЕЗ МАССОВОГО ОБНОВЛЕНИЯ)
 
 const db = require('../config/database');
 const crypto = require('crypto');
@@ -138,6 +138,9 @@ class TelegramStarsService {
     }
   }
 
+  /**
+   * 🔥 ИСПРАВЛЕНО: Обработка платежа БЕЗ массового обновления
+   */
   static async processSuccessfulPayment(paymentData) {
     const {
       telegram_payment_charge_id,
@@ -176,7 +179,7 @@ class TelegramStarsService {
         };
       }
 
-      // Получаем пользователя
+      // 🔥 Получаем пользователя
       const userResult = await client.query(
         'SELECT id, telegram_id, first_name FROM users WHERE telegram_id = $1',
         [from_user_id.toString()]
@@ -254,7 +257,7 @@ class TelegramStarsService {
           planType
         ]
       );
-      console.log(`✅ Payment record saved with actual price: ${actualPrice} XTR`);
+      console.log(`✅ Payment record saved for user ${internalUserId}`);
 
       // Вычисляем даты подписки
       let expiresAt = null;
@@ -267,25 +270,26 @@ class TelegramStarsService {
 
       console.log(`📅 Subscription: ${startedAt.toISOString()} → ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
 
-      // 🔥 КРИТИЧНО: Деактивируем ВСЕ старые подписки ТОЛЬКО для ЭТОГО пользователя
+      // 🔥 КРИТИЧНО: Деактивируем ТОЛЬКО старые подписки ЭТОГО пользователя
       const oldSubscriptions = await client.query(
-        'SELECT id FROM subscriptions WHERE user_id = $1',
+        'SELECT id FROM subscriptions WHERE user_id = $1 AND is_active = true',
         [internalUserId]
       );
 
       if (oldSubscriptions.rows.length > 0) {
         console.log(`🔄 Deactivating ${oldSubscriptions.rows.length} old subscription(s) for user ${internalUserId}...`);
         
+        // ✅ КРИТИЧНО: WHERE user_id = $1
         await client.query(
           `UPDATE subscriptions 
            SET is_active = false, 
                cancelled_at = CURRENT_TIMESTAMP,
                expires_at = NULL
-           WHERE user_id = $1`,
+           WHERE user_id = $1 AND is_active = true`,
           [internalUserId]
         );
         
-        console.log(`✅ Old subscriptions deactivated for user ${internalUserId}`);
+        console.log(`✅ Old subscriptions deactivated ONLY for user ${internalUserId}`);
       }
 
       // Создаём новую подписку
@@ -308,8 +312,10 @@ class TelegramStarsService {
       );
       console.log(`✅ Subscription created for user ${internalUserId}, ID: ${subscriptionResult.rows[0].id}`);
 
-      // 🔥 КРИТИЧНО: Обновляем ТОЛЬКО ЭТОГО пользователя
-      console.log(`🔄 Updating user ${internalUserId} (telegram_id: ${from_user_id}) to premium...`);
+      // 🔥 КРИТИЧНО: Обновляем ТОЛЬКО ЭТОГО конкретного пользователя
+      console.log(`🔄 Updating ONLY user ${internalUserId} (telegram_id: ${from_user_id}) to premium...`);
+      
+      // ✅ КРИТИЧНО: WHERE id = $1 - обновляет ТОЛЬКО этого пользователя
       const updateResult = await client.query(
         `UPDATE users 
          SET is_premium = true,
@@ -317,7 +323,7 @@ class TelegramStarsService {
              subscription_expires_at = $3,
              subscription_start_date = $4
          WHERE id = $1
-         RETURNING id, telegram_id, is_premium, subscription_type`,
+         RETURNING id, telegram_id, first_name, is_premium, subscription_type`,
         [internalUserId, planType, expiresAt, startedAt]
       );
 
@@ -325,15 +331,27 @@ class TelegramStarsService {
         throw new Error(`Failed to update user ${internalUserId}`);
       }
 
-      console.log(`✅ User ${internalUserId} updated:`, updateResult.rows[0]);
+      console.log(`✅ User ${internalUserId} updated to premium:`, {
+        id: updateResult.rows[0].id,
+        telegram_id: updateResult.rows[0].telegram_id,
+        first_name: updateResult.rows[0].first_name,
+        is_premium: updateResult.rows[0].is_premium,
+        subscription_type: updateResult.rows[0].subscription_type
+      });
 
-      // Проверяем общее количество premium пользователей
+      // 🔥 ФИНАЛЬНАЯ ПРОВЕРКА
+      const verifyUser = await client.query(
+        'SELECT id, telegram_id, first_name, is_premium FROM users WHERE id = $1',
+        [internalUserId]
+      );
+      console.log(`🔍 Verification - updated user:`, verifyUser.rows[0]);
+
       const premiumCount = await client.query(
         'SELECT COUNT(*) as count FROM users WHERE is_premium = true'
       );
       console.log(`📊 Total premium users in database: ${premiumCount.rows[0].count}`);
 
-      // История - вставляем только существующие поля
+      // История
       try {
         await client.query(
           `INSERT INTO subscription_history (
@@ -341,7 +359,7 @@ class TelegramStarsService {
           ) VALUES ($1, $2, $3, $4, 'purchased', CURRENT_TIMESTAMP)`,
           [internalUserId, subscriptionResult.rows[0].id, planType, actualPrice]
         );
-        console.log(`✅ History record created`);
+        console.log(`✅ History record created for user ${internalUserId}`);
       } catch (histError) {
         console.warn('⚠️ History insert failed (non-critical):', histError.message);
       }
@@ -353,6 +371,7 @@ class TelegramStarsService {
       console.log(`Plan: ${plan.name} (${planType})`);
       console.log(`Amount: ${actualPrice} XTR`);
       console.log(`Valid until: ${expiresAt || 'LIFETIME'}`);
+      console.log(`Updated ONLY this user, not all users`);
 
       return {
         success: true,
@@ -365,6 +384,7 @@ class TelegramStarsService {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('❌ Error processing payment:', error);
+      console.error('Stack:', error.stack);
       return {
         success: false,
         error: error.message
