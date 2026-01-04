@@ -317,7 +317,8 @@ class TelegramStarsService {
       console.log('🔍 BEFORE UPDATE - checking all users premium status...');
       
       const beforeUpdate = await client.query('SELECT COUNT(*) as count FROM users WHERE is_premium = true');
-      console.log(`📊 Premium users BEFORE update: ${beforeUpdate.rows[0].count}`);
+const beforeCount = parseInt(beforeUpdate.rows[0].count);
+      console.log(`📊 Premium users BEFORE update: ${beforeCount}`);
       
       // ✅ КРИТИЧНО: WHERE id = $1 - обновляет ТОЛЬКО этого пользователя
       console.log(`📝 Executing UPDATE for user_id=${internalUserId} with params:`, {
@@ -339,15 +340,21 @@ class TelegramStarsService {
       );
       
       console.log('🔍 AFTER UPDATE - checking all users premium status...');
-      const afterUpdate = await client.query('SELECT COUNT(*) as count FROM users WHERE is_premium = true');
-      console.log(`📊 Premium users AFTER update: ${afterUpdate.rows[0].count}`);
-      
-      if (afterUpdate.rows[0].count > beforeUpdate.rows[0].count + 1) {
-        console.error('🚨🚨🚨 MASS UPDATE DETECTED! More than 1 user got premium! 🚨🚨🚨');
-        await client.query('ROLLBACK');
-        throw new Error('MASS UPDATE DETECTED - Transaction rolled back!');
-      }
+const afterUpdate = await client.query('SELECT COUNT(*) as count FROM users WHERE is_premium = true');
+const afterCount = parseInt(afterUpdate.rows[0].count);  // ✅ ПРЕОБРАЗУЕМ В ЧИСЛО
+console.log(`📊 Premium users AFTER update: ${afterCount}`);
 
+// ✅ КРИТИЧНО: Сравниваем ЧИСЛА, а не строки
+const expectedCount = beforeCount + 1;
+
+console.log(`🔍 Comparison: ${afterCount} > ${expectedCount} = ${afterCount > expectedCount}`);
+
+if (afterCount > expectedCount) {
+  console.error('🚨🚨🚨 MASS UPDATE DETECTED! More than 1 user got premium! 🚨🚨🚨');
+  console.error(`Before: ${beforeCount}, After: ${afterCount}, Expected: ${expectedCount}`);
+  await client.query('ROLLBACK');
+  throw new Error('MASS UPDATE DETECTED - Transaction rolled back!');
+}
       if (updateResult.rows.length === 0) {
         throw new Error(`Failed to update user ${internalUserId}`);
       }
