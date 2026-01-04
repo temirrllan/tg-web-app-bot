@@ -314,8 +314,19 @@ class TelegramStarsService {
 
       // 🔥 КРИТИЧНО: Обновляем ТОЛЬКО ЭТОГО конкретного пользователя
       console.log(`🔄 Updating ONLY user ${internalUserId} (telegram_id: ${from_user_id}) to premium...`);
+      console.log('🔍 BEFORE UPDATE - checking all users premium status...');
+      
+      const beforeUpdate = await client.query('SELECT COUNT(*) as count FROM users WHERE is_premium = true');
+      console.log(`📊 Premium users BEFORE update: ${beforeUpdate.rows[0].count}`);
       
       // ✅ КРИТИЧНО: WHERE id = $1 - обновляет ТОЛЬКО этого пользователя
+      console.log(`📝 Executing UPDATE for user_id=${internalUserId} with params:`, {
+        internalUserId,
+        planType,
+        expiresAt,
+        startedAt
+      });
+      
       const updateResult = await client.query(
         `UPDATE users 
          SET is_premium = true,
@@ -326,6 +337,16 @@ class TelegramStarsService {
          RETURNING id, telegram_id, first_name, is_premium, subscription_type`,
         [internalUserId, planType, expiresAt, startedAt]
       );
+      
+      console.log('🔍 AFTER UPDATE - checking all users premium status...');
+      const afterUpdate = await client.query('SELECT COUNT(*) as count FROM users WHERE is_premium = true');
+      console.log(`📊 Premium users AFTER update: ${afterUpdate.rows[0].count}`);
+      
+      if (afterUpdate.rows[0].count > beforeUpdate.rows[0].count + 1) {
+        console.error('🚨🚨🚨 MASS UPDATE DETECTED! More than 1 user got premium! 🚨🚨🚨');
+        await client.query('ROLLBACK');
+        throw new Error('MASS UPDATE DETECTED - Transaction rolled back!');
+      }
 
       if (updateResult.rows.length === 0) {
         throw new Error(`Failed to update user ${internalUserId}`);
