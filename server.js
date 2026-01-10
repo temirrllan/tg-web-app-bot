@@ -230,6 +230,184 @@ const ReminderService = require("./services/reminderService");
 const reminderService = new ReminderService(bot);
 const TelegramStarsService = require("./services/telegramStarsService");
 
+// ========================================
+// 📚 СИСТЕМА ИНСТРУКЦИЙ
+// ========================================
+
+const INSTRUCTIONS = {
+  en: {
+    menu_title: "📖 <b>Habit Tracker Instructions</b>\n\nChoose a topic to learn more:",
+    
+    registration: {
+      title: "🔐 Registration",
+      text: "🔐 <b>Registration</b>\n\n✨ Good news - there's no registration needed!\n\nJust open the app and you're ready to go. Your Telegram account is used automatically.\n\n• No forms to fill\n• No passwords to remember\n• Instant access\n\nTap \"Open App\" and start building habits right away! 🚀"
+    },
+    
+    creating_habit: {
+      title: "➕ Creating a Habit",
+      text: "➕ <b>Creating Your First Habit</b>\n\n1️⃣ Open the app and tap the <b>\"+ New Habit\"</b> button\n\n2️⃣ Fill in the details:\n   • Habit name (e.g., \"Morning Run\")\n   • Goal description\n   • Choose frequency (daily/weekly)\n   • Set reminder time (optional)\n\n3️⃣ Tap <b>\"Create\"</b> - done! ✅\n\n💡 <b>Tip:</b> Start with 1-2 habits. It's better to be consistent with a few than overwhelmed with many!"
+    },
+    
+    punching_friend: {
+      title: "👊 Punching a Friend",
+      text: "👊 <b>Punching Friends</b>\n\n\"Punch\" is a fun way to encourage your friends!\n\n<b>How it works:</b>\n1️⃣ Add friends to your habit\n2️⃣ When they complete their habit, you can \"punch\" them\n3️⃣ It's a virtual high-five! 🙌\n\n<b>To punch:</b>\n• Go to shared habits\n• See your friend's progress\n• Tap the punch emoji 👊\n\n<b>Why punch?</b>\n• Show support\n• Keep each other motivated\n• Make habit building fun!\n\nYour friends will get a notification and feel encouraged! 💪"
+    },
+    
+    sharing_habits: {
+      title: "🤝 Sharing Habits",
+      text: "🤝 <b>Sharing Habits with Friends</b>\n\n<b>Share your habits to stay accountable together!</b>\n\n📤 <b>How to share:</b>\n1️⃣ Open your habit\n2️⃣ Tap the <b>\"Share\"</b> button\n3️⃣ Send the invite link to friends\n\n✅ <b>What happens:</b>\n• Friends see your progress\n• You see theirs\n• Encourage each other\n• Build streaks together\n\n💡 <b>Pro tip:</b> Shared habits have higher success rates! Having an accountability partner increases your chances by 65%."
+    },
+    
+    tracking_progress: {
+      title: "📊 Tracking Progress",
+      text: "📊 <b>Tracking Your Progress</b>\n\n<b>Check your progress:</b>\n\n📈 <b>Statistics you'll see:</b>\n• Current streak 🔥\n• Best streak 🏆\n• Completion rate 📊\n• Weekly/monthly overview 📅\n\n✅ <b>Marking habits:</b>\n• Tap the checkmark to complete\n• Use reminders to stay on track\n• Review your calendar view\n\n🎯 <b>Stay motivated:</b>\n• Watch your streaks grow\n• See visual progress\n• Celebrate milestones\n\nEvery day counts! Keep going! 💪"
+    },
+    
+    reminders: {
+      title: "⏰ Setting Reminders",
+      text: "⏰ <b>Setting Up Reminders</b>\n\n<b>Never forget your habits!</b>\n\n🔔 <b>How to set reminders:</b>\n1️⃣ Open your habit settings\n2️⃣ Enable \"Reminder\"\n3️⃣ Choose your preferred time\n4️⃣ Select reminder days\n\n💡 <b>Best practices:</b>\n• Set reminders for the same time daily\n• Choose realistic times\n• Not too many at once\n\n📱 <b>You'll receive:</b>\n• Telegram notification\n• Quick action buttons\n• Motivational messages\n\nStay consistent with smart reminders! ⏰"
+    },
+    
+    premium: {
+      title: "⭐ Premium Features",
+      text: "⭐ <b>Premium Subscription</b>\n\n<b>Upgrade for unlimited possibilities!</b>\n\n🎁 <b>Premium includes:</b>\n✅ Unlimited habits (Free: 5)\n✅ Unlimited friends\n✅ Advanced statistics\n✅ Priority support\n✅ Custom habit icons\n✅ Export your data\n\n💎 <b>Plans available:</b>\n• Monthly: 50 ⭐ Telegram Stars\n• Yearly: 500 ⭐ (Save 17%!)\n\n🚀 <b>Go Premium:</b>\nOpen Settings → Subscription → Choose Plan\n\nInvest in your personal growth! 🌟"
+    },
+    
+    back_button: "◀️ Back to Menu",
+    open_app_button: "📱 Open App"
+  },
+  
+  ru: {
+    menu_title: "📖 <b>Инструкция по Habit Tracker</b>\n\nВыберите тему для изучения:",
+    
+    registration: {
+      title: "🔐 Регистрация",
+      text: "🔐 <b>Регистрация</b>\n\n✨ Хорошие новости - регистрация не требуется!\n\nПросто откройте приложение и всё готово. Ваш Telegram аккаунт используется автоматически.\n\n• Никаких форм\n• Никаких паролей\n• Мгновенный доступ\n\nНажмите \"Открыть приложение\" и начинайте строить привычки прямо сейчас! 🚀"
+    },
+    
+    creating_habit: {
+      title: "➕ Создание привычки",
+      text: "➕ <b>Создание первой привычки</b>\n\n1️⃣ Откройте приложение и нажмите на кнопку <b>\"+\"</b>\n\n2️⃣ Заполните детали:\n   • Название привычки (например, \"Утренняя пробежка\")\n   • Описание цели\n   • Выберите частоту (ежедневно/еженедельно)\n   • Установите время напоминания (опционально)\n\n3️⃣ Нажмите <b>\"Создать\"</b> - готово! ✅\n\n💡 <b>Совет:</b> Начните с 1-2 привычек. Лучше быть последовательным с несколькими, чем перегруженным многими!"
+    },
+    
+    punching_friend: {
+      title: "👊 Панч друга",
+      text: "👊 <b>Панч друзей</b>\n\n\"Панч\" - это веселый способ поддержать друзей!\n\n<b>Как это работает:</b>\n1️⃣ Добавьте друзей к своей привычке\n2️⃣ Когда они не выполняют привычку, вы можете \"запанчить\" их\n3️⃣ Это виртуальная пятюня! 🙌\n\n<b>Как запанчить:</b>\n• Перейдите к общим привычкам\n• Найдите нужного друга\n• Свайпните друга влево\n\n<b>Зачем панчить?</b>\n• Показать поддержку\n• Мотивировать друг друга\n• Сделать выработку привычек веселее!\n\nВаши друзья получат уведомление и почувствуют поддержку! 💪"
+    },
+    
+    sharing_habits: {
+      title: "🤝 Совместные привычки",
+      text: "🤝 <b>Совместные привычки с друзьями</b>\n\n<b>Делитесь привычками для взаимной ответственности!</b>\n\n📤 <b>Как поделиться:</b>\n1️⃣ Откройте вашу привычку\n2️⃣ Нажмите кнопку <b>\"Пригласить друга\"</b>\n3️⃣ Отправьте ссылку-приглашение друзьям\n\n✅ <b>Что происходит:</b>\n• Друзья видят ваш прогресс\n• Вы видите их\n• Поддерживаете друг друга\n• Строите серии вместе\n\n💡 <b>Совет:</b> Совместные привычки имеют более высокий процент успеха! Партнер по ответственности увеличивает ваши шансы на 65%."
+    },
+    
+    tracking_progress: {
+      title: "📊 Отслеживание прогресса",
+      text: "📊 <b>Отслеживание прогресса</b>\n\n<b>Проверяйте свой прогресс:</b>\n\n📈 <b>Статистика, которую вы увидите:</b>\n• Текущая серия 🔥\n• Лучшая серия 🏆\n• Процент выполнения 📊\n• Недельный/месячный обзор 📅\n\n✅ <b>Отметка привычек:</b>\n• Нажмите галочку для выполнения\n• Используйте напоминания\n• Смотрите календарный вид\n\n🎯 <b>Оставайтесь мотивированными:</b>\n• Наблюдайте за ростом серий\n• Видьте визуальный прогресс\n• Празднуйте достижения\n\nКаждый день имеет значение! Продолжайте! 💪"
+    },
+    
+    reminders: {
+      title: "⏰ Напоминания",
+      text: "⏰ <b>Настройка напоминаний</b>\n\n<b>Никогда не забывайте о привычках!</b>\n\n🔔 <b>Как настроить:</b>\n1️⃣ Откройте настройки привычки\n2️⃣ Включите \"Напоминание\"\n3️⃣ Выберите удобное время\n4️⃣ Выберите дни напоминаний\n\n💡 <b>Лучшие практики:</b>\n• Устанавливайте на одно время каждый день\n• Выбирайте реалистичное время\n• Не слишком много за раз\n\n📱 <b>Вы получите:</b>\n• Уведомление в Telegram\n• Кнопки быстрых действий\n• Мотивационные сообщения\n\nБудьте последовательны с умными напоминаниями! ⏰"
+    },
+    
+    premium: {
+      title: "⭐ Premium",
+      text: "⭐ <b>Premium подписка</b>\n\n<b>Обновитесь для неограниченных возможностей!</b>\n\n🎁 <b>Premium включает:</b>\n✅ Безлимитные привычки (Бесплатно: 5)\n✅ Безлимитные друзья\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n✅ Кастомные иконки привычек\n✅ Экспорт данных\n\n💎 <b>Доступные планы:</b>\n• Месячный: 50 ⭐ Telegram Stars\n• Годовой: 500 ⭐ (Экономия 17%!)\n\n🚀 <b>Получить Premium:</b>\nОткройте Настройки → Подписка → Выберите план\n\nИнвестируйте в личный рост! 🌟"
+    },
+    
+    back_button: "◀️ Назад в меню",
+    open_app_button: "📱 Открыть приложение"
+  },
+  
+  kk: {
+    menu_title: "📖 <b>Habit Tracker нұсқаулығы</b>\n\nТақырыпты таңдаңыз:",
+    
+    registration: {
+      title: "🔐 Тіркелу",
+      text: "🔐 <b>Тіркелу</b>\n\n✨ Жақсы жаңалық - тіркелу қажет емес!\n\nҚосымшаны ашыңыз, барлығы дайын. Сіздің Telegram аккаунтыңыз автоматты түрде қолданылады.\n\n• Нысандар жоқ\n• Құпия сөздер жоқ\n• Лезде қолжетімді\n\n\"Қосымшаны ашу\" батырмасын басыңыз және әдеттерді құруды бастаңыз! 🚀"
+    },
+    
+    creating_habit: {
+      title: "➕ Әдет құру",
+      text: "➕ <b>Бірінші әдетті құру</b>\n\n1️⃣ Қосымшаны ашып, <b>\"+ Жаңа әдет\"</b> батырмасын басыңыз\n\n2️⃣ Мәліметтерді толтырыңыз:\n   • Әдет атауы (мысалы, \"Таңғы жүгіру\")\n   • Мақсат сипаттамасы\n   • Жиілігін таңдаңыз (күнделікті/апталық)\n   • Еске салғыш уақытын орнатыңыз (қалауыңызша)\n\n3️⃣ <b>\"Құру\"</b> батырмасын басыңыз - дайын! ✅\n\n💡 <b>Кеңес:</b> 1-2 әдеттен бастаңыз. Көбірек әдеттермен шамадан тыс жүктелгеннен гөрі, бірнешеуімен тұрақты болған дұрыс!"
+    },
+    
+    punching_friend: {
+      title: "👊 Досты панчтау",
+      text: "👊 <b>Достарды панчтау</b>\n\n\"Панч\" - достарыңызды қолдаудың қызықты әдісі!\n\n<b>Қалай жұмыс істейді:</b>\n1️⃣ Достарды әдетке қосыңыз\n2️⃣ Олар әдетті орындағанда, оларды \"панчтай\" аласыз\n3️⃣ Бұл виртуалды бесжарыс! 🙌\n\n<b>Қалай панчтау керек:</b>\n• Ортақ әдеттерге өтіңіз\n• Досыңыздың прогресін қараңыз\n• Панч эмодзиін басыңыз 👊\n\n<b>Неге панчтау керек?</b>\n• Қолдау көрсету\n• Бір-біріңізді мотивациялау\n• Әдет құруды қызықты ету!\n\nДостарыңыз хабарландыру алады және қолдау сезінеді! 💪"
+    },
+    
+    sharing_habits: {
+      title: "🤝 Ортақ әдеттер",
+      text: "🤝 <b>Достармен ортақ әдеттер</b>\n\n<b>Өзара жауапкершілік үшін әдеттерді бөлісіңіз!</b>\n\n📤 <b>Қалай бөлісу керек:</b>\n1️⃣ Әдетіңізді ашыңыз\n2️⃣ <b>\"Бөлісу\"</b> батырмасын басыңыз\n3️⃣ Шақыру сілтемесін достарға жіберіңіз\n\n✅ <b>Не болады:</b>\n• Достар сіздің прогресіңізді көреді\n• Сіз олардікін көресіз\n• Бір-біріңізді қолдайсыз\n• Бірге серияларды құрасыз\n\n💡 <b>Кеңес:</b> Ортақ әдеттердің табыс пайызы жоғары! Жауапкершілік серіктесі сіздің мүмкіндіктеріңізді 65%-ға арттырады."
+    },
+    
+    tracking_progress: {
+      title: "📊 Прогресті бақылау",
+      text: "📊 <b>Прогресті бақылау</b>\n\n<b>Прогресіңізді тексеріңіз:</b>\n\n📈 <b>Көретін статистика:</b>\n• Ағымдағы серия 🔥\n• Ең жақсы серия 🏆\n• Орындау пайызы 📊\n• Апталық/айлық шолу 📅\n\n✅ <b>Әдеттерді белгілеу:</b>\n• Орындау үшін белгіні басыңыз\n• Еске салғыштарды пайдаланыңыз\n• Күнтізбе көрінісін қараңыз\n\n🎯 <b>Мотивацияны сақтаңыз:</b>\n• Сериялардың өсуін бақылаңыз\n• Визуалды прогресті көріңіз\n• Жетістіктерді атап өтіңіз\n\nӘр күн маңызды! Жалғастырыңыз! 💪"
+    },
+    
+    reminders: {
+      title: "⏰ Еске салғыштар",
+      text: "⏰ <b>Еске салғыштарды баптау</b>\n\n<b>Әдеттерді ешқашан ұмытпаңыз!</b>\n\n🔔 <b>Қалай баптау керек:</b>\n1️⃣ Әдет параметрлерін ашыңыз\n2️⃣ \"Еске салғыш\" қосыңыз\n3️⃣ Қолайлы уақытты таңдаңыз\n4️⃣ Еске салғыш күндерін таңдаңыз\n\n💡 <b>Үздік тәжірибелер:</b>\n• Күн сайын бір уақытқа орнатыңыз\n• Шынайы уақытты таңдаңыз\n• Бір мезгілде көп болмасын\n\n📱 <b>Аласыз:</b>\n• Telegram хабарландыруы\n• Жылдам әрекет батырмалары\n• Мотивациялық хабарлар\n\nАқылды еске салғыштармен тұрақты болыңыз! ⏰"
+    },
+    
+    premium: {
+      title: "⭐ Premium",
+      text: "⭐ <b>Premium жазылым</b>\n\n<b>Шексіз мүмкіндіктер үшін жаңартыңыз!</b>\n\n🎁 <b>Premium қамтиды:</b>\n✅ Шексіз әдеттер (Тегін: 5)\n✅ Шексіз достар\n✅ Кеңейтілген статистика\n✅ Басым қолдау\n✅ Таңдауыңызша әдет белгішелері\n✅ Деректерді экспорттау\n\n💎 <b>Қолжетімді жоспарлар:</b>\n• Айлық: 50 ⭐ Telegram Stars\n• Жылдық: 500 ⭐ (17% үнемдеу!)\n\n🚀 <b>Premium алу:</b>\nПараметрлер → Жазылым → Жоспарды таңдау\n\nЖеке өсуге инвестиция салыңыз! 🌟"
+    },
+    
+    back_button: "◀️ Мәзірге оралу",
+    open_app_button: "📱 Қосымшаны ашу"
+  }
+};
+
+// Функция для получения языка пользователя
+function getUserLanguage(langCode) {
+  if (langCode === 'ru' || langCode?.startsWith('ru-')) return 'ru';
+  if (langCode === 'kk' || langCode === 'kz' || langCode?.startsWith('kk-')) return 'kk';
+  return 'en';
+}
+
+// Создание главного меню инструкций
+function getInstructionsMainMenu(lang) {
+  const texts = INSTRUCTIONS[lang];
+  
+  return {
+    text: texts.menu_title,
+    keyboard: [
+      [{ text: texts.registration.title, callback_data: 'instr_registration' }],
+      [{ text: texts.creating_habit.title, callback_data: 'instr_creating_habit' }],
+      [{ text: texts.punching_friend.title, callback_data: 'instr_punching_friend' }],
+      [{ text: texts.sharing_habits.title, callback_data: 'instr_sharing_habits' }],
+      [{ text: texts.tracking_progress.title, callback_data: 'instr_tracking_progress' }],
+      [{ text: texts.reminders.title, callback_data: 'instr_reminders' }],
+      [{ text: texts.premium.title, callback_data: 'instr_premium' }],
+      [{ text: texts.open_app_button, web_app: { url: WEBAPP_URL } }]
+    ]
+  };
+}
+
+// Создание страницы инструкции
+function getInstructionPage(lang, section) {
+  const texts = INSTRUCTIONS[lang];
+  const sectionData = texts[section];
+  
+  if (!sectionData) return null;
+  
+  return {
+    text: sectionData.text,
+    keyboard: [
+      [{ text: texts.back_button, callback_data: 'instr_main_menu' }],
+      [{ text: texts.open_app_button, web_app: { url: WEBAPP_URL } }]
+    ]
+  };
+}
+
+// ========================================
+// КОНЕЦ СИСТЕМЫ ИНСТРУКЦИЙ
+// ========================================
+
 // ВАЖНО: Обработчик pre_checkout_query
 bot.on("pre_checkout_query", async (query) => {
   console.log("💳 ========== PRE-CHECKOUT QUERY (Telegram Stars) ==========");
@@ -248,8 +426,6 @@ bot.on("pre_checkout_query", async (query) => {
       });
       return;
     }
-
-    // const TelegramStarsService = require('./services/telegramStarsService');
 
     let parsed;
     try {
@@ -317,6 +493,7 @@ bot.on("pre_checkout_query", async (query) => {
     }
   }
 });
+
 // Обработчик successful_payment через bot.on
 bot.on("successful_payment", async (msg) => {
   console.log("💳 ========== SUCCESSFUL PAYMENT EVENT ==========");
@@ -345,12 +522,8 @@ bot.on("successful_payment", async (msg) => {
     }
   }
 });
-// Фрагмент из server.js - обработчик bot.on('message')
-// Этот код заменяет существующий обработчик в вашем server.js
 
-// Фрагмент из server.js - bot.on('message') - ИСПРАВЛЕННАЯ ВЕРСИЯ
-// Замени существующий обработчик на этот код
-
+// ОБРАБОТЧИК СООБЩЕНИЙ
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || '';
@@ -366,18 +539,15 @@ bot.on('message', async (msg) => {
     console.log('👋 Processing /start command');
     
     try {
-      // 🔥 Извлекаем параметр после /start
+      // Извлекаем параметр после /start
       const params = text.split(' ');
-      const startParam = params[1]; // Может быть join_XXXXX или undefined
+      const startParam = params[1];
       
       console.log('🔍 Start command params:', { 
         fullText: text, 
         params, 
         startParam 
       });
-      
-      // 🔥 КРИТИЧНО: НЕ СОЗДАЕМ ПОЛЬЗОВАТЕЛЯ ЗДЕСЬ!
-      // Пользователь будет создан при первом открытии приложения через /auth/telegram
       
       // Определяем язык для welcome message
       let userLanguage = 'en';
@@ -391,13 +561,12 @@ bot.on('message', async (msg) => {
       
       console.log('🌍 User language detected:', userLanguage);
       
-      // 🎯 ОБРАБОТКА DEEP LINK - ПРИСОЕДИНЕНИЕ К ПРИВЫЧКЕ
+      // ОБРАБОТКА DEEP LINK - ПРИСОЕДИНЕНИЕ К ПРИВЫЧКЕ
       if (startParam && startParam.startsWith('join_')) {
         const shareCode = startParam;
         
         console.log('🔗 JOIN INVITATION DETECTED:', shareCode);
         
-        // Получаем информацию о привычке
         const shareResult = await db.query(
           `SELECT sh.*, h.title, h.goal, u.first_name as owner_name
            FROM shared_habits sh
@@ -416,14 +585,13 @@ bot.on('message', async (msg) => {
             owner: habitInfo.owner_name
           });
           
-          // Отправляем приглашение с информацией о привычке
           const inviteMessages = {
             en: `🎉 <b>You've been invited!</b>\n\n${habitInfo.owner_name} wants you to join their habit:\n\n<b>"${habitInfo.title}"</b>\n📝 Goal: ${habitInfo.goal}\n\nOpen the app to join and start tracking together! 👇`,
             ru: `🎉 <b>Вас пригласили!</b>\n\n${habitInfo.owner_name} хочет, чтобы вы присоединились к привычке:\n\n<b>"${habitInfo.title}"</b>\n📝 Цель: ${habitInfo.goal}\n\nОткройте приложение, чтобы присоединиться и начать отслеживать вместе! 👇`,
             kk: `🎉 <b>Сізді шақырды!</b>\n\n${habitInfo.owner_name} сізді өз әдетіне қосылуға шақырады:\n\n<b>"${habitInfo.title}"</b>\n📝 Мақсат: ${habitInfo.goal}\n\nҚосылу және бірге бақылауды бастау үшін қосымшаны ашыңыз! 👇`
           };
           
-          const webAppUrl = `${process.env.WEBAPP_URL || process.env.FRONTEND_URL}?action=join&code=${shareCode}`;
+          const webAppUrl = `${WEBAPP_URL}?action=join&code=${shareCode}`;
           
           await bot.sendMessage(
             chatId,
@@ -444,14 +612,13 @@ bot.on('message', async (msg) => {
           );
           
           console.log('✅ Invitation message sent with deep link');
-          return; // Завершаем, не показываем обычное приветствие
+          return;
         } else {
           console.log('⚠️ Share code not found:', shareCode);
-          // Продолжаем как обычный /start
         }
       }
       
-      // 👋 ОБЫЧНОЕ ПРИВЕТСТВИЕ
+      // ОБЫЧНОЕ ПРИВЕТСТВИЕ
       const welcomeMessages = {
         en: `👋 <b>Welcome to Habit Tracker!</b>\n\nI'll help you build good habits and achieve your goals.\n\n🎯 Track your progress daily\n👥 Share habits with friends\n📊 View detailed statistics\n⏰ Get reminders\n\nLet's start! 👇`,
         ru: `👋 <b>Добро пожаловать в Habit Tracker!</b>\n\nЯ помогу вам развить полезные привычки и достичь целей.\n\n🎯 Отслеживайте прогресс каждый день\n👥 Делитесь привычками с друзьями\n📊 Смотрите детальную статистику\n⏰ Получайте напоминания\n\nДавайте начнём! 👇`,
@@ -464,26 +631,39 @@ bot.on('message', async (msg) => {
         kk: '📱 Habit Tracker ашу'
       };
       
+      const instructionsTexts = {
+        en: '📖 Instructions',
+        ru: '📖 Инструкция',
+        kk: '📖 Нұсқаулық'
+      };
+      
       const welcomeMessage = welcomeMessages[userLanguage] || welcomeMessages['en'];
       const openAppText = openAppTexts[userLanguage] || openAppTexts['en'];
+      const instructionsText = instructionsTexts[userLanguage] || instructionsTexts['en'];
       
-      const webAppUrl = process.env.WEBAPP_URL || process.env.FRONTEND_URL;
-      
-      console.log('🔗 Sending button with URL:', webAppUrl);
+      console.log('🔗 Sending button with URL:', WEBAPP_URL);
       
       await bot.sendMessage(chatId, welcomeMessage, {
         parse_mode: 'HTML',
         reply_markup: {
-          inline_keyboard: [[
-            { 
-              text: openAppText, 
-              web_app: { url: webAppUrl }
-            }
-          ]]
+          inline_keyboard: [
+            [
+              { 
+                text: openAppText, 
+                web_app: { url: WEBAPP_URL }
+              }
+            ],
+            [
+              {
+                text: instructionsText,
+                callback_data: 'instr_main_menu'
+              }
+            ]
+          ]
         }
       });
       
-      console.log('✅ Welcome message sent (user will be created on first app open)');
+      console.log('✅ Welcome message sent with instructions button');
       
     } catch (error) {
       console.error('❌ /start error:', error);
@@ -492,12 +672,11 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 🆕 Команда /app для быстрого открытия приложения
+  // Команда /app для быстрого открытия приложения
   if (text === '/app') {
     console.log('📱 Processing /app command');
     
     try {
-      // Проверяем язык пользователя из БД (если есть)
       const userResult = await db.query(
         'SELECT language FROM users WHERE telegram_id = $1',
         [chatId.toString()]
@@ -508,7 +687,6 @@ bot.on('message', async (msg) => {
       if (userResult.rows.length > 0) {
         userLanguage = userResult.rows[0].language || 'en';
       } else {
-        // Если пользователя нет в БД, определяем язык из Telegram
         const langCode = msg.from.language_code?.toLowerCase() || 'en';
         if (langCode === 'ru' || langCode.startsWith('ru-')) {
           userLanguage = 'ru';
@@ -535,7 +713,7 @@ bot.on('message', async (msg) => {
           inline_keyboard: [[
             { 
               text: openAppTexts[userLanguage] || openAppTexts['en'],
-              web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
+              web_app: { url: WEBAPP_URL } 
             }
           ]]
         }
@@ -549,7 +727,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Обработка других команд...
+  // Обработка других команд
   if (text === '❓ Help' || text === '/help') {
     await bot.sendMessage(
       chatId,
@@ -565,12 +743,79 @@ bot.on('message', async (msg) => {
   console.log('⚠️ Unknown command');
 });
 
+// ОБРАБОТЧИК CALLBACK QUERY
 bot.on("callback_query", async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
 
   console.log(`📲 Callback received: ${data} from chat ${chatId}`);
+
+  // ========================================
+  // ОБРАБОТКА ИНСТРУКЦИЙ
+  // ========================================
+  if (data.startsWith('instr_')) {
+    try {
+      // Получаем язык пользователя
+      const userResult = await db.query(
+        'SELECT language FROM users WHERE telegram_id = $1',
+        [chatId.toString()]
+      );
+      
+      let userLanguage = 'en';
+      if (userResult.rows.length > 0) {
+        userLanguage = userResult.rows[0].language || 'en';
+      } else {
+        const langCode = callbackQuery.from.language_code?.toLowerCase() || 'en';
+        userLanguage = getUserLanguage(langCode);
+      }
+
+      // Главное меню инструкций
+      if (data === 'instr_main_menu') {
+        const menu = getInstructionsMainMenu(userLanguage);
+        
+        await bot.editMessageText(menu.text, {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: menu.keyboard
+          }
+        });
+        
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+      }
+
+      // Конкретная страница инструкции
+      const section = data.replace('instr_', '');
+      const page = getInstructionPage(userLanguage, section);
+      
+      if (page) {
+        await bot.editMessageText(page.text, {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: page.keyboard
+          }
+        });
+        
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+      }
+      
+    } catch (error) {
+      console.error('❌ Instructions callback error:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Error loading instructions'
+      });
+      return;
+    }
+  }
+  // ========================================
+  // КОНЕЦ ОБРАБОТКИ ИНСТРУКЦИЙ
+  // ========================================
 
   if (data.startsWith("mark_done_")) {
     const habitId = data.replace("mark_done_", "");
@@ -837,5 +1082,3 @@ process.on("SIGINT", () => {
   subscriptionCron.stop();
   server.close(() => process.exit(0));
 });
-
-// module.exports.bot = bot;
