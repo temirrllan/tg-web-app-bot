@@ -529,17 +529,25 @@ bot.on('message', async (msg) => {
         kk: '🚀 Қосымшаны іске қосу'
       };
       
-      await bot.sendMessage(chatId, messages[userLanguage] || messages['en'], {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [[
-            { 
-              text: openAppTexts[userLanguage] || openAppTexts['en'],
-              web_app: { url: process.env.WEBAPP_URL || process.env.FRONTEND_URL } 
-            }
-          ]]
+      await bot.sendMessage(chatId, welcomeMessage, {
+  parse_mode: 'HTML',
+  reply_markup: {
+    inline_keyboard: [
+      [
+        { 
+          text: openAppTexts[userLanguage], 
+          web_app: { url: webAppUrl }
         }
-      });
+      ],
+      [
+        {
+          text: instructionsTexts[userLanguage],
+          callback_data: 'instr_main_menu'
+        }
+      ]
+    ]
+  }
+});
       
       console.log('✅ /app command processed');
     } catch (error) {
