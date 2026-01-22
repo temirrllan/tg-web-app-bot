@@ -8,13 +8,13 @@ class SubscriptionService {
     'month': {
       name: 'Premium for 1 Month',
       duration_months: 1,
-      price_stars: 59,
+      price_stars: 1,
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
     },
     '6_months': {
       name: 'Premium for 6 Months',
       duration_months: 6,
-      price_stars: 1,
+      price_stars: 299,
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
