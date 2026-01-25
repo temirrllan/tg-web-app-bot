@@ -1255,18 +1255,33 @@ router.get('/habits/:id/members', authMiddleware, async (req, res) => {
     const parentHabitId = habitInfo.rows[0].parent_habit_id;
     const targetHabitId = parentHabitId || id;
     
+    // 🆕 Получаем участников с их статусом на сегодня
+    const today = new Date().toISOString().split('T')[0];
+    
     const members = await db.query(
-      `SELECT DISTINCT u.id, u.first_name, u.last_name, u.username, u.photo_url
-       FROM habit_members hm
-       JOIN users u ON hm.user_id = u.id
-       WHERE hm.habit_id IN (
+      `SELECT DISTINCT 
+        u.id, 
+        u.first_name, 
+        u.last_name, 
+        u.username, 
+        u.photo_url,
+        h.id as member_habit_id,
+        COALESCE(hm.status, 'pending') as today_status
+       FROM habit_members hmem
+       JOIN users u ON hmem.user_id = u.id
+       JOIN habits h ON (h.user_id = u.id AND (h.parent_habit_id = $1 OR h.id = $1))
+       LEFT JOIN habit_marks hm ON (hm.habit_id = h.id AND hm.date = $3::date)
+       WHERE hmem.habit_id IN (
          SELECT id FROM habits 
          WHERE parent_habit_id = $1 OR id = $1
        )
-       AND hm.is_active = true
-       AND u.id != $2`,
-      [targetHabitId, userId]
+       AND hmem.is_active = true
+       AND u.id != $2
+       ORDER BY u.first_name`,
+      [targetHabitId, userId, today]
     );
+    
+    console.log(`📊 Found ${members.rows.length} members with status for ${today}`);
     
     res.json({ 
       success: true, 
