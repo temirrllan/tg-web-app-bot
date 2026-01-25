@@ -367,6 +367,7 @@ router.get('/habits/date/:date', async (req, res) => {
         h.reminder_time,
         h.reminder_enabled,
         h.is_bad_habit,
+        h.day_period,
         h.streak_current,
         h.streak_best,
         h.is_active,

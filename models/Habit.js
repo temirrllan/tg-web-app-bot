@@ -1,44 +1,48 @@
+// models/Habit.js - ПОЛНЫЙ КОД с day_period
+
 const db = require('../config/database');
 
 class Habit {
   static async create(userId, habitData) {
-  const {
-    category_id,
-    title,
-    goal,
-    schedule_type = 'daily',
-    schedule_days = [1, 2, 3, 4, 5, 6, 7],
-    reminder_time,
-    reminder_enabled = true,
-    is_bad_habit = false
-  } = habitData;
+    const {
+      category_id,
+      title,
+      goal,
+      schedule_type = 'daily',
+      schedule_days = [1, 2, 3, 4, 5, 6, 7],
+      reminder_time,
+      reminder_enabled = true,
+      is_bad_habit = false,
+      day_period = 'morning' // 🆕 Добавили day_period
+    } = habitData;
 
-  try {
-    const result = await db.query(
-      `INSERT INTO habits
-       (user_id, creator_id, category_id, title, goal, schedule_type, schedule_days,
-        reminder_time, reminder_enabled, is_bad_habit)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
-      [
-        userId,
-        userId, // 🆕 creator_id = user_id для новых привычек
-        category_id || null,
-        title,
-        goal,
-        schedule_type,
-        schedule_days,
-        reminder_time || null,
-        reminder_enabled,
-        is_bad_habit
-      ]
-    );
-    return result.rows[0];
-  } catch (error) {
-    console.error('Database error in Habit.create:', error);
-    throw error;
+    try {
+      const result = await db.query(
+        `INSERT INTO habits
+         (user_id, creator_id, category_id, title, goal, schedule_type, schedule_days,
+          reminder_time, reminder_enabled, is_bad_habit, day_period)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING *`,
+        [
+          userId,
+          userId, // creator_id = user_id для новых привычек
+          category_id || null,
+          title,
+          goal,
+          schedule_type,
+          schedule_days,
+          reminder_time || null,
+          reminder_enabled,
+          is_bad_habit,
+          day_period // 🆕 Передаём day_period
+        ]
+      );
+      return result.rows[0];
+    } catch (error) {
+      console.error('Database error in Habit.create:', error);
+      throw error;
+    }
   }
-}
 
   static async findByUserId(userId) {
     const result = await db.query(
@@ -91,7 +95,7 @@ class Habit {
     const allowed = new Set([
       'category_id','title','goal','schedule_type','schedule_days',
       'reminder_time','reminder_enabled','is_bad_habit','is_active',
-      'streak_current','streak_best'
+      'streak_current','streak_best','day_period' // 🆕 Добавили day_period
     ]);
 
     const fields = [];
@@ -106,7 +110,6 @@ class Habit {
     });
 
     if (fields.length === 0) {
-      // нечего обновлять
       const existing = await db.query(
         'SELECT * FROM habits WHERE id = $1 AND user_id = $2',
         [id, userId]
