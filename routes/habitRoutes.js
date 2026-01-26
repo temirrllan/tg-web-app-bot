@@ -27,7 +27,18 @@ router.get('/habits/today', habitController.getTodayHabits);
 
 // Полная версия PATCH эндпоинта для routes/habitRoutes.js
 // Замените весь существующий router.patch('/habits/:id', ...) на этот код
-
+function calculateDayPeriod(reminderTime) {
+  if (!reminderTime) {
+    return 'morning';
+  }
+  
+  const [hours] = reminderTime.split(':').map(Number);
+  
+  if (hours >= 6 && hours < 12) return 'morning';
+  if (hours >= 12 && hours < 18) return 'afternoon';
+  if (hours >= 18 && hours < 24) return 'evening';
+  return 'night';
+}
 router.patch('/habits/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -50,7 +61,12 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
         error: 'Goal cannot be empty'
       });
     }
-
+    // 🔥 НОВАЯ ЛОГИКА: Автоматический пересчёт day_period при изменении reminder_time
+    if (updates.reminder_time !== undefined) {
+      updates.day_period = calculateDayPeriod(updates.reminder_time);
+      console.log(`📍 Auto-recalculated day_period: ${updates.day_period} (from time: ${updates.reminder_time || 'not set'})`);
+    }
+    
     // Проверяем привычку
     const habitCheck = await db.query(
       'SELECT * FROM habits WHERE id = $1',

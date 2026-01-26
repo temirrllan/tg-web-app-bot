@@ -3,6 +3,27 @@ const Habit = require('../models/Habit');
 const HabitMark = require('../models/HabitMark');
 // const Phrase = require('../models/Phrase');
 const db = require('../config/database');
+
+
+/**
+ * Определяет период дня на основе времени напоминания
+ * @param {string} reminderTime - Время в формате "HH:MM" или "HH:MM:SS"
+ * @returns {string} - 'morning' | 'afternoon' | 'evening' | 'night'
+ */
+
+
+function calculateDayPeriod(reminderTime) {
+  if (!reminderTime) {
+    return 'morning'; // По умолчанию утро
+  }
+  
+  const [hours] = reminderTime.split(':').map(Number);
+  
+  if (hours >= 6 && hours < 12) return 'morning';
+  if (hours >= 12 && hours < 18) return 'afternoon';
+  if (hours >= 18 && hours < 24) return 'evening';
+  return 'night'; // 0-5
+}
 const TITLE_MAX_LENGTH = 15;
 const GOAL_MAX_LENGTH = 35;
 const habitController = {
@@ -24,7 +45,7 @@ const habitController = {
     console.log('Creating habit for user:', userId);
     console.log('Habit data received:', JSON.stringify(habitData, null, 2));
 
-    // 🆕 Валидация длины title
+    // Валидация title
     if (!habitData.title || habitData.title.trim() === '') {
       console.error('❌ Validation failed: title is required');
       return res.status(400).json({
@@ -41,7 +62,7 @@ const habitController = {
       });
     }
 
-    // 🆕 Валидация длины goal
+    // Валидация goal
     if (!habitData.goal || habitData.goal.trim() === '') {
       console.error('❌ Validation failed: goal is required');
       return res.status(400).json({
@@ -58,7 +79,12 @@ const habitController = {
       });
     }
 
-    // Обработка bad habit согласно ТЗ
+    // 🔥 НОВАЯ ЛОГИКА: Автоматически определяем day_period по reminder_time
+    habitData.day_period = calculateDayPeriod(habitData.reminder_time);
+    
+    console.log(`📍 Auto-calculated day_period: ${habitData.day_period} (from time: ${habitData.reminder_time || 'not set'})`);
+
+    // Обработка bad habit
     if (habitData.is_bad_habit) {
       console.log('📌 Processing bad habit - simplifying data');
       habitData.schedule_type = 'daily';
@@ -66,6 +92,7 @@ const habitController = {
       habitData.reminder_enabled = false;
       habitData.category_id = null;
       habitData.reminder_time = null;
+      habitData.day_period = 'morning'; // Bad habits всегда утром по умолчанию
     } else {
       if (!habitData.category_id) {
         console.error('❌ Validation failed: category is required for good habits');
@@ -97,7 +124,8 @@ const habitController = {
     console.log('✅ Habit created successfully:', {
       id: habit.id,
       title: habit.title,
-      user_id: habit.user_id
+      user_id: habit.user_id,
+      day_period: habit.day_period
     });
     
     res.status(201).json({
@@ -128,8 +156,7 @@ const habitController = {
       details: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
   }
-}
-  ,
+},
 
   async getAll(req, res) {
     console.log('🎯 habitController.getAll called');
@@ -328,7 +355,7 @@ async update(req, res) {
       updates: updates
     });
 
-    // 🆕 Валидация title
+    // Валидация title
     if (updates.title !== undefined) {
       if (!updates.title || updates.title.trim() === '') {
         return res.status(400).json({
@@ -345,7 +372,7 @@ async update(req, res) {
       }
     }
 
-    // 🆕 Валидация goal
+    // Валидация goal
     if (updates.goal !== undefined) {
       if (!updates.goal || updates.goal.trim() === '') {
         return res.status(400).json({
@@ -360,6 +387,12 @@ async update(req, res) {
           error: `Goal must be ${GOAL_MAX_LENGTH} characters or less`
         });
       }
+    }
+
+    // 🔥 НОВАЯ ЛОГИКА: Если обновляется reminder_time, пересчитываем day_period
+    if (updates.reminder_time !== undefined) {
+      updates.day_period = calculateDayPeriod(updates.reminder_time);
+      console.log(`📍 Auto-recalculated day_period: ${updates.day_period} (from time: ${updates.reminder_time || 'not set'})`);
     }
 
     const habit = await Habit.update(id, userId, updates);

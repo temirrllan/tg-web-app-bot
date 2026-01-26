@@ -1,4 +1,4 @@
-// models/Habit.js - ПОЛНЫЙ КОД с day_period
+// models/Habit.js - ОБНОВЛЁННАЯ ВЕРСИЯ с автоматическим day_period
 
 const db = require('../config/database');
 
@@ -13,7 +13,7 @@ class Habit {
       reminder_time,
       reminder_enabled = true,
       is_bad_habit = false,
-      day_period = 'morning' // 🆕 Добавили day_period
+      day_period = 'morning' // ✅ ВАЖНО: Теперь вычисляется автоматически в контроллере
     } = habitData;
 
     try {
@@ -34,7 +34,7 @@ class Habit {
           reminder_time || null,
           reminder_enabled,
           is_bad_habit,
-          day_period // 🆕 Передаём day_period
+          day_period // ✅ Сохраняем автоматически вычисленный период
         ]
       );
       return result.rows[0];
@@ -95,7 +95,7 @@ class Habit {
     const allowed = new Set([
       'category_id','title','goal','schedule_type','schedule_days',
       'reminder_time','reminder_enabled','is_bad_habit','is_active',
-      'streak_current','streak_best','day_period' // 🆕 Добавили day_period
+      'streak_current','streak_best','day_period' // ✅ day_period разрешён для обновления
     ]);
 
     const fields = [];
