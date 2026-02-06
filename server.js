@@ -11,7 +11,7 @@ const keepAliveService = require("./services/keepAlive");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
 const app = express();
-const { adminRouter } = require('./admin');
+
 const PORT = Number(process.env.PORT || 3001);
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_SECRET = process.env.BOT_SECRET;
@@ -56,7 +56,6 @@ app.use(
 );
 app.use(express.json());
 app.use(logger);
-app.use('/admin', adminRouter);
 
 // Webhook от Telegram для команд бота
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
@@ -91,254 +90,107 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     const update = req.body;
     // КРИТИЧЕСКИ ВАЖНО: Обрабатываем successful_payment
     if (update.message?.successful_payment) {
-  console.log("💳 ========== SUCCESSFUL PAYMENT DETECTED ==========");
-  const payment = update.message.successful_payment;
-  const from_user_id = update.message.from.id;
+      console.log("💳 ========== SUCCESSFUL PAYMENT DETECTED ==========");
+      const payment = update.message.successful_payment;
+      const from_user_id = update.message.from.id;
 
-  console.log("Payment details:", {
-    currency: payment.currency,
-    total_amount: payment.total_amount,
-    invoice_payload: payment.invoice_payload,
-    telegram_payment_charge_id: payment.telegram_payment_charge_id,
-    from_user_id: from_user_id,
-  });
+      console.log("Payment details:", {
+        currency: payment.currency,
+        total_amount: payment.total_amount,
+        invoice_payload: payment.invoice_payload,
+        telegram_payment_charge_id: payment.telegram_payment_charge_id,
+        from_user_id: from_user_id,
+      });
 
-  // Проверяем что это Telegram Stars
-  if (payment.currency === "XTR") {
-    const paymentData = {
-      telegram_payment_charge_id: payment.telegram_payment_charge_id,
-      provider_payment_charge_id: payment.provider_payment_charge_id,
-      invoice_payload: payment.invoice_payload,
-      total_amount: payment.total_amount,
-      currency: payment.currency,
-      from_user_id: from_user_id,
-    };
+      // Проверяем что это Telegram Stars
+      if (payment.currency === "XTR") {
+        const paymentData = {
+          telegram_payment_charge_id: payment.telegram_payment_charge_id,
+          provider_payment_charge_id: payment.provider_payment_charge_id,
+          invoice_payload: payment.invoice_payload,
+          total_amount: payment.total_amount,
+          currency: payment.currency,
+          from_user_id: from_user_id,
+        };
 
-    console.log("💰 Processing Telegram Stars payment...");
+        console.log("💰 Processing Telegram Stars payment...");
 
-    // 🔥 НОВАЯ ЛОГИКА: Проверяем тип платежа (пак или подписка)
-    const payload = payment.invoice_payload;
-    
-    // ========================================
-    // ПОКУПКА ПАКА ПРИВЫЧЕК
-    // ========================================
-    if (payload.startsWith('pack_')) {
-      console.log("🎁 Pack purchase detected");
-      
-      try {
-        // Обрабатываем покупку пака
-        const result = await TelegramStarsService.processPackPayment(paymentData);
-        
+        // Обрабатываем платёж
+        const result = await TelegramStarsService.processSuccessfulPayment(
+          paymentData
+        );
+
         if (result.success) {
-          console.log("✅ Pack purchase processed successfully");
-          console.log("✅ Purchase ID:", result.purchase_id);
-          console.log("✅ Pack ID:", result.pack_id);
-          console.log("✅ Habits created:", result.habits_created);
-          
-          // Получаем информацию о паке
-          const packResult = await db.query(
-            'SELECT title, count_habits FROM store_packs WHERE id = $1',
-            [result.pack_id]
-          );
-          
-          const packInfo = packResult.rows[0];
-          
-          // Получаем язык пользователя
-          const userResult = await db.query(
-            "SELECT language FROM users WHERE telegram_id = $1",
-            [from_user_id.toString()]
+          console.log("✅ Payment processed successfully");
+          console.log("✅ User ID:", result.user_id);
+          console.log("✅ Subscription ID:", result.subscription_id);
+          console.log("✅ Plan type:", result.plan_type);
+          console.log("✅ Expires at:", result.expires_at);
+
+          // Проверяем что данные обновились
+          const verificationResult = await db.query(
+            "SELECT id, is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1",
+            [result.user_id]
           );
 
-          const lang = userResult.rows.length > 0 ? userResult.rows[0].language : "en";
+          console.log(
+            "🔍 User verification after payment:",
+            verificationResult.rows[0]
+          );
 
-          // 🎁 Отправляем подтверждение покупки пака
-          const messages = {
-            ru: `🎉 <b>Пак успешно куплен!</b>\n\n` +
-                `📦 <b>${packInfo.title}</b>\n` +
-                `✅ ${result.habits_created || packInfo.count_habits} привычек добавлено в ваш трекер\n\n` +
-                `Привычки уже доступны на главной странице!\n` +
-                `Начинайте отслеживать их прямо сейчас! 💪`,
-            
-            en: `🎉 <b>Pack purchased successfully!</b>\n\n` +
-                `📦 <b>${packInfo.title}</b>\n` +
-                `✅ ${result.habits_created || packInfo.count_habits} habits added to your tracker\n\n` +
-                `Habits are now available on your home screen!\n` +
-                `Start tracking them right away! 💪`,
-            
-            kk: `🎉 <b>Пак сәтті сатып алынды!</b>\n\n` +
-                `📦 <b>${packInfo.title}</b>\n` +
-                `✅ ${result.habits_created || packInfo.count_habits} әдет трекеріңізге қосылды\n\n` +
-                `Әдеттер басты бетте қол жетімді!\n` +
-                `Оларды қазір бақылауды бастаңыз! 💪`
-          };
+          // Отправляем подтверждение пользователю
+          try {
+            const userResult = await db.query(
+              "SELECT language FROM users WHERE telegram_id = $1",
+              [from_user_id.toString()]
+            );
 
-          const message = messages[lang] || messages["en"];
+            const lang =
+              userResult.rows.length > 0 ? userResult.rows[0].language : "en";
 
-          await bot.sendMessage(from_user_id, message, {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: lang === "ru" ? "📱 Открыть приложение" :
-                          lang === "kk" ? "📱 Қосымшаны ашу" :
-                          "📱 Open App",
-                    web_app: {
-                      url: process.env.WEBAPP_URL || process.env.FRONTEND_URL,
+            const messages = {
+              ru: "🎉 <b>Оплата прошла успешно!</b>\n\nВаша Premium подписка активирована!\n\n✅ Безлимитные привычки\n✅ Безлимитные друзья\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪",
+              en: "🎉 <b>Payment successful!</b>\n\nYour Premium subscription is now active!\n\n✅ Unlimited habits\n✅ Unlimited friends\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪",
+              kk: "🎉 <b>Төлем сәтті өтті!</b>\n\nСіздің Premium жазылымыңыз белсендірілді!\n\n✅ Шексіз әдеттер\n✅ Шексіз достар\n✅ Кеңейтілген статистика\n✅ Басым қолдау\n\nҚосымшаны ашып, ләззат алыңыз! 💪",
+            };
+
+            const message = messages[lang] || messages["en"];
+
+            await bot.sendMessage(from_user_id, message, {
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    {
+                      text:
+                        lang === "ru"
+                          ? "📱 Открыть приложение"
+                          : lang === "kk"
+                          ? "📱 Қосымшаны ашу"
+                          : "📱 Open App",
+                      web_app: {
+                        url: process.env.WEBAPP_URL || process.env.FRONTEND_URL,
+                      },
                     },
-                  },
+                  ],
                 ],
-              ],
-            },
-          });
+              },
+            });
 
-          console.log("✅ Pack purchase confirmation sent to user");
-          
+            console.log("✅ Confirmation message sent to user");
+          } catch (botError) {
+            console.error(
+              "⚠️ Failed to send confirmation (non-critical):",
+              botError.message
+            );
+          }
         } else {
-          console.error("❌ Pack purchase processing failed:", result.error);
-          
-          // Отправляем сообщение об ошибке
-          await bot.sendMessage(
-            from_user_id,
-            "❌ Something went wrong with your pack purchase. Please contact support.",
-            {
-              reply_markup: {
-                inline_keyboard: [[
-                  {
-                    text: "🆘 Contact Support",
-                    url: "https://t.me/Migin_Sergey"
-                  }
-                ]]
-              }
-            }
-          );
-        }
-      } catch (error) {
-        console.error("💥 Pack payment processing error:", error);
-        
-        // Отправляем сообщение об ошибке
-        try {
-          await bot.sendMessage(
-            from_user_id,
-            "❌ An error occurred while processing your pack purchase. Our team has been notified.",
-            {
-              reply_markup: {
-                inline_keyboard: [[
-                  {
-                    text: "🆘 Contact Support",
-                    url: "https://t.me/Migin_Sergey"
-                  }
-                ]]
-              }
-            }
-          );
-        } catch (botError) {
-          console.error("Failed to send error message:", botError);
-        }
-      }
-    }
-    
-    // ========================================
-    // ПОКУПКА ПОДПИСКИ (СУЩЕСТВУЮЩАЯ ЛОГИКА)
-    // ========================================
-    else {
-      // Обрабатываем платёж подписки
-      const result = await TelegramStarsService.processSuccessfulPayment(
-        paymentData
-      );
-
-      if (result.success) {
-        console.log("✅ Payment processed successfully");
-        console.log("✅ User ID:", result.user_id);
-        console.log("✅ Subscription ID:", result.subscription_id);
-        console.log("✅ Plan type:", result.plan_type);
-        console.log("✅ Expires at:", result.expires_at);
-
-        // Проверяем что данные обновились
-        const verificationResult = await db.query(
-          "SELECT id, is_premium, subscription_type, subscription_expires_at FROM users WHERE id = $1",
-          [result.user_id]
-        );
-
-        console.log(
-          "🔍 User verification after payment:",
-          verificationResult.rows[0]
-        );
-
-        // Отправляем подтверждение пользователю
-        try {
-          const userResult = await db.query(
-            "SELECT language FROM users WHERE telegram_id = $1",
-            [from_user_id.toString()]
-          );
-
-          const lang =
-            userResult.rows.length > 0 ? userResult.rows[0].language : "en";
-
-          const messages = {
-            ru: "🎉 <b>Оплата прошла успешно!</b>\n\n" +
-                "Ваша Premium подписка активирована!\n\n" +
-                "✅ Безлимитные привычки\n" +
-                "✅ Безлимитные друзья\n" +
-                "✅ Расширенная статистика\n" +
-                "✅ Приоритетная поддержка\n\n" +
-                "Откройте приложение и наслаждайтесь! 💪",
-            
-            en: "🎉 <b>Payment successful!</b>\n\n" +
-                "Your Premium subscription is now active!\n\n" +
-                "✅ Unlimited habits\n" +
-                "✅ Unlimited friends\n" +
-                "✅ Advanced statistics\n" +
-                "✅ Priority support\n\n" +
-                "Open the app and enjoy! 💪",
-            
-            kk: "🎉 <b>Төлем сәтті өтті!</b>\n\n" +
-                "Сіздің Premium жазылымыңыз белсендірілді!\n\n" +
-                "✅ Шексіз әдеттер\n" +
-                "✅ Шексіз достар\n" +
-                "✅ Кеңейтілген статистика\n" +
-                "✅ Басым қолдау\n\n" +
-                "Қосымшаны ашып, ләззат алыңыз! 💪",
-          };
-
-          const message = messages[lang] || messages["en"];
-
-          await bot.sendMessage(from_user_id, message, {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text:
-                      lang === "ru"
-                        ? "📱 Открыть приложение"
-                        : lang === "kk"
-                        ? "📱 Қосымшаны ашу"
-                        : "📱 Open App",
-                    web_app: {
-                      url: process.env.WEBAPP_URL || process.env.FRONTEND_URL,
-                    },
-                  },
-                ],
-              ],
-            },
-          });
-
-          console.log("✅ Confirmation message sent to user");
-        } catch (botError) {
-          console.error(
-            "⚠️ Failed to send confirmation (non-critical):",
-            botError.message
-          );
+          console.error("❌ Payment processing failed:", result.error);
         }
       } else {
-        console.error("❌ Payment processing failed:", result.error);
+        console.log("⚠️ Non-XTR payment, skipping");
       }
     }
-  } else {
-    console.log("⚠️ Non-XTR payment, skipping");
-  }
-}
     bot.processUpdate(update);
 
     res.status(200).json({ success: true });

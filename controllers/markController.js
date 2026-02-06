@@ -90,8 +90,6 @@ const markController = {
 
       // Если статус "completed", отправляем уведомления друзьям
       if (status === "completed") {
-        const achievementService = require('../services/achievementService');
-  await achievementService.updatePerfectDayStreak(userId);
         await sendFriendNotifications(habit, userId, markDate);
       }
 
