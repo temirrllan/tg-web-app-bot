@@ -446,6 +446,125 @@ if (afterCount > expectedCount) {
       return null;
     }
   }
+  // Добавляем в класс TelegramStarsService
+
+static async createPackInvoice(userId, packId, amountStars) {
+  const bot = require('../server').bot;
+  
+  // Получаем данные пака
+  const packResult = await db.query(
+    'SELECT title, short_description FROM store_packs WHERE id = $1',
+    [packId]
+  );
+  
+  if (packResult.rows.length === 0) {
+    throw new Error('Pack not found');
+  }
+  
+  const pack = packResult.rows[0];
+  
+  // Генерируем payload для отслеживания платежа
+  const payload = `pack_${packId}_${userId}_${Date.now()}`;
+  
+  // Создаём invoice
+  const invoice = await bot.createInvoiceLink(
+    pack.title,
+    pack.short_description || 'Habit pack',
+    payload,
+    '', // provider_token (пустая строка для Telegram Stars)
+    'XTR', // currency (Telegram Stars)
+    [{ label: pack.title, amount: amountStars }],
+    {
+      need_name: false,
+      need_phone_number: false,
+      need_email: false,
+      need_shipping_address: false
+    }
+  );
+  
+  // Сохраняем в БД для отслеживания
+  await db.query(
+    `UPDATE pack_orders 
+     SET provider_invoice_id = $1, status = 'PENDING'
+     WHERE user_id = $2 
+     AND pack_id = $3 
+     AND status = 'CREATED'`,
+    [payload, userId, packId]
+  );
+  
+  return { link: invoice };
+}
+
+static async processPackPayment(paymentData) {
+  const {
+    telegram_payment_charge_id,
+    invoice_payload,
+    total_amount,
+    from_user_id
+  } = paymentData;
+  
+  console.log('💰 Processing pack payment:', {
+    telegram_payment_charge_id,
+    invoice_payload,
+    total_amount
+  });
+  
+  const client = await db.getClient();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Парсим payload
+    const parts = invoice_payload.split('_');
+    if (parts[0] !== 'pack') {
+      throw new Error('Not a pack payment');
+    }
+    
+    const packId = parseInt(parts[1]);
+    const userId = parseInt(parts[2]);
+    
+    // Обновляем заказ
+    await client.query(
+      `UPDATE pack_orders 
+       SET status = 'PAID', 
+           provider_payment_id = $1,
+           paid_at = CURRENT_TIMESTAMP
+       WHERE provider_invoice_id = $2`,
+      [telegram_payment_charge_id, invoice_payload]
+    );
+    
+    // Создаём запись владения
+    const purchaseResult = await client.query(
+      `INSERT INTO pack_purchases (user_id, pack_id, order_id, source, status)
+       SELECT $1, $2, id, 'paid', 'ACTIVE'
+       FROM pack_orders
+       WHERE provider_invoice_id = $3
+       RETURNING id`,
+      [userId, packId, invoice_payload]
+    );
+    
+    const purchaseId = purchaseResult.rows[0].id;
+    
+    await client.query('COMMIT');
+    
+    // Устанавливаем привычки (асинхронно, вне транзакции)
+    const packService = require('./packService');
+    await packService.installPackHabits(purchaseId);
+    
+    return {
+      success: true,
+      purchase_id: purchaseId,
+      pack_id: packId
+    };
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Pack payment processing error:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 }
 
 module.exports = TelegramStarsService;
