@@ -8,12 +8,7 @@ const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
 const db = require('../config/database');
 const SubscriptionService = require('../services/subscriptionService');
-// В конце файла routes/habits.js, в эндпоинте создания habit_mark
 
-const { checkAndUnlockAchievements } = require('./achievements');
-
-// После успешного создания habit_mark:
-await checkAndUnlockAchievements(client, req.user.id, habit_id);
 // Категории
 router.get('/categories', categoryController.getAll);
 
@@ -52,17 +47,6 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
 
     console.log('🔧 Updating habit:', { habitId: id, userId, updates });
 
-    // 🔒 НОВАЯ ПРОВЕРКА: запретить редактирование locked привычек
-    const lockCheck = await db.query(
-      'SELECT is_locked FROM habits WHERE id = $1',
-      [id]
-    );
-    if (lockCheck.rows.length > 0 && lockCheck.rows[0].is_locked) {
-      return res.status(403).json({
-        success: false,
-        error: 'Cannot edit locked habit from pack'
-      });
-    }
     // Валидация
     if (updates.title !== undefined && (!updates.title || updates.title.trim() === '')) {
       return res.status(400).json({
@@ -327,41 +311,8 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
   }
 });
 
-router.delete('/habits/:id', authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.id;
+router.delete('/habits/:id', habitController.delete);
 
-    // 🔒 ПРОВЕРКА: запретить удаление locked привычек
-    const lockCheck = await db.query(
-      'SELECT is_locked FROM habits WHERE id = $1 AND user_id = $2',
-      [id, userId]
-    );
-
-    if (lockCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Habit not found'
-      });
-    }
-
-    if (lockCheck.rows[0].is_locked) {
-      return res.status(403).json({
-        success: false,
-        error: 'Cannot delete locked habit from pack'
-      });
-    }
-
-    // Вызываем оригинальный контроллер
-    return habitController.delete(req, res);
-  } catch (error) {
-    console.error('Delete habit error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete habit'
-    });
-  }
-});
 // Новый эндпоинт для получения отметок по дате
 router.get('/habits/marks', async (req, res) => {
   try {
@@ -437,9 +388,6 @@ router.get('/habits/date/:date', async (req, res) => {
         h.streak_best,
         h.is_active,
         h.parent_habit_id,
-        h.is_locked,
-        h.template_id,
-        h.pack_purchase_id,
         h.created_at,
         h.updated_at,
         c.name_ru, 

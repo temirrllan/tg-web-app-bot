@@ -35,16 +35,6 @@ const extraOrigins = (process.env.CORS_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
-// ============================================
-// PACK ROUTES
-// ============================================
-const packsRouter = require('./routes/packs');
-const { router: achievementsRouter } = require('./routes/achievements');
-
-app.use('/api/packs', packsRouter);
-app.use('/api/achievements', achievementsRouter);
-
-
 const allowedOrigins = [
   FRONTEND_URL,
   WEBAPP_URL,
@@ -1006,18 +996,7 @@ bot.on("callback_query", async (callbackQuery) => {
     }
   }
 });
-// ============================================
-// ADMINJS INTEGRATION
-// ============================================
 
-const { admin, adminRouter } = require('./admin');
-
-// Монтируем AdminJS роутер
-app.use(admin.options.rootPath, adminRouter);
-
-console.log(`\n📊 AdminJS available at: http://localhost:${PORT}${admin.options.rootPath}`);
-console.log(`📧 Login: ${process.env.ADMIN_EMAIL || 'admin@habittracker.com'}`);
-console.log(`🔑 Password: ${process.env.ADMIN_PASSWORD || 'admin123'}`);
 /** ---------- Запуск HTTP и установка webhook ---------- */
 const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
