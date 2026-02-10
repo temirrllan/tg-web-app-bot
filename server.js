@@ -10,6 +10,30 @@ const { generalLimiter } = require("./middleware/rateLimit");
 const keepAliveService = require("./services/keepAlive");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
+const ADMIN_IDS = [1313126991]; // ← ВАШ ID СЮДА
+const broadcastState = new Map();
+
+function isAdmin(userId) {
+  return ADMIN_IDS.includes(userId);
+}
+
+async function sendBroadcast(message, options = {}) {
+  const usersResult = await db.query('SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL');
+  const users = usersResult.rows;
+  let successCount = 0, failCount = 0;
+  
+  for (const user of users) {
+    try {
+      await bot.sendMessage(user.telegram_id, message, { parse_mode: 'HTML', ...options });
+      successCount++;
+      await new Promise(r => setTimeout(r, 50));
+    } catch (err) {
+      failCount++;
+    }
+  }
+  
+  return { successCount, failCount, total: users.length };
+}
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -525,6 +549,42 @@ bot.on("successful_payment", async (msg) => {
 
 // ОБРАБОТЧИК СООБЩЕНИЙ
 bot.on('message', async (msg) => {
+  // ADMIN КОМАНДЫ
+  if (text === '/broadcast' && isAdmin(userId)) {
+    broadcastState.set(userId, { step: 'waiting_message' });
+    await bot.sendMessage(chatId, '📢 Отправьте сообщение для рассылки\nДля отмены: /cancel', { parse_mode: 'HTML' });
+    return;
+  }
+  
+  if (text === '/cancel' && isAdmin(userId) && broadcastState.has(userId)) {
+    broadcastState.delete(userId);
+    await bot.sendMessage(chatId, '❌ Отменено');
+    return;
+  }
+  
+  if (text === '/stats' && isAdmin(userId)) {
+    const total = await db.query('SELECT COUNT(*) FROM users');
+    await bot.sendMessage(chatId, `📊 Всего пользователей: ${total.rows[0].count}`, { parse_mode: 'HTML' });
+    return;
+  }
+  
+  if (broadcastState.has(userId)) {
+    const state = broadcastState.get(userId);
+    if (state.step === 'waiting_message') {
+      state.message = text;
+      state.step = 'confirm';
+      await bot.sendMessage(chatId, `📢 Предпросмотр:\n\n${text}\n\nОтправить?`, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '✅ Отправить', callback_data: 'broadcast_confirm' },
+            { text: '❌ Отменить', callback_data: 'broadcast_cancel' }
+          ]]
+        }
+      });
+      return;
+    }
+  }
   const chatId = msg.chat.id;
   const text = msg.text || '';
   
@@ -745,6 +805,28 @@ bot.on('message', async (msg) => {
 
 // ОБРАБОТЧИК CALLBACK QUERY
 bot.on("callback_query", async (callbackQuery) => {
+  // BROADCAST CALLBACKS
+  if (data === 'broadcast_confirm' && isAdmin(userId)) {
+    const state = broadcastState.get(userId);
+    if (state?.message) {
+      await bot.editMessageText('⏳ Отправляю...', { chat_id: chatId, message_id: messageId });
+      const result = await sendBroadcast(state.message);
+      broadcastState.delete(userId);
+      await bot.editMessageText(`✅ Готово!\n\nОтправлено: ${result.successCount}\nОшибок: ${result.failCount}`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ Отправлено!' });
+    }
+    return;
+  }
+  
+  if (data === 'broadcast_cancel' && isAdmin(userId)) {
+    broadcastState.delete(userId);
+    await bot.editMessageText('❌ Отменено', { chat_id: chatId, message_id: messageId });
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Отменено' });
+    return;
+  }
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
