@@ -1,12 +1,5 @@
 require("dotenv").config();
-// Список администраторов - ЗАМЕНИТЕ на свои Telegram ID!
-const ADMIN_IDS = [
-  1313126991, // Замените на свой Telegram ID
-  // Чтобы узнать свой ID, напишите боту @userinfobot
-  // Можно добавить несколько админов
-];
-// Состояние для broadcast
-const broadcastState = new Map();
+
 const express = require("express");
 const cors = require("cors");
 const TelegramBot = require("node-telegram-bot-api");
@@ -63,63 +56,7 @@ app.use(
 );
 app.use(express.json());
 app.use(logger);
-// Проверка, является ли пользователь админом
-function isAdmin(userId) {
-  return ADMIN_IDS.includes(userId);
-}
 
-// Функция массовой рассылки
-async function sendBroadcast(message, options = {}) {
-  try {
-    console.log('📢 Starting broadcast...');
-    
-    // Получаем всех пользователей из БД
-    const usersResult = await db.query(
-      'SELECT telegram_id, first_name, language FROM users WHERE telegram_id IS NOT NULL'
-    );
-    
-    const users = usersResult.rows;
-    console.log(`📊 Found ${users.length} users for broadcast`);
-    
-    let successCount = 0;
-    let failCount = 0;
-    const failedUsers = [];
-    
-    // Отправляем сообщения с задержкой (чтобы не словить rate limit)
-    for (const user of users) {
-      try {
-        await bot.sendMessage(user.telegram_id, message, {
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-          ...options
-        });
-        
-        successCount++;
-        
-        // Задержка 50ms между сообщениями (можно слать ~20 сообщений/сек)
-        await new Promise(resolve => setTimeout(resolve, 50));
-        
-      } catch (err) {
-        console.error(`Failed to send to ${user.telegram_id} (${user.first_name}):`, err.message);
-        failCount++;
-        failedUsers.push({ id: user.telegram_id, name: user.first_name, error: err.message });
-      }
-    }
-    
-    console.log(`✅ Broadcast completed: ${successCount} sent, ${failCount} failed`);
-    
-    return { 
-      successCount, 
-      failCount, 
-      total: users.length,
-      failedUsers 
-    };
-    
-  } catch (error) {
-    console.error('❌ Broadcast error:', error);
-    throw error;
-  }
-}
 // Webhook от Telegram для команд бота
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
@@ -289,13 +226,6 @@ console.log("\n🤖 Запуск Telegram бота (webhook)...");
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 // Экспортируем бота для использования в других модулях
 module.exports.bot = bot;
-module.exports = {
-  isAdmin,
-  sendBroadcast,
-  handleAdminCommands,
-  handleBroadcastCallbacks,
-  ADMIN_IDS
-};
 const ReminderService = require("./services/reminderService");
 const reminderService = new ReminderService(bot);
 const TelegramStarsService = require("./services/telegramStarsService");
@@ -595,8 +525,6 @@ bot.on("successful_payment", async (msg) => {
 
 // ОБРАБОТЧИК СООБЩЕНИЙ
 bot.on('message', async (msg) => {
-  const isAdminCommand = await handleAdminCommands(msg);
-  if (isAdminCommand) return;
   const chatId = msg.chat.id;
   const text = msg.text || '';
   
@@ -604,134 +532,7 @@ bot.on('message', async (msg) => {
   if (msg.successful_payment) {
     return;
   }
-  async function handleAdminCommands(msg) {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const text = msg.text || '';
   
-  // Команда /broadcast - начать рассылку
-  if (text === '/broadcast') {
-    if (!isAdmin(userId)) {
-      await bot.sendMessage(chatId, '❌ У вас нет прав администратора');
-      return true;
-    }
-    
-    broadcastState.set(userId, { step: 'waiting_message' });
-    
-    await bot.sendMessage(
-      chatId,
-      '📢 <b>Режим массовой рассылки</b>\n\n' +
-      'Отправьте сообщение, которое хотите разослать всем пользователям.\n\n' +
-      '💡 Вы можете использовать HTML форматирование:\n' +
-      '• &lt;b&gt;жирный&lt;/b&gt;\n' +
-      '• &lt;i&gt;курсив&lt;/i&gt;\n' +
-      '• &lt;code&gt;код&lt;/code&gt;\n\n' +
-      '📎 Можно отправить текст с кнопкой!\n\n' +
-      'Для отмены используйте /cancel',
-      { parse_mode: 'HTML' }
-    );
-    
-    return true;
-  }
-  
-  // Команда /cancel - отмена рассылки
-  if (text === '/cancel') {
-    if (!isAdmin(userId)) {
-      return false;
-    }
-    
-    if (broadcastState.has(userId)) {
-      broadcastState.delete(userId);
-      await bot.sendMessage(chatId, '❌ Рассылка отменена');
-      return true;
-    }
-    
-    return false;
-  }
-  
-  // Команда /stats - статистика пользователей
-  if (text === '/stats') {
-    if (!isAdmin(userId)) {
-      await bot.sendMessage(chatId, '❌ У вас нет прав администратора');
-      return true;
-    }
-    
-    try {
-      const totalUsers = await db.query('SELECT COUNT(*) FROM users');
-      const premiumUsers = await db.query('SELECT COUNT(*) FROM users WHERE is_premium = true');
-      const activeToday = await db.query(
-        `SELECT COUNT(DISTINCT user_id) FROM habits 
-         WHERE created_at >= CURRENT_DATE`
-      );
-      const totalHabits = await db.query('SELECT COUNT(*) FROM habits WHERE is_active = true');
-      
-      await bot.sendMessage(
-        chatId,
-        `📊 <b>Статистика Habit Tracker</b>\n\n` +
-        `👥 Всего пользователей: ${totalUsers.rows[0].count}\n` +
-        `💎 Premium пользователей: ${premiumUsers.rows[0].count}\n` +
-        `🔥 Активных сегодня: ${activeToday.rows[0].count}\n` +
-        `📝 Всего активных привычек: ${totalHabits.rows[0].count}`,
-        { parse_mode: 'HTML' }
-      );
-    } catch (error) {
-      console.error('Stats error:', error);
-      await bot.sendMessage(chatId, '❌ Ошибка получения статистики');
-    }
-    
-    return true;
-  }
-  
-  // Команда /help - список команд админа
-  if (text === '/adminhelp' && isAdmin(userId)) {
-    await bot.sendMessage(
-      chatId,
-      '🔧 <b>Команды администратора:</b>\n\n' +
-      '/broadcast - Массовая рассылка\n' +
-      '/stats - Статистика пользователей\n' +
-      '/cancel - Отменить рассылку\n' +
-      '/adminhelp - Эта справка',
-      { parse_mode: 'HTML' }
-    );
-    return true;
-  }
-  
-  // Обработка сообщения для рассылки
-  if (broadcastState.has(userId)) {
-    const state = broadcastState.get(userId);
-    
-    if (state.step === 'waiting_message') {
-      // Сохраняем сообщение
-      state.message = text;
-      state.step = 'confirm';
-      
-      await bot.sendMessage(
-        chatId,
-        '📢 <b>Предпросмотр рассылки:</b>\n\n' +
-        '─────────────────\n' +
-        text + '\n' +
-        '─────────────────\n\n' +
-        'Отправить это сообщение всем пользователям?',
-        {
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Да, отправить всем', callback_data: 'broadcast_confirm' },
-                { text: '❌ Отменить', callback_data: 'broadcast_cancel' }
-              ]
-            ]
-          }
-        }
-      );
-      
-      return true;
-    }
-  }
-  
-  return false;
-}
-
   console.log(`📨 NEW MESSAGE: "${text}" from ${chatId}`);
 
   if (text.startsWith('/start')) {
@@ -944,119 +745,9 @@ bot.on('message', async (msg) => {
 
 // ОБРАБОТЧИК CALLBACK QUERY
 bot.on("callback_query", async (callbackQuery) => {
-  const isBroadcastCallback = await handleBroadcastCallbacks(callbackQuery);
-  if (isBroadcastCallback) return;
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
-async function handleBroadcastCallbacks(callbackQuery) {
-  const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
-  const userId = callbackQuery.from.id;
-  const data = callbackQuery.data;
-  
-  // Подтверждение рассылки
-  if (data === 'broadcast_confirm') {
-    if (!isAdmin(userId)) {
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: '❌ Недостаточно прав'
-      });
-      return true;
-    }
-    
-    const state = broadcastState.get(userId);
-    
-    if (!state || !state.message) {
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: '❌ Сообщение не найдено'
-      });
-      return true;
-    }
-    
-    // Редактируем сообщение
-    await bot.editMessageText(
-      '⏳ Начинаю рассылку...',
-      {
-        chat_id: chatId,
-        message_id: messageId
-      }
-    );
-    
-    try {
-      // Отправляем рассылку
-      const result = await sendBroadcast(state.message);
-      
-      // Очищаем состояние
-      broadcastState.delete(userId);
-      
-      // Отчет
-      let reportText = `✅ <b>Рассылка завершена!</b>\n\n` +
-        `📊 Статистика:\n` +
-        `• Всего пользователей: ${result.total}\n` +
-        `• Успешно отправлено: ${result.successCount}\n` +
-        `• Не доставлено: ${result.failCount}`;
-      
-      if (result.failedUsers.length > 0 && result.failedUsers.length <= 10) {
-        reportText += `\n\n⚠️ Не удалось отправить:\n`;
-        result.failedUsers.forEach(u => {
-          reportText += `• ${u.name} (${u.id})\n`;
-        });
-      }
-      
-      await bot.editMessageText(reportText, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'HTML'
-      });
-      
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: `✅ Отправлено ${result.successCount} пользователям!`
-      });
-      
-    } catch (error) {
-      console.error('Broadcast error:', error);
-      
-      await bot.editMessageText(
-        '❌ Ошибка при рассылке: ' + error.message,
-        {
-          chat_id: chatId,
-          message_id: messageId
-        }
-      );
-      
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: '❌ Ошибка рассылки'
-      });
-    }
-    
-    return true;
-  }
-  
-  // Отмена рассылки
-  if (data === 'broadcast_cancel') {
-    if (!isAdmin(userId)) {
-      return true;
-    }
-    
-    broadcastState.delete(userId);
-    
-    await bot.editMessageText(
-      '❌ Рассылка отменена',
-      {
-        chat_id: chatId,
-        message_id: messageId
-      }
-    );
-    
-    await bot.answerCallbackQuery(callbackQuery.id, {
-      text: 'Рассылка отменена'
-    });
-    
-    return true;
-  }
-  
-  return false;
-}
 
   console.log(`📲 Callback received: ${data} from chat ${chatId}`);
 
