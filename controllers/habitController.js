@@ -24,7 +24,7 @@ function calculateDayPeriod(reminderTime) {
   if (hours >= 18 && hours < 24) return 'evening';
   return 'night'; // 0-5
 }
-const TITLE_MAX_LENGTH = 15;
+const TITLE_MAX_LENGTH = 25;
 const GOAL_MAX_LENGTH = 35;
 const habitController = {
   async create(req, res) {
