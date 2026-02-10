@@ -54,13 +54,13 @@ const habitController = {
       });
     }
 
-    if (habitData.title.length > TITLE_MAX_LENGTH) {
-      console.error(`❌ Validation failed: title too long (${habitData.title.length}/${TITLE_MAX_LENGTH})`);
-      return res.status(400).json({
-        success: false,
-        error: `Title must be ${TITLE_MAX_LENGTH} characters or less`
-      });
-    }
+    // if (habitData.title.length > TITLE_MAX_LENGTH) {
+    //   console.error(`❌ Validation failed: title too long (${habitData.title.length}/${TITLE_MAX_LENGTH})`);
+    //   return res.status(400).json({
+    //     success: false,
+    //     error: `Title must be ${TITLE_MAX_LENGTH} characters or less`
+    //   });
+    // }
 
     // Валидация goal
     if (!habitData.goal || habitData.goal.trim() === '') {
