@@ -17,6 +17,57 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_SECRET = process.env.BOT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const WEBAPP_URL = process.env.WEBAPP_URL || FRONTEND_URL;
+
+const ADMIN_IDS = [
+  1313126991, // ← СЮДА ВАШ ID
+];
+
+const broadcastState = new Map();
+
+function isAdmin(userId) {
+  return ADMIN_IDS.includes(userId);
+}
+
+async function sendBroadcast(message, options = {}) {
+  try {
+    console.log('📢 Starting broadcast...');
+    
+    const usersResult = await db.query(
+      'SELECT telegram_id, first_name FROM users WHERE telegram_id IS NOT NULL'
+    );
+    
+    const users = usersResult.rows;
+    console.log(`📊 Found ${users.length} users for broadcast`);
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const user of users) {
+      try {
+        await bot.sendMessage(user.telegram_id, message, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...options
+        });
+        
+        successCount++;
+        await new Promise(resolve => setTimeout(resolve, 50));
+        
+      } catch (err) {
+        console.error(`Failed to send to ${user.telegram_id}:`, err.message);
+        failCount++;
+      }
+    }
+    
+    console.log(`✅ Broadcast completed: ${successCount} sent, ${failCount} failed`);
+    
+    return { successCount, failCount, total: users.length };
+    
+  } catch (error) {
+    console.error('❌ Broadcast error:', error);
+    throw error;
+  }
+}
 const BACKEND_PUBLIC_URL = process.env.BACKEND_PUBLIC_URL;
 
 if (!BOT_TOKEN) {
@@ -526,13 +577,109 @@ bot.on("successful_payment", async (msg) => {
 // ОБРАБОТЧИК СООБЩЕНИЙ
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
   const text = msg.text || '';
   
   // Пропускаем сообщения с successful_payment
   if (msg.successful_payment) {
     return;
   }
+  // ============================================
+  // 📢 ADMIN КОМАНДЫ
+  // ============================================
   
+  // Команда /broadcast
+  if (text === '/broadcast') {
+    if (!isAdmin(userId)) {
+      await bot.sendMessage(chatId, '❌ У вас нет прав администратора');
+      return;
+    }
+    
+    broadcastState.set(userId, { step: 'waiting_message' });
+    
+    await bot.sendMessage(
+      chatId,
+      '📢 <b>Режим массовой рассылки</b>\n\n' +
+      'Отправьте сообщение для рассылки всем пользователям.\n\n' +
+      '💡 HTML форматирование:\n' +
+      '• &lt;b&gt;жирный&lt;/b&gt;\n' +
+      '• &lt;i&gt;курсив&lt;/i&gt;\n\n' +
+      'Для отмены: /cancel',
+      { parse_mode: 'HTML' }
+    );
+    
+    return;
+  }
+  
+  // Команда /cancel
+  if (text === '/cancel') {
+    if (isAdmin(userId) && broadcastState.has(userId)) {
+      broadcastState.delete(userId);
+      await bot.sendMessage(chatId, '❌ Рассылка отменена');
+      return;
+    }
+  }
+  
+  // Команда /stats
+  if (text === '/stats') {
+    if (!isAdmin(userId)) {
+      await bot.sendMessage(chatId, '❌ У вас нет прав администратора');
+      return;
+    }
+    
+    try {
+      const totalUsers = await db.query('SELECT COUNT(*) FROM users');
+      const premiumUsers = await db.query('SELECT COUNT(*) FROM users WHERE is_premium = true');
+      const activeToday = await db.query(
+        'SELECT COUNT(DISTINCT user_id) FROM habits WHERE created_at >= CURRENT_DATE'
+      );
+      
+      await bot.sendMessage(
+        chatId,
+        `📊 <b>Статистика</b>\n\n` +
+        `👥 Всего пользователей: ${totalUsers.rows[0].count}\n` +
+        `💎 Premium: ${premiumUsers.rows[0].count}\n` +
+        `🔥 Активных сегодня: ${activeToday.rows[0].count}`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      await bot.sendMessage(chatId, '❌ Ошибка получения статистики');
+    }
+    
+    return;
+  }
+  
+  // Обработка текста для рассылки
+  if (broadcastState.has(userId)) {
+    const state = broadcastState.get(userId);
+    
+    if (state.step === 'waiting_message') {
+      state.message = text;
+      state.step = 'confirm';
+      
+      await bot.sendMessage(
+        chatId,
+        '📢 <b>Предпросмотр:</b>\n\n' +
+        '─────────────────\n' +
+        text + '\n' +
+        '─────────────────\n\n' +
+        'Отправить всем?',
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Да, отправить', callback_data: 'broadcast_confirm' },
+                { text: '❌ Отменить', callback_data: 'broadcast_cancel' }
+              ]
+            ]
+          }
+        }
+      );
+      
+      return;
+    }
+  }
   console.log(`📨 NEW MESSAGE: "${text}" from ${chatId}`);
 
   if (text.startsWith('/start')) {
@@ -748,9 +895,93 @@ bot.on("callback_query", async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
+  const userId = callbackQuery.from.id;
 
   console.log(`📲 Callback received: ${data} from chat ${chatId}`);
-
+// ============================================
+  // 📢 BROADCAST CALLBACKS - ДОБАВЬТЕ ЭТО
+  // ============================================
+  
+  // Подтверждение рассылки
+  if (data === 'broadcast_confirm') {
+    if (!isAdmin(userId)) {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Недостаточно прав'
+      });
+      return;
+    }
+    
+    const state = broadcastState.get(userId);
+    
+    if (!state || !state.message) {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Сообщение не найдено'
+      });
+      return;
+    }
+    
+    await bot.editMessageText('⏳ Начинаю рассылку...', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    
+    try {
+      const result = await sendBroadcast(state.message);
+      
+      broadcastState.delete(userId);
+      
+      await bot.editMessageText(
+        `✅ <b>Готово!</b>\n\n` +
+        `📊 Статистика:\n` +
+        `• Всего: ${result.total}\n` +
+        `• Отправлено: ${result.successCount}\n` +
+        `• Ошибок: ${result.failCount}`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'HTML'
+        }
+      );
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: `✅ Отправлено ${result.successCount} пользователям!`
+      });
+      
+    } catch (error) {
+      console.error('Broadcast error:', error);
+      
+      await bot.editMessageText('❌ Ошибка: ' + error.message, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Ошибка рассылки'
+      });
+    }
+    
+    return;
+  }
+  
+  // Отмена рассылки
+  if (data === 'broadcast_cancel') {
+    if (!isAdmin(userId)) {
+      return;
+    }
+    
+    broadcastState.delete(userId);
+    
+    await bot.editMessageText('❌ Рассылка отменена', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    
+    await bot.answerCallbackQuery(callbackQuery.id, {
+      text: 'Отменено'
+    });
+    
+    return;
+  }
   // ========================================
   // ОБРАБОТКА ИНСТРУКЦИЙ
   // ========================================
