@@ -16,7 +16,7 @@ class TelegramStarsService {
       name: 'Premium for 6 Months',
       display_name: 'For 6 Months',
       duration_months: 6,
-      price_stars: 1,
+      price_stars: 299,
       features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
     },
     '1_year': {
