@@ -8,7 +8,12 @@ const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
 const db = require('../config/database');
 const SubscriptionService = require('../services/subscriptionService');
-
+const { 
+  protectLockedHabitUpdate, 
+  protectLockedHabitDelete,
+  checkHabitOwnership,
+  logHabitAction 
+} = require('../middleware/packHabitProtection');
 // Категории
 router.get('/categories', categoryController.getAll);
 
@@ -19,7 +24,16 @@ router.use(authMiddleware);
 router.post('/habits', createHabitLimiter, checkSubscriptionLimit, habitController.create);
 router.get('/habits', habitController.getAll);
 router.get('/habits/today', habitController.getTodayHabits);
-
+router.post('/habits', habitController.create);
+// Получить информацию о блокировке привычки
+router.get('/habits/:id/lock-info', habitController.getLockInfo);
+router.put(
+  '/habits/:id', 
+  checkHabitOwnership,           // Проверяем владение
+  protectLockedHabitUpdate,      // Блокируем если is_locked=true
+  logHabitAction('UPDATE'),      // Логируем действие (опционально)
+  habitController.update
+);
 // 🆕 ОБНОВЛЁННЫЙ РОУТ РЕДАКТИРОВАНИЯ с проверкой владельца и уведомлениями
 // В controllers/habitController.js замените роут PATCH на:
 
@@ -311,7 +325,13 @@ router.patch('/habits/:id', authMiddleware, async (req, res) => {
   }
 });
 
-router.delete('/habits/:id', habitController.delete);
+router.delete(
+  '/habits/:id', 
+  checkHabitOwnership,           // Проверяем владение
+  protectLockedHabitDelete,      // Требуем force=true для заблокированных
+  logHabitAction('DELETE'),      // Логируем действие (опционально)
+  habitController.delete
+);
 
 // Новый эндпоинт для получения отметок по дате
 router.get('/habits/marks', async (req, res) => {

@@ -10,6 +10,8 @@ const { generalLimiter } = require("./middleware/rateLimit");
 const keepAliveService = require("./services/keepAlive");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
+const achievementRoutes = require('./routes/achievementRoutes');
+
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -268,9 +270,13 @@ app.get("/health", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api", habitRoutes);
+app.use('/api/achievements', achievementRoutes);
 
 const paymentRoutes = require("./routes/paymentRoutes");
+const packRoutes = require('./routes/packRoutes'); // ← ДОБАВИТЬ
+
 app.use("/api/payment", paymentRoutes);
+app.use('/api/packs', packRoutes); // ← ДОБАВИТЬ
 
 console.log("\n🤖 Запуск Telegram бота (webhook)...");
 
