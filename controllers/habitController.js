@@ -469,74 +469,7 @@ async update(req, res) {
         details: process.env.NODE_ENV !== 'production' ? error.message : undefined
       });
     }
-  },
-
-/**
- * Получить информацию о блокировке привычки
- * GET /api/habits/:id/lock-info
- */
-async getLockInfo(req, res) {
-  try {
-    const { id } = req.params;
-    const userId = req.user.id;
-
-    console.log('🔍 Getting lock info for habit:', { habitId: id, userId });
-
-    const result = await db.query(
-      `SELECT 
-        h.id,
-        h.title,
-        h.is_locked,
-        h.pack_purchase_id,
-        h.template_id,
-        sp.title as pack_title,
-        sp.slug as pack_slug,
-        sp.cover_image_url as pack_cover,
-        pp.source as purchase_source,
-        pp.granted_at as purchased_at
-       FROM habits h
-       LEFT JOIN pack_purchases pp ON h.pack_purchase_id = pp.id
-       LEFT JOIN store_packs sp ON pp.pack_id = sp.id
-       WHERE h.id = $1 AND h.user_id = $2`,
-      [id, userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Habit not found'
-      });
-    }
-
-    const habit = result.rows[0];
-
-    res.json({
-      success: true,
-      data: {
-        habit_id: habit.id,
-        title: habit.title,
-        is_locked: habit.is_locked,
-        can_edit: !habit.is_locked,
-        can_delete: true, // Всегда можно удалить (с подтверждением)
-        can_mark: true,   // Всегда можно отметить
-        pack_info: habit.is_locked ? {
-          title: habit.pack_title,
-          slug: habit.pack_slug,
-          cover: habit.pack_cover,
-          source: habit.purchase_source,
-          purchased_at: habit.purchased_at
-        } : null
-      }
-    });
-  } catch (error) {
-    console.error('❌ Get lock info error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get lock info'
-    });
   }
-}
-  
 };
 async function getRandomPhrase(language = 'en', minCompleted = 0) {
   const lang = String(language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en';
@@ -562,7 +495,4 @@ async function getRandomPhrase(language = 'en', minCompleted = 0) {
     : { text: 'Keep going!', emoji: '💪', type: 'encouragement' };
 }
 
-module.exports = {
-  ...habitController,
-  getLockInfo  // ← ДОБАВИТЬ
-};
+module.exports = habitController;

@@ -4,119 +4,112 @@ const db = require("../config/database");
 
 const markController = {
   async markHabit(req, res) {
-  console.log("🎯 markController.markHabit called");
+    console.log("🎯 markController.markHabit called");
 
-  try {
-    const { id } = req.params;
-    const { status = "completed", date } = req.body;
-    const userId = req.user.id;
+    try {
+      const { id } = req.params;
+      const { status = "completed", date } = req.body;
+      const userId = req.user.id;
 
-    console.log("Mark habit request:", {
-      habitId: id,
-      userId: userId,
-      status: status,
-      date: date,
-      requestBody: req.body,
-    });
-
-    // ВАЖНО: Проверяем и форматируем дату
-    let markDate;
-    if (date) {
-      markDate = date;
-    } else {
-      const today = new Date();
-      markDate = `${today.getFullYear()}-${String(
-        today.getMonth() + 1
-      ).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    }
-
-    console.log("Using date for marking:", markDate);
-
-    // Проверяем, что привычка принадлежит пользователю
-    const habit = await Habit.findById(id, userId);
-    if (!habit) {
-      console.log("❌ Habit not found or access denied");
-      return res.status(404).json({
-        success: false,
-        error: "Habit not found",
+      console.log("Mark habit request:", {
+        habitId: id,
+        userId: userId,
+        status: status,
+        date: date,
+        requestBody: req.body,
       });
-    }
 
-    console.log("Found habit:", {
-      id: habit.id,
-      title: habit.title,
-      user_id: habit.user_id,
-    });
+      // ВАЖНО: Проверяем и форматируем дату
+      let markDate;
+      if (date) {
+        // Если дата передана, используем её
+        markDate = date;
+      } else {
+        // Если дата не указана, используем сегодня в локальном часовом поясе
+        const today = new Date();
+        markDate = `${today.getFullYear()}-${String(
+          today.getMonth() + 1
+        ).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      }
 
-    // Проверяем, можно ли отметить эту дату
-    const canMark = await HabitMark.canMark(markDate);
-    if (!canMark) {
-      console.log("❌ Cannot mark this date:", markDate);
-      return res.status(400).json({
-        success: false,
-        error: "Can only mark today or yesterday",
-      });
-    }
+      console.log("Using date for marking:", markDate);
 
-    console.log("✅ Date validation passed");
-
-    // Проверяем существующую отметку
-    const existingMark = await HabitMark.getMarkForDate(id, markDate);
-    console.log("Existing mark for this date:", existingMark);
-    
-    // ЗАЩИТА: Если статус уже такой же - не дублируем
-    if (existingMark && existingMark.status === status) {
-      console.log(`⚠️ Habit ${id} already has status "${status}" for ${markDate}, skipping duplicate`);
-      return res.json({
-        success: true,
-        mark: existingMark,
-        duplicate: true,
-        message: 'Status unchanged - already set'
-      });
-    }
-
-    // Отмечаем привычку для конкретной даты
-    const mark = await HabitMark.mark(id, markDate, status);
-    console.log("✅ Habit marked successfully:", {
-      habitId: id,
-      date: markDate,
-      status: status,
-      markId: mark.id,
-      returnedDate: mark.date,
-    });
-
-    // ====================================================
-    // 🏆 НОВОЕ: Проверка достижений для привычек из пакетов
-    // ====================================================
-    if (status === "completed") {
-      // Асинхронно проверяем достижения (не блокируем ответ)
-      setImmediate(() => {
-        checkAchievementsForHabit(userId, id).catch(err => {
-          console.error('⚠️ Achievement check failed (non-critical):', err);
+      // Проверяем, что привычка принадлежит пользователю
+      const habit = await Habit.findById(id, userId);
+      if (!habit) {
+        console.log("❌ Habit not found or access denied");
+        return res.status(404).json({
+          success: false,
+          error: "Habit not found",
         });
+      }
+
+      console.log("Found habit:", {
+        id: habit.id,
+        title: habit.title,
+        user_id: habit.user_id,
       });
 
-      // Отправляем уведомления друзьям
-      await sendFriendNotifications(habit, userId, markDate);
-    }
+      // Проверяем, можно ли отметить эту дату
+      const canMark = await HabitMark.canMark(markDate);
+      if (!canMark) {
+        console.log("❌ Cannot mark this date:", markDate);
+        return res.status(400).json({
+          success: false,
+          error: "Can only mark today or yesterday",
+        });
+      }
 
-    res.json({
-      success: true,
-      mark: {
-        ...mark,
+      console.log("✅ Date validation passed");
+
+      // ВАЖНО: Проверяем, что отметка будет для правильной даты
+      // ВАЖНО: Проверяем существующую отметку
+      const existingMark = await HabitMark.getMarkForDate(id, markDate);
+      console.log("Existing mark for this date:", existingMark);
+      
+      // 🆕 ЗАЩИТА: Если статус уже такой же - не дублируем
+      if (existingMark && existingMark.status === status) {
+        console.log(`⚠️ Habit ${id} already has status "${status}" for ${markDate}, skipping duplicate`);
+        return res.json({
+          success: true,
+          mark: existingMark,
+          duplicate: true,
+          message: 'Status unchanged - already set'
+        });
+      }
+
+      // Отмечаем привычку для конкретной даты
+      const mark = await HabitMark.mark(id, markDate, status);
+      console.log("✅ Habit marked successfully:", {
+        habitId: id,
         date: markDate,
-      },
-      wasUpdate: !!existingMark
-    });
-  } catch (error) {
-    console.error("💥 Mark habit error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to mark habit",
-      details: error.message,
-    });
-  }
-},
+        status: status,
+        markId: mark.id,
+        returnedDate: mark.date,
+      });
+
+      // Если статус "completed", отправляем уведомления друзьям
+      if (status === "completed") {
+        await sendFriendNotifications(habit, userId, markDate);
+      }
+
+      res.json({
+        success: true,
+        mark: {
+          ...mark,
+          date: markDate,
+        },
+        wasUpdate: !!existingMark
+      });
+    } catch (error) {
+      console.error("💥 Mark habit error:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to mark habit",
+        details: error.message,
+      });
+    }
+  },
 
   async unmarkHabit(req, res) {
     console.log("🎯 markController.unmarkHabit called");
@@ -397,175 +390,6 @@ Now it's your turn! Don't let your friends down! 🔥
     console.error("Error sending friend notifications:", error);
   }
 }
-/**
- * 🏆 Вспомогательная функция для проверки и выдачи достижений
- * Вызывается после выполнения привычки из пакета
- */
-async function checkAchievementsForHabit(userId, habitId) {
-  const client = await db.getClient();
 
-  try {
-    await client.query('BEGIN');
-
-    console.log('🔍 Checking achievements for habit:', { userId, habitId });
-
-    // Проверяем, что это привычка из пакета
-    const habitResult = await client.query(
-      `SELECT h.pack_purchase_id, pp.pack_id
-       FROM habits h
-       JOIN pack_purchases pp ON h.pack_purchase_id = pp.id
-       WHERE h.id = $1 AND h.user_id = $2 AND h.is_locked = true`,
-      [habitId, userId]
-    );
-
-    if (habitResult.rows.length === 0) {
-      console.log('ℹ️ Not a pack habit, skipping achievement check');
-      await client.query('COMMIT');
-      return;
-    }
-
-    const { pack_purchase_id, pack_id } = habitResult.rows[0];
-
-    console.log('📦 Pack habit detected:', { pack_purchase_id, pack_id });
-
-    // Подсчитываем общее количество выполнений по этому пакету
-    const completionsResult = await client.query(
-      `SELECT COUNT(*) as total_completions
-       FROM habit_marks hm
-       JOIN habits h ON hm.habit_id = h.id
-       WHERE h.pack_purchase_id = $1 
-         AND hm.status = 'completed'
-         AND hm.user_id = $2`,
-      [pack_purchase_id, userId]
-    );
-
-    const totalCompletions = parseInt(completionsResult.rows[0].total_completions);
-
-    console.log(`📊 Total completions for pack ${pack_id}: ${totalCompletions}`);
-
-    // Получаем уровни достижений, которые ещё не получены, но уже заслужены
-    const unachievedResult = await client.query(
-      `SELECT pal.*
-       FROM pack_achievement_levels pal
-       WHERE pal.pack_id = $1 
-         AND pal.is_active = true
-         AND pal.required_completions <= $2
-         AND NOT EXISTS (
-           SELECT 1 FROM user_pack_achievements upa
-           WHERE upa.level_id = pal.id AND upa.user_id = $3
-         )
-       ORDER BY pal.sort_order ASC`,
-      [pack_id, totalCompletions, userId]
-    );
-
-    const newAchievements = [];
-
-    // Выдаём новые достижения
-    for (const level of unachievedResult.rows) {
-      console.log(`🏆 Granting achievement: ${level.title} (required: ${level.required_completions})`);
-
-      await client.query(
-        `INSERT INTO user_pack_achievements (user_id, pack_id, level_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (user_id, level_id) DO NOTHING`,
-        [userId, pack_id, level.id]
-      );
-
-      newAchievements.push({
-        id: level.id,
-        title: level.title,
-        description: level.description,
-        required_completions: level.required_completions
-      });
-    }
-
-    await client.query('COMMIT');
-
-    if (newAchievements.length > 0) {
-      console.log(`🎉 Granted ${newAchievements.length} new achievement(s) to user ${userId}`);
-      
-      // Отправляем уведомление о новых достижениях
-      await sendAchievementNotification(userId, pack_id, newAchievements);
-    } else {
-      console.log('📝 No new achievements earned yet');
-    }
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Achievement check error:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * 🔔 Отправка уведомления о полученном достижении
- */
-async function sendAchievementNotification(userId, packId, achievements) {
-  try {
-    const bot = require("../server").bot;
-
-    // Получаем данные пользователя и пакета
-    const userResult = await db.query(
-      `SELECT u.telegram_id, u.language, sp.title as pack_title
-       FROM users u
-       CROSS JOIN store_packs sp
-       WHERE u.id = $1 AND sp.id = $2`,
-      [userId, packId]
-    );
-
-    if (userResult.rows.length === 0) return;
-
-    const user = userResult.rows[0];
-    const lang = user.language || 'en';
-
-    // Формируем список достижений
-    const achievementsList = achievements
-      .map(a => `🏆 <b>${a.title}</b>\n   ${a.description || ''}`)
-      .join('\n\n');
-
-    const message = lang === 'ru'
-      ? `🎉 <b>Новое достижение!</b>
-
-📦 Пакет: <b>${user.pack_title}</b>
-
-${achievementsList}
-
-Так держать! Продолжайте в том же духе! 💪`
-      : `🎉 <b>New Achievement Unlocked!</b>
-
-📦 Pack: <b>${user.pack_title}</b>
-
-${achievementsList}
-
-Keep up the great work! 💪`;
-
-    await bot.sendMessage(user.telegram_id, message, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: lang === 'ru' ? '🏆 Мои достижения' : '🏆 My Achievements',
-              web_app: {
-                url: `${process.env.WEBAPP_URL || process.env.FRONTEND_URL}/achievements`
-              }
-            }
-          ]
-        ]
-      }
-    });
-
-    console.log(`✅ Achievement notification sent to user ${userId}`);
-  } catch (error) {
-    console.error('❌ Failed to send achievement notification:', error);
-    // Не пробрасываем ошибку - это не критично
-  }
-}
 module.exports = markController;
-// Экспортируем вспомогательные функции
-module.exports.sendFriendNotifications = sendFriendNotifications;
-module.exports.checkAchievementsForHabit = checkAchievementsForHabit; // ← ДОБАВИТЬ
-
 module.exports.sendFriendNotifications = sendFriendNotifications;
