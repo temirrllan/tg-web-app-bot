@@ -1051,16 +1051,26 @@ bot.on("callback_query", async (callbackQuery) => {
   if (data.startsWith("mark_done_")) {
     const habitId = data.replace("mark_done_", "");
 
+    console.log("🔍 ========== MARK_DONE DEBUG ==========");
+    console.log("habitId from callback:", habitId);
+    console.log("chatId:", chatId);
+    console.log("userId (from.id):", userId);
+    console.log("messageId:", messageId);
+
     try {
-      // 1. Находим пользователя по telegram_id
+      // ШАГ 1: Ищем пользователя
+      console.log("🔍 Step 1: Looking up user by telegram_id:", chatId.toString());
       const userResult = await db.query(
         "SELECT id, first_name, language FROM users WHERE telegram_id = $1",
         [chatId.toString()]
       );
+      console.log("User query result rows:", userResult.rows.length);
+      console.log("User data:", userResult.rows[0]);
 
       if (userResult.rows.length === 0) {
+        console.error("❌ USER NOT FOUND for telegram_id:", chatId);
         await bot.answerCallbackQuery(callbackQuery.id, {
-          text: "❌ Пользователь не найден",
+          text: "❌ Пользователь не найден в БД",
           show_alert: true,
         });
         return;
@@ -1068,37 +1078,54 @@ bot.on("callback_query", async (callbackQuery) => {
 
       const dbUserId = userResult.rows[0].id;
       const lang = userResult.rows[0].language || 'ru';
+      console.log("✅ Found user - dbUserId:", dbUserId, "lang:", lang);
 
-      // 2. Проверяем, что привычка принадлежит этому пользователю
+      // ШАГ 2: Проверяем привычку
+      console.log("🔍 Step 2: Looking up habit id:", habitId, "for user:", dbUserId);
       const habitCheck = await db.query(
-        "SELECT id, title FROM habits WHERE id = $1 AND user_id = $2 AND is_active = true",
+        "SELECT id, title, is_active FROM habits WHERE id = $1 AND user_id = $2",
         [habitId, dbUserId]
       );
+      console.log("Habit query rows:", habitCheck.rows.length);
+      console.log("Habit data:", habitCheck.rows[0]);
 
+      // Если не найдено по user_id, пробуем вообще найти привычку
       if (habitCheck.rows.length === 0) {
+        const anyHabit = await db.query(
+          "SELECT id, title, user_id, is_active FROM habits WHERE id = $1",
+          [habitId]
+        );
+        console.log("❌ Habit not found for this user. Habit exists at all?", anyHabit.rows[0]);
+        
         await bot.answerCallbackQuery(callbackQuery.id, {
-          text: "❌ Привычка не найдена",
+          text: `❌ Привычка #${habitId} не найдена для вашего аккаунта`,
           show_alert: true,
         });
         return;
       }
 
       const habitTitle = habitCheck.rows[0].title;
+      console.log("✅ Found habit:", habitTitle);
 
-      // 3. Получаем сегодняшнюю дату
+      // ШАГ 3: Формируем дату
       const today = new Date();
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      console.log("🔍 Step 3: Today date:", todayStr);
 
-      // 4. Делаем отметку (UPSERT)
-      await db.query(
+      // ШАГ 4: Делаем отметку
+      console.log("🔍 Step 4: Inserting mark...");
+      const markResult = await db.query(
         `INSERT INTO habit_marks (habit_id, date, status, marked_at)
          VALUES ($1, $2::date, 'completed', CURRENT_TIMESTAMP)
          ON CONFLICT (habit_id, date)
-         DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
+         DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP
+         RETURNING id, habit_id, date::text, status`,
         [habitId, todayStr]
       );
+      console.log("✅ Mark saved:", markResult.rows[0]);
 
-      // 5. Обновляем streak
+      // ШАГ 5: Обновляем streak
+      console.log("🔍 Step 5: Updating streak...");
       await db.query(
         `UPDATE habits
          SET streak_current = streak_current + 1,
@@ -1106,50 +1133,45 @@ bot.on("callback_query", async (callbackQuery) => {
          WHERE id = $1`,
         [habitId]
       );
+      console.log("✅ Streak updated");
 
-      // 6. Редактируем сообщение
+      // ШАГ 6: Редактируем сообщение
+      console.log("🔍 Step 6: Editing message...");
       const successText = lang === 'en'
-        ? `✅ <b>Done!</b>\n\n"${habitTitle}" marked as completed!\n\nKeep it up! 💪`
+        ? `✅ <b>Done!</b>\n\n"${habitTitle}" marked as completed! 💪`
         : lang === 'kk'
-        ? `✅ <b>Орындалды!</b>\n\n"${habitTitle}" аяқталды деп белгіленді!\n\nЖалғастырыңыз! 💪`
-        : `✅ <b>Отлично!</b>\n\n"${habitTitle}" отмечена как выполненная!\n\nПродолжайте в том же духе! 💪`;
+        ? `✅ <b>Орындалды!</b>\n\n"${habitTitle}" аяқталды! 💪`
+        : `✅ <b>Отлично!</b>\n\n"${habitTitle}" выполнена! 💪`;
 
       await bot.editMessageText(successText, {
         chat_id: chatId,
         message_id: messageId,
         parse_mode: "HTML",
         reply_markup: {
-          inline_keyboard: [
-            [{ text: lang === 'en' ? "📱 Open App" : lang === 'kk' ? "📱 Қосымшаны ашу" : "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
-          ],
+          inline_keyboard: [[
+            { 
+              text: lang === 'en' ? "📱 Open App" : lang === 'kk' ? "📱 Қосымшаны ашу" : "📱 Открыть приложение", 
+              web_app: { url: WEBAPP_URL } 
+            }
+          ]],
         },
       });
 
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: "✅ Выполнено!",
-      });
-
-      console.log(`✅ Habit ${habitId} marked as done by user ${dbUserId}`);
-
-      // 7. Уведомляем друзей (если есть)
-      try {
-        const habitResult = await db.query("SELECT * FROM habits WHERE id = $1", [habitId]);
-        if (habitResult.rows.length > 0) {
-          const sendFriendNotifications = require("./controllers/markController").sendFriendNotifications;
-          await sendFriendNotifications(habitResult.rows[0], dbUserId, todayStr);
-        }
-      } catch (notifErr) {
-        console.error("⚠️ Friend notification error (non-critical):", notifErr.message);
-      }
+      await bot.answerCallbackQuery(callbackQuery.id, { text: "✅ Выполнено!" });
+      console.log("✅ ========== MARK_DONE SUCCESS ==========");
 
     } catch (error) {
-      console.error("❌ Error marking habit done:", error);
+      console.error("❌ ========== MARK_DONE ERROR ==========");
+      console.error("Error message:", error.message);
+      console.error("Error code:", error.code);
+      console.error("Error detail:", error.detail);
+      console.error("Full error:", error);
+      
       await bot.answerCallbackQuery(callbackQuery.id, {
-        text: "❌ Ошибка при отметке. Попробуйте в приложении.",
+        text: `❌ Ошибка: ${error.message}`,
         show_alert: true,
       });
     }
-
   } else if (data.startsWith("mark_skip_")) {
     const habitId = data.replace("mark_skip_", "");
 
