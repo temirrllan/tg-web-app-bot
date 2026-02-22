@@ -1052,68 +1052,170 @@ bot.on("callback_query", async (callbackQuery) => {
     const habitId = data.replace("mark_done_", "");
 
     try {
-      await db.query(
-        `INSERT INTO habit_marks (habit_id, date, status) 
-         VALUES ($1, CURRENT_DATE, 'completed')
-         ON CONFLICT (habit_id, date) 
-         DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
-        [habitId]
+      // 1. Находим пользователя по telegram_id
+      const userResult = await db.query(
+        "SELECT id, first_name, language FROM users WHERE telegram_id = $1",
+        [chatId.toString()]
       );
 
+      if (userResult.rows.length === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: "❌ Пользователь не найден",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const dbUserId = userResult.rows[0].id;
+      const lang = userResult.rows[0].language || 'ru';
+
+      // 2. Проверяем, что привычка принадлежит этому пользователю
+      const habitCheck = await db.query(
+        "SELECT id, title FROM habits WHERE id = $1 AND user_id = $2 AND is_active = true",
+        [habitId, dbUserId]
+      );
+
+      if (habitCheck.rows.length === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: "❌ Привычка не найдена",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const habitTitle = habitCheck.rows[0].title;
+
+      // 3. Получаем сегодняшнюю дату
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+      // 4. Делаем отметку (UPSERT)
       await db.query(
-        `UPDATE habits 
+        `INSERT INTO habit_marks (habit_id, date, status, marked_at)
+         VALUES ($1, $2::date, 'completed', CURRENT_TIMESTAMP)
+         ON CONFLICT (habit_id, date)
+         DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
+        [habitId, todayStr]
+      );
+
+      // 5. Обновляем streak
+      await db.query(
+        `UPDATE habits
          SET streak_current = streak_current + 1,
              streak_best = GREATEST(streak_current + 1, streak_best)
          WHERE id = $1`,
         [habitId]
       );
 
-      await bot.editMessageText(
-        "✅ Отлично! Привычка отмечена как выполненная.",
-        {
-          chat_id: chatId,
-          message_id: messageId,
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
-            ],
-          },
-        }
-      );
+      // 6. Редактируем сообщение
+      const successText = lang === 'en'
+        ? `✅ <b>Done!</b>\n\n"${habitTitle}" marked as completed!\n\nKeep it up! 💪`
+        : lang === 'kk'
+        ? `✅ <b>Орындалды!</b>\n\n"${habitTitle}" аяқталды деп белгіленді!\n\nЖалғастырыңыз! 💪`
+        : `✅ <b>Отлично!</b>\n\n"${habitTitle}" отмечена как выполненная!\n\nПродолжайте в том же духе! 💪`;
+
+      await bot.editMessageText(successText, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: lang === 'en' ? "📱 Open App" : lang === 'kk' ? "📱 Қосымшаны ашу" : "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
+          ],
+        },
+      });
 
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: "✅ Выполнено!",
       });
 
-      console.log(`✅ Habit ${habitId} marked as done`);
+      console.log(`✅ Habit ${habitId} marked as done by user ${dbUserId}`);
+
+      // 7. Уведомляем друзей (если есть)
+      try {
+        const habitResult = await db.query("SELECT * FROM habits WHERE id = $1", [habitId]);
+        if (habitResult.rows.length > 0) {
+          const sendFriendNotifications = require("./controllers/markController").sendFriendNotifications;
+          await sendFriendNotifications(habitResult.rows[0], dbUserId, todayStr);
+        }
+      } catch (notifErr) {
+        console.error("⚠️ Friend notification error (non-critical):", notifErr.message);
+      }
+
     } catch (error) {
-      console.error("Error marking habit done:", error);
+      console.error("❌ Error marking habit done:", error);
       await bot.answerCallbackQuery(callbackQuery.id, {
-        text: "❌ Ошибка",
+        text: "❌ Ошибка при отметке. Попробуйте в приложении.",
+        show_alert: true,
       });
     }
+
   } else if (data.startsWith("mark_skip_")) {
     const habitId = data.replace("mark_skip_", "");
 
     try {
-      await db.query(
-        `INSERT INTO habit_marks (habit_id, date, status) 
-         VALUES ($1, CURRENT_DATE, 'skipped')
-         ON CONFLICT (habit_id, date) 
-         DO UPDATE SET status = 'skipped', marked_at = CURRENT_TIMESTAMP`,
-        [habitId]
+      // 1. Находим пользователя по telegram_id
+      const userResult = await db.query(
+        "SELECT id, first_name, language FROM users WHERE telegram_id = $1",
+        [chatId.toString()]
       );
 
-      await db.query("UPDATE habits SET streak_current = 0 WHERE id = $1", [
-        habitId,
-      ]);
+      if (userResult.rows.length === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: "❌ Пользователь не найден",
+          show_alert: true,
+        });
+        return;
+      }
 
-      await bot.editMessageText("⏭ Привычка пропущена на сегодня.", {
+      const dbUserId = userResult.rows[0].id;
+      const lang = userResult.rows[0].language || 'ru';
+
+      // 2. Проверяем, что привычка принадлежит этому пользователю
+      const habitCheck = await db.query(
+        "SELECT id, title FROM habits WHERE id = $1 AND user_id = $2 AND is_active = true",
+        [habitId, dbUserId]
+      );
+
+      if (habitCheck.rows.length === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: "❌ Привычка не найдена",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const habitTitle = habitCheck.rows[0].title;
+
+      // 3. Получаем сегодняшнюю дату
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+      // 4. Делаем отметку skip (UPSERT)
+      await db.query(
+        `INSERT INTO habit_marks (habit_id, date, status, marked_at)
+         VALUES ($1, $2::date, 'skipped', CURRENT_TIMESTAMP)
+         ON CONFLICT (habit_id, date)
+         DO UPDATE SET status = 'skipped', marked_at = CURRENT_TIMESTAMP`,
+        [habitId, todayStr]
+      );
+
+      // streak не трогаем при skip
+
+      // 5. Редактируем сообщение
+      const skipText = lang === 'en'
+        ? `⏭ <b>Skipped</b>\n\n"${habitTitle}" skipped for today.\n\nSee you tomorrow! 🌟`
+        : lang === 'kk'
+        ? `⏭ <b>Өткізілді</b>\n\n"${habitTitle}" бүгін өткізілді.\n\nЕртең кездесеміз! 🌟`
+        : `⏭ <b>Пропущено</b>\n\n"${habitTitle}" пропущена на сегодня.\n\nДо завтра! 🌟`;
+
+      await bot.editMessageText(skipText, {
         chat_id: chatId,
         message_id: messageId,
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
+            [{ text: lang === 'en' ? "📱 Open App" : lang === 'kk' ? "📱 Қосымшаны ашу" : "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
           ],
         },
       });
@@ -1122,11 +1224,13 @@ bot.on("callback_query", async (callbackQuery) => {
         text: "⏭ Пропущено",
       });
 
-      console.log(`⏭ Habit ${habitId} marked as skipped`);
+      console.log(`⏭ Habit ${habitId} marked as skipped by user ${dbUserId}`);
+
     } catch (error) {
-      console.error("Error marking habit skipped:", error);
+      console.error("❌ Error marking habit skipped:", error);
       await bot.answerCallbackQuery(callbackQuery.id, {
-        text: "❌ Ошибка",
+        text: "❌ Ошибка при пропуске. Попробуйте в приложении.",
+        show_alert: true,
       });
     }
   } else if (data.startsWith("quick_done_")) {
