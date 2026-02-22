@@ -896,6 +896,7 @@ bot.on("callback_query", async (callbackQuery) => {
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
   const userId = callbackQuery.from.id;
+  console.log("🔔 CALLBACK RECEIVED:", callbackQuery.data); // добавь это
 
   console.log(`📲 Callback received: ${data} from chat ${chatId}`);
 // ============================================
