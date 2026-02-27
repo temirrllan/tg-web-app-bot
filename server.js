@@ -155,10 +155,58 @@ app.post(WEBHOOK_PATH, async (req, res) => {
 
       // Проверяем что это Telegram Stars
       if (payment.currency === "XTR") {
+        const invoicePayload = payment.invoice_payload || "";
+
+        // ── Pack purchase payment ──────────────────────────────────────────
+        if (invoicePayload.startsWith("pack_")) {
+          console.log("🎁 Processing pack purchase payment...");
+          try {
+            // payload format: pack_PACKID_USERID_TIMESTAMP
+            const parts = invoicePayload.split("_");
+            const packId = parseInt(parts[1]);
+
+            // Resolve internal user id from telegram_id
+            const userRes = await db.query(
+              "SELECT id FROM users WHERE telegram_id = $1",
+              [from_user_id.toString()]
+            );
+
+            if (userRes.rows.length > 0) {
+              const userId = userRes.rows[0].id;
+              const { createPackHabitsForUser } = require("./controllers/specialHabitsController");
+              await createPackHabitsForUser(userId, packId, payment.telegram_payment_charge_id);
+
+              console.log(`✅ Pack ${packId} unlocked for user ${userId}`);
+
+              // Confirmation message to user
+              try {
+                const langRes = await db.query("SELECT language FROM users WHERE id=$1", [userId]);
+                const lang = langRes.rows[0]?.language || "en";
+                const msg = lang === "ru"
+                  ? "🎉 <b>Оплата прошла!</b>\n\nВаш Celebrity Habit Pack активирован. Откройте приложение и найдите привычки во вкладке <b>Special</b>! ✨"
+                  : lang === "kk"
+                  ? "🎉 <b>Төлем өтті!</b>\n\nСіздің Celebrity Habit Pack белсендірілді. Қосымшаны ашып, <b>Special</b> қойындысынан әдеттерді табыңыз! ✨"
+                  : "🎉 <b>Payment successful!</b>\n\nYour Celebrity Habit Pack is now active! Open the app and find your habits in the <b>Special</b> tab. ✨";
+                await bot.sendMessage(from_user_id, msg, { parse_mode: "HTML" });
+              } catch (msgErr) {
+                console.warn("⚠️ Failed to send pack confirmation:", msgErr.message);
+              }
+            } else {
+              console.error("❌ User not found for pack payment:", from_user_id);
+            }
+          } catch (packErr) {
+            console.error("❌ Pack payment processing error:", packErr);
+          }
+
+          bot.processUpdate(update);
+          return res.status(200).json({ success: true });
+        }
+
+        // ── Subscription payment (existing flow) ───────────────────────────
         const paymentData = {
           telegram_payment_charge_id: payment.telegram_payment_charge_id,
           provider_payment_charge_id: payment.provider_payment_charge_id,
-          invoice_payload: payment.invoice_payload,
+          invoice_payload: invoicePayload,
           total_amount: payment.total_amount,
           currency: payment.currency,
           from_user_id: from_user_id,
@@ -271,6 +319,15 @@ app.use("/api", habitRoutes);
 
 const paymentRoutes = require("./routes/paymentRoutes");
 app.use("/api/payment", paymentRoutes);
+
+// Special Habits routes
+const specialHabitsRoutes = require("./routes/specialHabitsRoutes");
+app.use("/api/special-habits", specialHabitsRoutes);
+
+// Admin panel (url-encoded body parsing required for forms)
+app.use(express.urlencoded({ extended: true }));
+const adminSetup = require("./admin/adminSetup");
+app.use("/admin", adminSetup);
 
 console.log("\n🤖 Запуск Telegram бота (webhook)...");
 
