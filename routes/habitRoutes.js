@@ -417,10 +417,11 @@ router.get('/habits/date/:date', async (req, res) => {
          hm.habit_id = h.id 
          AND hm.date = $3::date
        )
-       WHERE 
-         h.user_id = $1 
+       WHERE
+         h.user_id = $1
          AND h.is_active = true
          AND $2 = ANY(h.schedule_days)
+         AND (h.is_special = false OR h.is_special IS NULL)
        ORDER BY h.created_at DESC`,
       [userId, dayOfWeek, date]
     );

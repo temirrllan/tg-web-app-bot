@@ -23,7 +23,7 @@ const checkSubscriptionLimit = async (req, res, next) => {
     // Проверяем количество активных привычек
     const pool = require('../config/database');
     const result = await pool.query(
-      'SELECT COUNT(*) as count FROM habits WHERE user_id = $1 AND is_active = true',
+      'SELECT COUNT(*) as count FROM habits WHERE user_id = $1 AND is_active = true AND (is_special = false OR is_special IS NULL)',
       [userId]
     );
     
