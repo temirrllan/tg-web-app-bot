@@ -435,7 +435,7 @@ class SubscriptionService {
           u.subscription_type,
           u.subscription_expires_at,
           u.subscription_start_date,
-          (SELECT COUNT(*) FROM habits WHERE user_id = u.id AND is_active = true) as habit_count,
+          (SELECT COUNT(*) FROM habits WHERE user_id = u.id AND is_active = true AND (is_special = false OR is_special IS NULL)) as habit_count,
           (SELECT COUNT(DISTINCT hm.user_id) - 1 
            FROM habit_members hm 
            JOIN habits h ON hm.habit_id = h.id 
