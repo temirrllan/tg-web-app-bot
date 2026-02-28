@@ -150,14 +150,14 @@ router.get('/packs/new', requireAdmin, (req, res) => {
 
 router.post('/packs/new', requireAdmin, async (req, res) => {
   const { name, photo_url, short_description, biography, learn_more_url,
-          price_stars, original_price_stars, is_active, sort_order } = req.body;
+          price_stars, original_price_stars, is_active, sort_order, bg_color } = req.body;
   await db.query(
     `INSERT INTO special_habit_packs
-       (name,photo_url,short_description,biography,learn_more_url,price_stars,original_price_stars,is_active,sort_order)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       (name,photo_url,short_description,biography,learn_more_url,price_stars,original_price_stars,is_active,sort_order,bg_color)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [name, photo_url||null, short_description||null, biography||null, learn_more_url||null,
      parseInt(price_stars)||0, original_price_stars ? parseInt(original_price_stars) : null,
-     is_active === 'on', parseInt(sort_order)||0]
+     is_active === 'on', parseInt(sort_order)||0, bg_color||null]
   );
   res.redirect('/admin');
 });
@@ -171,15 +171,16 @@ router.get('/packs/:id/edit', requireAdmin, async (req, res) => {
 
 router.post('/packs/:id/edit', requireAdmin, async (req, res) => {
   const { name, photo_url, short_description, biography, learn_more_url,
-          price_stars, original_price_stars, is_active, sort_order } = req.body;
+          price_stars, original_price_stars, is_active, sort_order, bg_color } = req.body;
   await db.query(
     `UPDATE special_habit_packs SET
        name=$1,photo_url=$2,short_description=$3,biography=$4,learn_more_url=$5,
-       price_stars=$6,original_price_stars=$7,is_active=$8,sort_order=$9,updated_at=NOW()
-     WHERE id=$10`,
+       price_stars=$6,original_price_stars=$7,is_active=$8,sort_order=$9,
+       bg_color=$10,updated_at=NOW()
+     WHERE id=$11`,
     [name, photo_url||null, short_description||null, biography||null, learn_more_url||null,
      parseInt(price_stars)||0, original_price_stars ? parseInt(original_price_stars) : null,
-     is_active === 'on', parseInt(sort_order)||0, req.params.id]
+     is_active === 'on', parseInt(sort_order)||0, bg_color||null, req.params.id]
   );
   res.redirect('/admin');
 });
@@ -209,6 +210,18 @@ function packForm(p, id) {
       <input name="original_price_stars" type="number" min="0" value="${p.original_price_stars||''}">
       <label>Sort Order</label>
       <input name="sort_order" type="number" value="${p.sort_order||0}">
+      <label>Card Background Color</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <input name="bg_color" type="color" value="${p.bg_color||'#c8e6c9'}" style="width:48px;height:36px;border:none;border-radius:8px;cursor:pointer;padding:2px">
+        <input name="bg_color_text" type="text" placeholder="#c8e6c9" value="${p.bg_color||''}" style="width:120px" oninput="document.querySelector('[name=bg_color]').value=this.value">
+        <span style="font-size:12px;color:#888">Tip: soft pastels look best</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        ${['#c8e6c9','#ffccbc','#b2ebf2','#d1c4e9','#fff9c4','#f8bbd0','#dcedc8','#ffe0b2','#e1f5fe','#fce4ec'].map(c =>
+          `<div onclick="document.querySelector('[name=bg_color]').value='${c}';document.querySelector('[name=bg_color_text]').value='${c}'"
+                style="width:28px;height:28px;background:${c};border-radius:6px;cursor:pointer;border:2px solid ${p.bg_color===c?'#333':'#ddd'}"></div>`
+        ).join('')}
+      </div>
       <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
         <input name="is_active" type="checkbox" ${p.is_active !== false ? 'checked' : ''}> Active
       </label>
