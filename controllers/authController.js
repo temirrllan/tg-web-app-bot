@@ -159,7 +159,9 @@ const authController = {
           last_name: userData.last_name,
           language: userData.language,
           is_premium: userData.is_premium,
-          photo_url: userData.photo_url
+          photo_url: userData.photo_url,
+          // Preference: show swipe hint? NULL (column not yet migrated) → treat as true
+          show_swipe_hint: userData.show_swipe_hint !== false
         },
         isNewUser // ✅ true только для СОВСЕМ новых пользователей
       };
