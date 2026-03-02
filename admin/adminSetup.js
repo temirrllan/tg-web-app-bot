@@ -1,27 +1,31 @@
 // admin/adminSetup.js
-// AdminJS-based admin panel for Habit Tracker
-// Replaces the old HTML/session-based admin panel
 //
-// Access: /admin  (login with ADMIN_PASSWORD env var)
+// AdminJS v7 uses ESM. Since server.js is CommonJS, we load all AdminJS
+// packages via dynamic import() which Node.js allows from CJS.
+//
+// Access the panel at  /admin
+// Login: any email  +  ADMIN_PASSWORD env var (default: admin123)
 
 'use strict';
 
-const AdminJS            = require('adminjs');
-const AdminJSExpress     = require('@adminjs/express');
-const { Database, Resource } = require('@adminjs/sql');
-const knex               = require('knex');
-
-// Register the @adminjs/sql adapter
-AdminJS.registerAdapter({ Database, Resource });
+const db = require('../config/database'); // existing pg pool for stats
 
 // ─── Connection helpers ───────────────────────────────────────────────────────
 
-function buildKnexConnection() {
+function getConnectionOptions() {
   const isProd = process.env.NODE_ENV === 'production';
 
   if (process.env.DATABASE_URL) {
+    // Extract database name from the URL
+    let database = 'postgres';
+    try {
+      const url = new URL(process.env.DATABASE_URL);
+      database = url.pathname.replace(/^\//, '') || 'postgres';
+    } catch (_) {}
+
     return {
       connectionString: process.env.DATABASE_URL,
+      database,
       ssl: isProd ? { rejectUnauthorized: false } : false,
     };
   }
@@ -29,159 +33,133 @@ function buildKnexConnection() {
   return {
     host:     process.env.DB_HOST     || 'localhost',
     port:     Number(process.env.DB_PORT || 5432),
-    database: process.env.DB_NAME,
+    database: process.env.DB_NAME     || 'postgres',
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    ssl:      isProd ? { rejectUnauthorized: false } : false,
+    ssl: isProd ? { rejectUnauthorized: false } : false,
   };
 }
 
-// ─── Resource options helpers ─────────────────────────────────────────────────
+// ─── Actions shortcuts ────────────────────────────────────────────────────────
 
-const readOnlyActions = {
-  new:    { isAccessible: false },
-  delete: { isAccessible: false },
-};
+const noCreate = { new: { isAccessible: false } };
+const noDelete = { delete: { isAccessible: false } };
+const viewOnly  = { new: { isAccessible: false }, delete: { isAccessible: false }, edit: { isAccessible: false } };
 
-const viewOnlyActions = {
-  new:    { isAccessible: false },
-  delete: { isAccessible: false },
-  edit:   { isAccessible: false },
-};
-
-// ─── Main builder ─────────────────────────────────────────────────────────────
+// ─── Main async builder ───────────────────────────────────────────────────────
 
 async function buildAdminRouter() {
-  // Create knex instance (separate from the main pg pool)
-  const knexInstance = knex({
-    client:     'pg',
-    connection: buildKnexConnection(),
-    pool:       { min: 1, max: 3 },
-  });
+  // ── Dynamic ESM imports ──────────────────────────────────────────────────
+  const { default: AdminJS }          = await import('adminjs');
+  const { default: AdminJSExpress }   = await import('@adminjs/express');
+  const { default: Adapter, Database, Resource } = await import('@adminjs/sql');
 
-  // Introspect schema
-  const db = new Database(knexInstance);
-  await db.init();
+  AdminJS.registerAdapter({ Database, Resource });
 
-  // ── AdminJS instance ─────────────────────────────────────────────────────
+  // ── Connect to Postgres via @adminjs/sql Adapter ─────────────────────────
+  const sqlDb = await new Adapter('postgresql', getConnectionOptions()).init();
+
+  // ── Build AdminJS instance ────────────────────────────────────────────────
   const adminJs = new AdminJS({
     rootPath: '/admin',
 
     resources: [
 
-      // ── Habit Packs (full CRUD) ─────────────────────────────────────────
+      // ── Пакеты привычек (full CRUD) ──────────────────────────────────────
       {
-        resource: await db.table('special_habit_packs'),
+        resource: sqlDb.table('special_habit_packs'),
         options: {
-          navigation:  { name: 'Пакеты', icon: 'Star' },
-          sort:        { sortBy: 'sort_order', direction: 'asc' },
-          listProperties: ['id', 'name', 'price_stars', 'is_active', 'sort_order'],
-          editProperties: [
-            'name', 'short_description', 'biography', 'photo_url',
-            'learn_more_url', 'price_stars', 'original_price_stars',
-            'bg_color', 'sort_order', 'is_active',
-          ],
-          showProperties: [
-            'id', 'name', 'short_description', 'biography', 'photo_url',
-            'learn_more_url', 'price_stars', 'original_price_stars',
-            'bg_color', 'sort_order', 'is_active', 'created_at',
-          ],
+          navigation: { name: 'Пакеты', icon: 'Star' },
+          sort: { sortBy: 'sort_order', direction: 'asc' },
+          listProperties:  ['id', 'name', 'price_stars', 'original_price_stars', 'is_active', 'sort_order'],
+          showProperties:  ['id', 'name', 'short_description', 'biography', 'photo_url', 'learn_more_url', 'price_stars', 'original_price_stars', 'bg_color', 'sort_order', 'is_active', 'created_at'],
+          editProperties:  ['name', 'short_description', 'biography', 'photo_url', 'learn_more_url', 'price_stars', 'original_price_stars', 'bg_color', 'sort_order', 'is_active'],
+          filterProperties: ['name', 'is_active', 'price_stars'],
         },
       },
 
-      // ── Pack Habit Templates ───────────────────────────────────────────
+      // ── Шаблоны привычек в пакете ────────────────────────────────────────
       {
-        resource: await db.table('special_habit_templates'),
+        resource: sqlDb.table('special_habit_templates'),
         options: {
-          navigation:  { name: 'Пакеты' },
-          sort:        { sortBy: 'sort_order', direction: 'asc' },
-          listProperties: ['id', 'pack_id', 'title', 'goal', 'day_period', 'sort_order'],
-          editProperties: [
-            'pack_id', 'title', 'goal', 'category_id',
-            'schedule_days', 'reminder_time', 'reminder_enabled',
-            'day_period', 'sort_order',
-          ],
+          navigation: { name: 'Пакеты' },
+          sort: { sortBy: 'sort_order', direction: 'asc' },
+          listProperties:  ['id', 'pack_id', 'title', 'goal', 'day_period', 'sort_order'],
+          editProperties:  ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'day_period', 'sort_order'],
+          filterProperties: ['pack_id', 'day_period'],
         },
       },
 
-      // ── Pack Achievements ──────────────────────────────────────────────
+      // ── Достижения пакета ────────────────────────────────────────────────
       {
-        resource: await db.table('pack_achievements'),
+        resource: sqlDb.table('pack_achievements'),
         options: {
-          navigation:  { name: 'Пакеты' },
-          sort:        { sortBy: 'sort_order', direction: 'asc' },
-          listProperties: ['id', 'pack_id', 'title', 'icon', 'required_count', 'sort_order'],
-          editProperties: ['pack_id', 'title', 'icon', 'description', 'required_count', 'sort_order'],
+          navigation: { name: 'Пакеты' },
+          sort: { sortBy: 'sort_order', direction: 'asc' },
+          listProperties:  ['id', 'pack_id', 'title', 'icon', 'required_count', 'sort_order'],
+          editProperties:  ['pack_id', 'title', 'icon', 'description', 'required_count', 'sort_order'],
         },
       },
 
-      // ── Users (no create/delete) ───────────────────────────────────────
+      // ── Пользователи (no create/delete) ──────────────────────────────────
       {
-        resource: await db.table('users'),
+        resource: sqlDb.table('users'),
         options: {
-          navigation:   { name: 'Пользователи', icon: 'User' },
-          actions:      readOnlyActions,
-          sort:         { sortBy: 'id', direction: 'desc' },
-          listProperties: ['id', 'first_name', 'username', 'language', 'is_admin', 'is_premium', 'created_at'],
-          editProperties: ['is_admin', 'is_premium'],
-          showProperties: [
-            'id', 'telegram_id', 'first_name', 'last_name', 'username',
-            'language', 'is_admin', 'is_premium',
-            'show_swipe_hint', 'show_friend_hint', 'created_at',
-          ],
+          navigation: { name: 'Пользователи', icon: 'User' },
+          actions: { ...noCreate, ...noDelete },
+          sort: { sortBy: 'id', direction: 'desc' },
+          listProperties:   ['id', 'first_name', 'username', 'language', 'is_admin', 'is_premium', 'created_at'],
+          showProperties:   ['id', 'telegram_id', 'first_name', 'last_name', 'username', 'language', 'is_admin', 'is_premium', 'show_swipe_hint', 'show_friend_hint', 'created_at'],
+          editProperties:   ['is_admin', 'is_premium'],
           filterProperties: ['first_name', 'username', 'language', 'is_admin', 'is_premium'],
         },
       },
 
-      // ── Subscriptions (view only) ──────────────────────────────────────
+      // ── Подписки (view only) ─────────────────────────────────────────────
       {
-        resource: await db.table('subscriptions'),
+        resource: sqlDb.table('subscriptions'),
         options: {
-          navigation:  { name: 'Пользователи' },
-          actions:     viewOnlyActions,
-          sort:        { sortBy: 'id', direction: 'desc' },
+          navigation: { name: 'Пользователи' },
+          actions: viewOnly,
+          sort: { sortBy: 'id', direction: 'desc' },
           listProperties: ['id', 'user_id', 'type', 'stars_amount', 'started_at', 'expires_at', 'is_active'],
+          filterProperties: ['type', 'is_active'],
         },
       },
 
-      // ── Categories (full CRUD) ─────────────────────────────────────────
+      // ── Категории (full CRUD) ────────────────────────────────────────────
       {
-        resource: await db.table('categories'),
+        resource: sqlDb.table('categories'),
         options: {
-          navigation:  { name: 'Контент', icon: 'Tags' },
-          sort:        { sortBy: 'sort_order', direction: 'asc' },
-          listProperties: ['id', 'name_ru', 'name_en', 'icon', 'color', 'sort_order'],
-          editProperties: ['name_ru', 'name_en', 'icon', 'color', 'sort_order'],
+          navigation: { name: 'Контент', icon: 'Grid' },
+          sort: { sortBy: 'sort_order', direction: 'asc' },
+          listProperties:  ['id', 'name_ru', 'name_en', 'icon', 'color', 'sort_order'],
+          editProperties:  ['name_ru', 'name_en', 'icon', 'color', 'sort_order'],
         },
       },
 
-      // ── Purchases (view only) ──────────────────────────────────────────
+      // ── Покупки пакетов (view only) ──────────────────────────────────────
       {
-        resource: await db.table('special_habit_purchases'),
+        resource: sqlDb.table('special_habit_purchases'),
         options: {
-          navigation:  { name: 'Продажи', icon: 'Currency' },
-          actions:     viewOnlyActions,
-          sort:        { sortBy: 'purchased_at', direction: 'desc' },
+          navigation: { name: 'Продажи', icon: 'Money' },
+          actions: viewOnly,
+          sort: { sortBy: 'purchased_at', direction: 'desc' },
           listProperties: ['id', 'user_id', 'pack_id', 'price_paid_stars', 'payment_status', 'purchased_at'],
+          filterProperties: ['payment_status', 'pack_id'],
         },
       },
 
     ],
 
-    // ── Dashboard ──────────────────────────────────────────────────────────
-    dashboard: {
-      component: AdminJS.bundle('./components/Dashboard'),
-    },
-
-    // ── Branding ───────────────────────────────────────────────────────────
     branding: {
-      companyName:     'Habit Tracker',
-      logo:            false,
+      companyName:      'Habit Tracker',
+      logo:             false,
       withMadeWithLove: false,
     },
   });
 
-  // ── Build authenticated Express router ─────────────────────────────────
+  // ── Authenticated router ──────────────────────────────────────────────────
   const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
   const COOKIE_SECRET  = process.env.SESSION_SECRET  || 'adminjs-secret-at-least-32-chars!!';
 
@@ -195,35 +173,41 @@ async function buildAdminRouter() {
       cookieName:     'adminjs_session',
       cookiePassword: COOKIE_SECRET,
     },
-    null, // custom router (null = create new)
+    null,
     {
-      resave:             false,
-      saveUninitialized:  true,
-      secret:             COOKIE_SECRET,
+      resave:            false,
+      saveUninitialized: true,
+      secret:            COOKIE_SECRET,
+      cookie: {
+        secure:   process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge:   8 * 60 * 60 * 1000, // 8h
+      },
     }
   );
 
-  // ── Stats API (uses AdminJS session) ──────────────────────────────────
+  // ── Stats API endpoint (behind AdminJS session) ───────────────────────────
   router.get('/api/stats', async (req, res) => {
     if (!req.session?.adminUser) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     try {
-      const result = await knexInstance.raw(`
+      const result = await db.query(`
         SELECT
-          (SELECT COUNT(*)::int FROM users)                                                      AS total_users,
-          (SELECT COUNT(*)::int FROM users WHERE created_at > NOW() - INTERVAL '7 days')        AS new_users_week,
-          (SELECT COUNT(*)::int FROM users WHERE created_at > NOW() - INTERVAL '30 days')       AS new_users_month,
-          (SELECT COUNT(*)::int FROM special_habit_purchases WHERE payment_status = 'completed') AS total_purchases,
-          (SELECT COALESCE(SUM(price_paid_stars),0)::int FROM special_habit_purchases WHERE payment_status = 'completed') AS total_stars_earned,
-          (SELECT COUNT(*)::int FROM subscriptions WHERE is_active = true)                       AS active_subscriptions,
-          (SELECT COUNT(*)::int FROM habits WHERE is_active = true)                              AS total_habits,
-          (SELECT COUNT(*)::int FROM special_habit_packs)                                        AS total_packs
+          (SELECT COUNT(*)::int  FROM users)                                                      AS total_users,
+          (SELECT COUNT(*)::int  FROM users WHERE created_at > NOW() - INTERVAL '7 days')         AS new_users_week,
+          (SELECT COUNT(*)::int  FROM users WHERE created_at > NOW() - INTERVAL '30 days')        AS new_users_month,
+          (SELECT COUNT(*)::int  FROM special_habit_purchases WHERE payment_status = 'completed') AS total_purchases,
+          (SELECT COALESCE(SUM(price_paid_stars),0)::int
+             FROM special_habit_purchases WHERE payment_status = 'completed')                     AS total_stars_earned,
+          (SELECT COUNT(*)::int  FROM subscriptions    WHERE is_active = true)                    AS active_subscriptions,
+          (SELECT COUNT(*)::int  FROM habits            WHERE is_active = true)                   AS total_habits,
+          (SELECT COUNT(*)::int  FROM special_habit_packs)                                        AS total_packs
       `);
       res.json(result.rows[0]);
     } catch (err) {
-      console.error('AdminJS stats error:', err);
-      res.status(500).json({ error: 'DB error' });
+      console.error('AdminJS /api/stats error:', err.message);
+      res.status(500).json({ error: 'Database error' });
     }
   });
 
