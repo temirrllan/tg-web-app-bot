@@ -326,10 +326,25 @@ app.use("/api/payment", paymentRoutes);
 const specialHabitsRoutes = require("./routes/specialHabitsRoutes");
 app.use("/api/special-habits", specialHabitsRoutes);
 
-// Admin panel (url-encoded body parsing required for forms)
+// Admin panel — AdminJS (async init, ready in ~1-2s after start)
 app.use(express.urlencoded({ extended: true }));
-const adminSetup = require("./admin/adminSetup");
-app.use("/admin", adminSetup);
+
+let _adminRouter = null;
+app.use('/admin', (req, res, next) => {
+  if (_adminRouter) return _adminRouter(req, res, next);
+  res.status(503).send(
+    '<h2 style="font-family:sans-serif;padding:40px;color:#555">' +
+    '⏳ Admin panel is initializing...<br><small>Refresh in a moment</small></h2>'
+  );
+});
+
+const { buildAdminRouter } = require('./admin/adminSetup');
+buildAdminRouter()
+  .then(({ adminJs, router }) => {
+    _adminRouter = router;
+    console.log('✅ AdminJS ready at', adminJs.options.rootPath);
+  })
+  .catch(err => console.error('❌ AdminJS init failed:', err));
 
 console.log("\n🤖 Запуск Telegram бота (webhook)...");
 
