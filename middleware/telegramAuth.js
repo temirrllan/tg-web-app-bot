@@ -41,7 +41,8 @@ function isValidTelegramInitData(initData, botToken) {
 }
 
 function validateTelegramWebAppData(req, res, next) {
-  const { initData } = req.body;
+  // Accept initData from body (auth) or header (other endpoints)
+  const initData = req.body?.initData || req.headers['x-telegram-init-data'];
 
   if (!initData) {
     return res.status(400).json({ success: false, error: 'No init data provided' });
