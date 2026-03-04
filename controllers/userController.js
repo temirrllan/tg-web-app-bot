@@ -16,7 +16,7 @@ const userController = {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
       }
 
-      const { show_swipe_hint } = req.body;
+      const { show_swipe_hint, show_friend_hint } = req.body;
 
       // Build dynamic SET clause — only update fields that were sent
       const updates = [];
@@ -26,6 +26,11 @@ const userController = {
       if (typeof show_swipe_hint === 'boolean') {
         updates.push(`show_swipe_hint = $${idx++}`);
         values.push(show_swipe_hint);
+      }
+
+      if (typeof show_friend_hint === 'boolean') {
+        updates.push(`show_friend_hint = $${idx++}`);
+        values.push(show_friend_hint);
       }
 
       if (updates.length === 0) {
@@ -48,7 +53,7 @@ const userController = {
 
       console.log(`✅ Preferences updated for user ${telegramId}:`, result.rows[0]);
 
-      res.json({ success: true, preferences: result.rows[0] });
+      res.json({ success: true, preferences: result.rows[0], updated: Object.fromEntries(updates.map((u, i) => [u.split(' ')[0], values[i]])) });
 
     } catch (error) {
       console.error('❌ updatePreferences error:', error);
