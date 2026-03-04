@@ -16,21 +16,21 @@ const userController = {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
       }
 
-      const { show_swipe_hint, show_friend_hint } = req.body;
+      const { swipe_hint_dismissed, friend_hint_dismissed } = req.body;
 
       // Build dynamic SET clause — only update fields that were sent
       const updates = [];
       const values = [];
       let idx = 1;
 
-      if (typeof show_swipe_hint === 'boolean') {
-        updates.push(`show_swipe_hint = $${idx++}`);
-        values.push(show_swipe_hint);
+      if (typeof swipe_hint_dismissed === 'boolean') {
+        updates.push(`swipe_hint_dismissed = $${idx++}`);
+        values.push(swipe_hint_dismissed);
       }
 
-      if (typeof show_friend_hint === 'boolean') {
-        updates.push(`show_friend_hint = $${idx++}`);
-        values.push(show_friend_hint);
+      if (typeof friend_hint_dismissed === 'boolean') {
+        updates.push(`friend_hint_dismissed = $${idx++}`);
+        values.push(friend_hint_dismissed);
       }
 
       if (updates.length === 0) {
@@ -42,7 +42,7 @@ const userController = {
         UPDATE users
         SET ${updates.join(', ')}
         WHERE telegram_id = $${idx}
-        RETURNING id, show_swipe_hint
+        RETURNING id, swipe_hint_dismissed, friend_hint_dismissed
       `;
 
       const result = await pool.query(query, values);
