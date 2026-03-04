@@ -5,8 +5,15 @@ const telegramPaymentController = {
   // Обработка webhook от Telegram
   async handleWebhook(req, res) {
     try {
+      // Проверяем секретный токен Telegram
+      const BOT_SECRET = process.env.BOT_SECRET;
+      const secretHeader = req.get('x-telegram-bot-api-secret-token');
+      if (!BOT_SECRET || secretHeader !== BOT_SECRET) {
+        console.error('❌ Payment webhook: unauthorized request');
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+      }
+
       console.log('📥 ========== TELEGRAM PAYMENT WEBHOOK ==========');
-      console.log('Headers:', JSON.stringify(req.headers, null, 2));
       console.log('Body:', JSON.stringify(req.body, null, 2));
 
       const update = req.body;

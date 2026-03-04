@@ -1,10 +1,19 @@
 const crypto = require('crypto');
 
+const MAX_AUTH_AGE_SECONDS = 86400; // 24 часа
+
 function isValidTelegramInitData(initData, botToken) {
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get('hash');
     if (!hash) return false;
+
+    // Проверяем свежесть auth_date
+    const authDate = parseInt(params.get('auth_date') || '0', 10);
+    if (!authDate || Math.floor(Date.now() / 1000) - authDate > MAX_AUTH_AGE_SECONDS) {
+      console.warn('initData validation error: auth_date expired or missing');
+      return false;
+    }
 
     // Формируем data-check-string
     const entries = [];
@@ -43,6 +52,18 @@ function validateTelegramWebAppData(req, res, next) {
     if (!ok) {
       return res.status(403).json({ success: false, error: 'Invalid Telegram signature' });
     }
+  }
+
+  // Извлекаем user из initData и устанавливаем req.user
+  try {
+    const params = new URLSearchParams(initData);
+    const userParam = params.get('user');
+    if (userParam) {
+      const tgUser = JSON.parse(decodeURIComponent(userParam));
+      req.user = { telegram_id: String(tgUser.id), ...tgUser };
+    }
+  } catch (e) {
+    // Не критично для этого middleware — контроллер сам валидирует данные
   }
 
   next();

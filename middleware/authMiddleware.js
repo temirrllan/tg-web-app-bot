@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_SECRET = process.env.BOT_SECRET;
 
+const MAX_AUTH_AGE_SECONDS = 86400; // 24 часа
+
 /**
  * Проверка подписи Telegram WebApp initData
  */
@@ -13,9 +15,16 @@ function verifyTelegramWebAppData(initData) {
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get('hash');
-    
+
     if (!hash) {
       console.warn('⚠️ No hash in initData');
+      return false;
+    }
+
+    // Проверяем свежесть auth_date
+    const authDate = parseInt(params.get('auth_date') || '0', 10);
+    if (!authDate || Math.floor(Date.now() / 1000) - authDate > MAX_AUTH_AGE_SECONDS) {
+      console.warn('⚠️ initData auth_date expired or missing');
       return false;
     }
 
@@ -75,20 +84,7 @@ module.exports = async function authMiddleware(req, res, next) {
       return next();
     }
 
-    // -------- 3) Авторизация по userId (для остальных эндпоинтов) --------
-    const userId = req.headers['x-user-id'];
-    
-    if (userId) {
-      const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
-      if (result.rows.length > 0) {
-        req.user = result.rows[0];
-        console.log('✅ Auth by userId:', userId);
-        return next();
-      }
-      return res.status(401).json({ success: false, error: 'Invalid user' });
-    }
-
-    // -------- 4) Обработка initData (для остальных эндпоинтов) --------
+    // -------- 3) Обработка initData (для остальных эндпоинтов) --------
     const initData = req.headers['x-telegram-init-data'] || req.headers['telegram-init-data'];
     const isProduction = process.env.NODE_ENV === 'production';
     

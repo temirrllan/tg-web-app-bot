@@ -160,8 +160,15 @@ async function buildAdminRouter() {
   });
 
   // ── Authenticated router ──────────────────────────────────────────────────
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-  const COOKIE_SECRET  = process.env.SESSION_SECRET  || 'adminjs-secret-at-least-32-chars!!';
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+  const COOKIE_SECRET  = process.env.SESSION_SECRET;
+
+  if (!ADMIN_PASSWORD) {
+    throw new Error('❌ ADMIN_PASSWORD environment variable is required');
+  }
+  if (!COOKIE_SECRET || COOKIE_SECRET.length < 32) {
+    throw new Error('❌ SESSION_SECRET environment variable is required (min 32 chars)');
+  }
 
   const router = AdminJSExpress.buildAuthenticatedRouter(
     adminJs,

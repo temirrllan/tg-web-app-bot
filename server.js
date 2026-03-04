@@ -87,12 +87,13 @@ const extraOrigins = (process.env.CORS_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const allowedOrigins = [
   FRONTEND_URL,
   WEBAPP_URL,
   "https://web.telegram.org",
-  "http://localhost:5173",
-  "http://localhost:5174",
+  ...(isProduction ? [] : ["http://localhost:5173", "http://localhost:5174"]),
   ...extraOrigins,
 ].filter(Boolean);
 
@@ -126,12 +127,7 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     }
 
     if (secretHeader !== BOT_SECRET) {
-      console.error(
-        "❌ Invalid webhook secret. Expected:",
-        BOT_SECRET,
-        "Got:",
-        secretHeader
-      );
+      console.error("❌ Invalid webhook secret token");
       return res
         .status(401)
         .json({ success: false, error: "Unauthorized webhook" });

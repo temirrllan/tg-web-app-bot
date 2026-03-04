@@ -10,9 +10,9 @@ const userController = {
    */
   async updatePreferences(req, res) {
     try {
-      const userId = req.userId; // set by validateTelegramWebAppData middleware
+      const telegramId = req.user?.telegram_id || String(req.user?.id);
 
-      if (!userId) {
+      if (!telegramId) {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
       }
 
@@ -32,11 +32,11 @@ const userController = {
         return res.status(400).json({ success: false, error: 'No valid fields to update' });
       }
 
-      values.push(userId); // last param = WHERE id = $N
+      values.push(telegramId); // last param = WHERE telegram_id = $N
       const query = `
         UPDATE users
         SET ${updates.join(', ')}
-        WHERE id = $${idx}
+        WHERE telegram_id = $${idx}
         RETURNING id, show_swipe_hint
       `;
 
@@ -46,7 +46,7 @@ const userController = {
         return res.status(404).json({ success: false, error: 'User not found' });
       }
 
-      console.log(`✅ Preferences updated for user ${userId}:`, result.rows[0]);
+      console.log(`✅ Preferences updated for user ${telegramId}:`, result.rows[0]);
 
       res.json({ success: true, preferences: result.rows[0] });
 
