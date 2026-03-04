@@ -1299,11 +1299,38 @@ bot.on("callback_query", async (callbackQuery) => {
   }
 });
 
+/** ---------- Автоматический запуск миграций ---------- */
+async function runMigrations() {
+  const fs   = require('fs');
+  const path = require('path');
+  const dir  = path.join(__dirname, 'migrations');
+
+  if (!fs.existsSync(dir)) return;
+
+  const files = fs.readdirSync(dir)
+    .filter(f => f.endsWith('.sql'))
+    .sort(); // 001_, 002_, 003_ … по порядку
+
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(dir, file), 'utf8');
+    try {
+      await db.query(sql);
+      console.log(`✅ Migration applied: ${file}`);
+    } catch (err) {
+      // Большинство миграций идемпотентны (IF NOT EXISTS), но логируем ошибки
+      console.error(`⚠️  Migration ${file} error:`, err.message);
+    }
+  }
+}
+
 /** ---------- Запуск HTTP и установка webhook ---------- */
 const server = app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🔗 API URL: http://localhost:${PORT}/api`);
+
+  // Применяем все миграции из папки migrations/
+  await runMigrations();
 
   keepAliveService.start();
   reminderService.start();
