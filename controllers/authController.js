@@ -159,10 +159,7 @@ const authController = {
           last_name: userData.last_name,
           language: userData.language,
           is_premium: userData.is_premium,
-          photo_url: userData.photo_url,
-          // true = dismissed (don't show), false/null = show hint
-          show_swipe_hint:  userData.swipe_hint_dismissed  !== true,
-          show_friend_hint: userData.friend_hint_dismissed !== true
+          photo_url: userData.photo_url
         },
         isNewUser // ✅ true только для СОВСЕМ новых пользователей
       };
