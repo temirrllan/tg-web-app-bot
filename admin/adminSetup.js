@@ -87,11 +87,19 @@ async function buildAdminRouter() {
 
   AdminJS.registerAdapter({ Database, Resource });
 
-  // ── Custom Dashboard component ──────────────────────────────────────────
+  // ── Custom components ────────────────────────────────────────────────────
   const componentLoader = new ComponentLoader();
   const DashboardComponent = componentLoader.add(
     'Dashboard',
     path.join(__dirname, 'components/Dashboard')
+  );
+  const ScheduleDaysInputComponent = componentLoader.add(
+    'ScheduleDaysInput',
+    path.join(__dirname, 'components/ScheduleDaysInput')
+  );
+  const ReminderTimeInputComponent = componentLoader.add(
+    'ReminderTimeInput',
+    path.join(__dirname, 'components/ReminderTimeInput')
   );
 
   // ── Connect DB ──────────────────────────────────────────────────────────
@@ -233,7 +241,15 @@ async function buildAdminRouter() {
         properties: {
           reminder_time: {
             type: 'string',
-            description: 'Время в формате ЧЧ:ММ (например: 09:00, 14:30, 21:00). Day Period установится автоматически.',
+            description: 'Day Period установится автоматически по выбранному времени.',
+            components: {
+              edit: ReminderTimeInputComponent,
+            },
+          },
+          schedule_days: {
+            components: {
+              edit: ScheduleDaysInputComponent,
+            },
           },
           day_period: {
             description: 'Устанавливается автоматически: Утро 06-11 | День 12-17 | Вечер 18-23 | Ночь 00-05',
