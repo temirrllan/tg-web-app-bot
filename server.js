@@ -553,9 +553,47 @@ bot.on("pre_checkout_query", async (query) => {
       return;
     }
 
+    const invoicePayload = query.invoice_payload;
+
+    // --- PACK PURCHASE (payload: pack_{packId}_{userId}_{timestamp}) ---
+    if (invoicePayload.startsWith('pack_')) {
+      const parts = invoicePayload.split('_');
+      if (parts.length < 4) {
+        console.error('❌ Invalid pack payload format:', invoicePayload);
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: 'Invalid payment data. Please try again.',
+        });
+        return;
+      }
+      const packId = parseInt(parts[1]);
+      const packResult = await db.query(
+        'SELECT price_stars, name FROM special_habit_packs WHERE id = $1 AND is_active = true',
+        [packId]
+      );
+      if (packResult.rows.length === 0) {
+        console.error('❌ Pack not found or inactive:', packId);
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: 'Pack not found. Please try again.',
+        });
+        return;
+      }
+      const packExpectedAmount = packResult.rows[0].price_stars;
+      if (query.total_amount !== packExpectedAmount) {
+        console.error('❌ Pack amount mismatch:', { expected: packExpectedAmount, got: query.total_amount });
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: 'Invalid payment amount. Please try again.',
+        });
+        return;
+      }
+      await bot.answerPreCheckoutQuery(query.id, true);
+      console.log('✅ Pack pre-checkout approved - pack:', packId, packResult.rows[0].name);
+      return;
+    }
+
+    // --- SUBSCRIPTION PURCHASE (payload: userId|planType|timestamp|random) ---
     let parsed;
     try {
-      parsed = TelegramStarsService.parseInvoicePayload(query.invoice_payload);
+      parsed = TelegramStarsService.parseInvoicePayload(invoicePayload);
     } catch (parseError) {
       console.error("❌ Invalid payload:", parseError);
       await bot.answerPreCheckoutQuery(query.id, false, {
@@ -628,23 +666,54 @@ bot.on("successful_payment", async (msg) => {
   const payment = msg.successful_payment;
 
   if (payment.currency === "XTR") {
+    const payload = payment.invoice_payload;
+
+    // --- PACK PURCHASE (payload: pack_{packId}_{userId}_{timestamp}) ---
+    if (payload.startsWith('pack_')) {
+      console.log("🎁 Processing pack purchase payment...");
+      const parts = payload.split('_');
+      if (parts.length >= 4) {
+        const packId = parseInt(parts[1]);
+        try {
+          const userResult = await db.query(
+            'SELECT id, first_name FROM users WHERE telegram_id = $1',
+            [msg.from.id.toString()]
+          );
+          if (userResult.rows.length === 0) {
+            console.error('❌ User not found for telegram_id:', msg.from.id);
+            return;
+          }
+          const internalUserId = userResult.rows[0].id;
+          const { createPackHabitsForUser } = require('./controllers/specialHabitsController');
+          await createPackHabitsForUser(internalUserId, packId, payment.telegram_payment_charge_id);
+          console.log(`✅ Pack ${packId} payment processed for user ${internalUserId} (${userResult.rows[0].first_name})`);
+        } catch (packErr) {
+          console.error('❌ Error processing pack payment:', packErr);
+        }
+      } else {
+        console.error('❌ Invalid pack payload in successful_payment:', payload);
+      }
+      return;
+    }
+
+    // --- SUBSCRIPTION PURCHASE ---
     const paymentData = {
       telegram_payment_charge_id: payment.telegram_payment_charge_id,
       provider_payment_charge_id: payment.provider_payment_charge_id,
-      invoice_payload: payment.invoice_payload,
+      invoice_payload: payload,
       total_amount: payment.total_amount,
       currency: payment.currency,
       from_user_id: msg.from.id,
     };
 
-    console.log("💰 Processing payment through bot.on handler...");
+    console.log("💰 Processing subscription payment through bot.on handler...");
 
     const result = await TelegramStarsService.processSuccessfulPayment(
       paymentData
     );
 
     if (result.success) {
-      console.log("✅ Payment processed successfully via bot.on");
+      console.log("✅ Subscription payment processed successfully via bot.on");
     }
   }
 });
