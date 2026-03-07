@@ -1,8 +1,14 @@
+# Dependencies — never track node_modules in git
+node_modules/
+package-lock.json
+
+# Environment
+.env
+.env.*
+
 # Test files
 test/
 *.test.js
-# tg-web-app-bot/.gitignore
-.env
 
 # Temporary files
 temp/
@@ -10,3 +16,9 @@ tmp/
 
 # Development scripts
 scripts/cleanup-*.js
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
