@@ -28,6 +28,7 @@
   "dependencies": {
     "@adminjs/express": "^6.1.1",
     "@adminjs/sql": "^2.2.6",
+    "@adminjs/themes": "^1.0.1",
     "adminjs": "^7.8.17",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",

@@ -52,6 +52,7 @@ async function buildAdminRouter() {
   const { default: AdminJS, ComponentLoader } = await import('adminjs');
   const { default: AdminJSExpress }           = await import('@adminjs/express');
   const { default: Adapter, Database, Resource } = await import('@adminjs/sql');
+  const { dark, light }                       = await import('@adminjs/themes');
 
   AdminJS.registerAdapter({ Database, Resource });
 
@@ -352,6 +353,10 @@ async function buildAdminRouter() {
     },
 
     resources,
+
+    // Themes: light (default standard look) + dark (switchable via UI icon)
+    defaultTheme: light.id,
+    availableThemes: [light, dark],
 
     branding: {
       companyName:      'Habit Tracker',

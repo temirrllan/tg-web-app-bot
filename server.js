@@ -107,7 +107,11 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+// Scope body parsers to /api only.
+// AdminJS uses express-formidable internally and throws OldBodyParserUsedError
+// if express.json() / express.urlencoded() already ran on its requests.
+app.use('/api', express.json());
+app.use('/api', express.urlencoded({ extended: false }));
 app.use(logger);
 
 // Webhook от Telegram для команд бота
@@ -323,7 +327,8 @@ const specialHabitsRoutes = require("./routes/specialHabitsRoutes");
 app.use("/api/special-habits", specialHabitsRoutes);
 
 // Admin panel — AdminJS (async init, ready in ~1-2s after start)
-app.use(express.urlencoded({ extended: true }));
+// Note: express.urlencoded() is intentionally NOT placed here.
+// AdminJS uses express-formidable for its own body parsing.
 
 let _adminRouter = null;
 app.use('/admin', (req, res, next) => {
