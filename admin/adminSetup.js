@@ -46,6 +46,37 @@ function loadTables(sqlDb, names) {
   return result;
 }
 
+// ─── Reminder time helper ─────────────────────────────────────────────────────
+// Parses reminder_time (HH:MM string or ISO datetime) → normalises to HH:MM:SS
+// and auto-derives day_period:
+//   Night 00-05 | Morning 06-11 | Afternoon 12-17 | Evening 18-23
+
+function applyReminderTimeToPeriod(payload) {
+  const raw = (payload.reminder_time || '').trim();
+  let hh, mm;
+
+  if (raw.includes('T') || (raw.includes('-') && raw.length > 8)) {
+    // ISO datetime from old datetime-picker (e.g. "2026-03-11T14:00:00.000+05:00")
+    const d = new Date(raw);
+    if (!isNaN(d.getTime())) { hh = d.getUTCHours(); mm = d.getUTCMinutes(); }
+  } else {
+    // Plain time string: "14:30" or "14:30:00"
+    const m = raw.match(/^(\d{1,2}):(\d{2})/);
+    if (m) { hh = parseInt(m[1], 10); mm = parseInt(m[2], 10); }
+  }
+
+  if (hh === undefined) return payload; // unparseable – leave as-is
+
+  payload.reminder_time = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
+
+  if      (hh >= 6  && hh < 12) payload.day_period = 'morning';
+  else if (hh >= 12 && hh < 18) payload.day_period = 'afternoon';
+  else if (hh >= 18)             payload.day_period = 'evening';
+  else                           payload.day_period = 'night';
+
+  return payload;
+}
+
 // ─── Main builder ─────────────────────────────────────────────────────────────
 
 async function buildAdminRouter() {
@@ -194,10 +225,38 @@ async function buildAdminRouter() {
       options: {
         navigation: { name: 'Пакеты' },
         sort: { sortBy: 'sort_order', direction: 'asc' },
-        listProperties:   ['id', 'pack_id', 'title', 'goal', 'day_period', 'sort_order'],
+        listProperties:   ['id', 'pack_id', 'title', 'goal', 'reminder_time', 'day_period', 'sort_order'],
         showProperties:   ['id', 'pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'day_period', 'sort_order'],
-        editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'day_period', 'sort_order'],
+        // day_period removed from edit — it's auto-set from reminder_time in the before hook
+        editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'sort_order'],
         filterProperties: ['pack_id', 'day_period'],
+        properties: {
+          reminder_time: {
+            type: 'string',
+            description: 'Время в формате ЧЧ:ММ (например: 09:00, 14:30, 21:00). Day Period установится автоматически.',
+          },
+          day_period: {
+            description: 'Устанавливается автоматически: Утро 06-11 | День 12-17 | Вечер 18-23 | Ночь 00-05',
+          },
+        },
+        actions: {
+          new: {
+            before: async (request) => {
+              if (request.payload && request.payload.reminder_time) {
+                request.payload = applyReminderTimeToPeriod(request.payload);
+              }
+              return request;
+            },
+          },
+          edit: {
+            before: async (request) => {
+              if (request.payload && request.payload.reminder_time) {
+                request.payload = applyReminderTimeToPeriod(request.payload);
+              }
+              return request;
+            },
+          },
+        },
       },
     },
 
