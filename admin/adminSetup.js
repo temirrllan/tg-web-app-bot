@@ -440,6 +440,14 @@ async function buildAdminRouter() {
     },
   });
 
+  // ── Pre-build component bundle ───────────────────────────────────────────
+  // In production, @adminjs/express calls admin.initialize() without await,
+  // causing a race condition where the static bundle.js doesn't exist yet
+  // when the browser first requests it. Awaiting here ensures the bundle is
+  // ready before any requests are served.
+  await adminJs.initialize();
+  console.log('✅ AdminJS: component bundle ready');
+
   // ── Auth router ─────────────────────────────────────────────────────────
   const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
   const COOKIE_SECRET  = process.env.SESSION_SECRET;
