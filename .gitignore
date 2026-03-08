@@ -9,7 +9,7 @@ package-lock.json
 # Test files
 test/
 *.test.js
-
+.adminjs
 # Temporary files
 temp/
 tmp/
