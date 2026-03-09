@@ -330,15 +330,12 @@ app.use("/api/special-habits", specialHabitsRoutes);
 // Note: express.urlencoded() is intentionally NOT placed here.
 // AdminJS uses express-formidable for its own body parsing.
 
-// Fix: AdminJS bundles components into .adminjs/bundle.js, but Express 'send'
-// silently ignores dotfile directories. Intercept the request and stream it directly.
-app.get('/admin/frontend/assets/components.bundle.js', (req, res) => {
-  const fs = require('fs');
-  const bundlePath = require('path').join(__dirname, '.adminjs', 'bundle.js');
-  if (!fs.existsSync(bundlePath)) return res.status(404).end();
-  res.set('Content-Type', 'application/javascript');
-  fs.createReadStream(bundlePath).pipe(res);
-});
+// Fix: AdminJS stores its bundle in .adminjs/ (dotfile directory) by default,
+// but Express 'send' ignores dotfile directories. Setting ADMIN_JS_TMP_DIR to
+// a regular (non-dotfile) directory name lets Express serve the bundle natively.
+if (!process.env.ADMIN_JS_TMP_DIR) {
+  process.env.ADMIN_JS_TMP_DIR = 'adminjs_bundle';
+}
 
 let _adminRouter = null;
 app.use('/admin', (req, res, next) => {

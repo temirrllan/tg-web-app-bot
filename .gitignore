@@ -22,3 +22,7 @@ scripts/cleanup-*.js
 Thumbs.db
 .idea/
 .vscode/
+
+# AdminJS bundle cache
+.adminjs/
+adminjs_bundle/
