@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Box, Loader } from '@adminjs/design-system'
-import styled from '@adminjs/design-system/styled-components'
+
+// window.styled — это { default: styledFn }, Rollup interop не нужен
+const styled = window.styled?.default ?? window.styled
 
 // ─── Theme tokens ─────────────────────────────────────────────────────────────
 
