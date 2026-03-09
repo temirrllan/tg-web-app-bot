@@ -446,6 +446,10 @@ async function buildAdminRouter() {
   // when the browser first requests it. Awaiting here ensures the bundle is
   // ready before any requests are served.
   await adminJs.initialize();
+  // Prevent @adminjs/express buildAuthenticatedRouter from firing a second
+  // initialize() in the background (it calls initializeAdmin which calls
+  // initialize() without await and without error handling).
+  process.env.ADMIN_JS_SKIP_BUNDLE = 'true';
   console.log('✅ AdminJS: component bundle ready');
 
   // ── Auth router ─────────────────────────────────────────────────────────

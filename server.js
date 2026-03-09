@@ -1,5 +1,6 @@
 require("dotenv").config();
 
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const TelegramBot = require("node-telegram-bot-api");
@@ -332,9 +333,9 @@ app.use("/api/special-habits", specialHabitsRoutes);
 
 // Fix: AdminJS stores its bundle in .adminjs/ (dotfile directory) by default,
 // but Express 'send' ignores dotfile directories. Setting ADMIN_JS_TMP_DIR to
-// a regular (non-dotfile) directory name lets Express serve the bundle natively.
+// an absolute non-dotfile path ensures the bundle is always found regardless of CWD.
 if (!process.env.ADMIN_JS_TMP_DIR) {
-  process.env.ADMIN_JS_TMP_DIR = 'adminjs_bundle';
+  process.env.ADMIN_JS_TMP_DIR = path.join(__dirname, 'adminjs_bundle');
 }
 
 let _adminRouter = null;
