@@ -496,41 +496,40 @@ async function buildAdminRouter() {
   );
 
   // ── File upload API ──────────────────────────────────────────────────────
-  let multerUpload = null;
-  try {
-    const multer = require('multer');
-    const uploadDir = path.join(__dirname, '../public/uploads');
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  // AdminJS использует express-formidable — файл уже разобран в req.files
+  // (formidable v1: { path, name, type, size })
 
-    const storage = multer.diskStorage({
-      destination: uploadDir,
-      filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
-        cb(null, `pack_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`);
-      },
-    });
-    multerUpload = multer({
-      storage,
-      limits: { fileSize: 5 * 1024 * 1024 },
-      fileFilter: (req, file, cb) => {
-        if (!file.mimetype.startsWith('image/')) return cb(new Error('Только изображения'));
-        cb(null, true);
-      },
-    }).single('file');
-  } catch (e) {
-    console.warn('⚠️  multer не установлен — загрузка файлов недоступна. Запустите: npm install multer');
-  }
+  const UPLOAD_DIR = path.join(__dirname, '../public/uploads');
+  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-  router.post('/api/upload', (req, res) => {
+  router.post('/api/upload', async (req, res) => {
     if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
-    if (!multerUpload) return res.status(503).json({ error: 'Установите пакет multer: npm install multer' });
 
-    multerUpload(req, res, (err) => {
-      if (err) return res.status(400).json({ error: err.message });
-      if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
-      const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    try {
+      const file = req.files?.file;
+      if (!file) return res.status(400).json({ error: 'Файл не получен' });
+
+      const f = Array.isArray(file) ? file[0] : file;
+
+      if (!(f.type || '').startsWith('image/')) {
+        return res.status(400).json({ error: 'Можно загружать только изображения' });
+      }
+      if ((f.size || 0) > 5 * 1024 * 1024) {
+        return res.status(400).json({ error: 'Файл слишком большой (максимум 5 МБ)' });
+      }
+
+      const ext      = path.extname(f.name || '').toLowerCase() || '.jpg';
+      const filename = `pack_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`;
+      const dest     = path.join(UPLOAD_DIR, filename);
+
+      fs.copyFileSync(f.path, dest);
+
+      const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${filename}`;
       res.json({ url: fileUrl });
-    });
+    } catch (err) {
+      console.error('AdminJS upload error:', err.message);
+      res.status(500).json({ error: 'Ошибка сохранения файла' });
+    }
   });
 
   // ── Enhanced stats API ──────────────────────────────────────────────────
