@@ -239,6 +239,10 @@ async function buildAdminRouter() {
         editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'sort_order'],
         filterProperties: ['pack_id', 'day_period'],
         properties: {
+          category_id: {
+            reference: 'categories',
+            description: 'Категория привычки',
+          },
           reminder_time: {
             type: 'string',
             description: 'Day Period установится автоматически по выбранному времени.',
@@ -317,6 +321,7 @@ async function buildAdminRouter() {
       options: {
         navigation: { name: 'Контент', icon: 'Grid' },
         sort: { sortBy: 'sort_order', direction: 'asc' },
+        titleProperty: 'name_ru',
         listProperties:   ['id', 'name_ru', 'name_en', 'icon', 'color', 'sort_order'],
         showProperties:   ['id', 'name_ru', 'name_en', 'icon', 'color', 'sort_order', 'created_at'],
         editProperties:   ['name_ru', 'name_en', 'icon', 'color', 'sort_order'],
