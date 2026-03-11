@@ -6,6 +6,7 @@
 'use strict';
 
 const path = require('path');
+const fs   = require('fs');
 const db   = require('../config/database');
 
 // ─── DB connection ────────────────────────────────────────────────────────────
@@ -100,6 +101,10 @@ async function buildAdminRouter() {
   const ReminderTimeInputComponent = componentLoader.add(
     'ReminderTimeInput',
     path.join(__dirname, 'components/ReminderTimeInput')
+  );
+  const PhotoUrlInputComponent = componentLoader.add(
+    'PhotoUrlInput',
+    path.join(__dirname, 'components/PhotoUrlInput')
   );
 
   // ── Connect DB ──────────────────────────────────────────────────────────
@@ -221,7 +226,10 @@ async function buildAdminRouter() {
         filterProperties: ['name', 'is_active', 'price_stars'],
         properties: {
           biography:    { type: 'textarea' },
-          photo_url:    { description: 'URL фото (начинается с https://)' },
+          photo_url: {
+            description: 'URL фото или загрузите файл с устройства',
+            components: { edit: PhotoUrlInputComponent },
+          },
           bg_color:     { description: 'CSS-цвет фона карточки, например: #FF5733' },
           price_stars:  { description: 'Цена в Telegram Stars (0 = бесплатно)' },
         },
@@ -486,6 +494,44 @@ async function buildAdminRouter() {
       },
     }
   );
+
+  // ── File upload API ──────────────────────────────────────────────────────
+  let multerUpload = null;
+  try {
+    const multer = require('multer');
+    const uploadDir = path.join(__dirname, '../public/uploads');
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+    const storage = multer.diskStorage({
+      destination: uploadDir,
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+        cb(null, `pack_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`);
+      },
+    });
+    multerUpload = multer({
+      storage,
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (req, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) return cb(new Error('Только изображения'));
+        cb(null, true);
+      },
+    }).single('file');
+  } catch (e) {
+    console.warn('⚠️  multer не установлен — загрузка файлов недоступна. Запустите: npm install multer');
+  }
+
+  router.post('/api/upload', (req, res) => {
+    if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!multerUpload) return res.status(503).json({ error: 'Установите пакет multer: npm install multer' });
+
+    multerUpload(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message });
+      if (!req.file) return res.status(400).json({ error: 'Файл не получен' });
+      const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+      res.json({ url: fileUrl });
+    });
+  });
 
   // ── Enhanced stats API ──────────────────────────────────────────────────
   const safe = async (query, fallback = 0) => {

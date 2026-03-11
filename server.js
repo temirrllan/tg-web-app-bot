@@ -115,6 +115,9 @@ app.use('/api', express.json());
 app.use('/api', express.urlencoded({ extended: false }));
 app.use(logger);
 
+// Раздача загруженных изображений (для AdminJS file upload)
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
+
 // Webhook от Telegram для команд бота
 const WEBHOOK_PATH = `/api/telegram/webhook/${BOT_TOKEN}`;
 
