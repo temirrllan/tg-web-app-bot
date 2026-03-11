@@ -492,114 +492,197 @@ async function buildAdminRouter() {
     if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
+      const safeRows = async (query) => {
+        try { const r = await db.query(query); return r.rows; } catch { return []; }
+      };
+
       const [
-        total_users, new_users_week, new_users_month, new_users_today,
+        total_users, new_users_today, new_users_week, new_users_month,
         premium_users, users_ru, users_en, users_kk,
-        total_habits, active_habits, special_habits,
+        dau, wau, mau,
+        total_habits, active_habits, special_habits, bad_habits,
         marks_today, marks_completed_today,
-        active_subscriptions, premium_subscriptions,
+        avg_habits_per_user, avg_streak, max_streak,
+        shared_habits_count, habit_members_count,
+        active_subscriptions, expiring_soon,
         total_packs, active_packs, total_templates,
         total_purchases, total_stars_packs,
         paid_invoices, total_stars_invoices,
         active_promo_codes, promo_uses_total,
         total_phrases, total_categories,
-        reminders_today,
+        reminders_today, reminders_week, reminders_responded,
       ] = await Promise.all([
+        // Users
         safe(`SELECT COUNT(*)::int AS val FROM users`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at::date = CURRENT_DATE`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at > NOW() - INTERVAL '7 days'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at > NOW() - INTERVAL '30 days'`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at::date = CURRENT_DATE`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE is_premium = true`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'ru'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'en'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'kk'`),
+        // DAU / WAU / MAU (по уникальным users с отметками привычек)
+        safe(`SELECT COUNT(DISTINCT h.user_id)::int AS val FROM habit_marks hm JOIN habits h ON h.id = hm.habit_id WHERE hm.date = CURRENT_DATE`),
+        safe(`SELECT COUNT(DISTINCT h.user_id)::int AS val FROM habit_marks hm JOIN habits h ON h.id = hm.habit_id WHERE hm.date > CURRENT_DATE - 7`),
+        safe(`SELECT COUNT(DISTINCT h.user_id)::int AS val FROM habit_marks hm JOIN habits h ON h.id = hm.habit_id WHERE hm.date > CURRENT_DATE - 30`),
+        // Habits
         safe(`SELECT COUNT(*)::int AS val FROM habits`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_special = true AND is_active = true`),
+        safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_bad_habit = true AND is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = CURRENT_DATE`),
         safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = CURRENT_DATE AND status = 'completed'`),
+        safe(`SELECT ROUND(AVG(cnt), 1)::float AS val FROM (SELECT COUNT(*) AS cnt FROM habits WHERE is_active = true GROUP BY user_id) t`, 0),
+        safe(`SELECT ROUND(AVG(streak_current), 1)::float AS val FROM habits WHERE is_active = true`, 0),
+        safe(`SELECT COALESCE(MAX(streak_best), 0)::int AS val FROM habits`),
+        safe(`SELECT COUNT(*)::int AS val FROM shared_habits`),
+        safe(`SELECT COUNT(*)::int AS val FROM habit_members WHERE is_active = true`),
+        // Subscriptions
         safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE is_active = true`),
-        safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE type = 'premium' AND is_active = true`),
+        safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE is_active = true AND expires_at IS NOT NULL AND expires_at < NOW() + INTERVAL '7 days'`),
+        // Packs
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_packs`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_packs WHERE is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_templates`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_purchases WHERE payment_status = 'completed'`),
         safe(`SELECT COALESCE(SUM(price_paid_stars),0)::int AS val FROM special_habit_purchases WHERE payment_status = 'completed'`),
+        // Payments
         safe(`SELECT COUNT(*)::int AS val FROM payment_invoices WHERE status = 'paid'`),
         safe(`SELECT COALESCE(SUM(amount),0)::int AS val FROM payment_invoices WHERE status = 'paid'`),
+        // Promo
         safe(`SELECT COUNT(*)::int AS val FROM promo_codes WHERE is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM promo_code_usage`),
+        // Content
         safe(`SELECT COUNT(*)::int AS val FROM motivational_phrases`),
         safe(`SELECT COUNT(*)::int AS val FROM categories`),
+        // Reminders
         safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE sent_at::date = CURRENT_DATE`),
+        safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE sent_at > NOW() - INTERVAL '7 days'`),
+        safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE is_marked = true AND sent_at > NOW() - INTERVAL '7 days'`),
       ]);
 
-      // Weekly registrations (last 14 days)
-      let weekly_registrations = [];
-      try {
-        const r = await db.query(`
+      // Графики и разбивки
+      const [
+        weekly_registrations,
+        weekly_purchases,
+        completion_14d,
+        revenue_30d,
+        top_packs,
+        habits_by_category,
+        subscription_plans,
+        habits_by_schedule,
+        habits_by_period,
+        top_promo_codes,
+        reminders_14d,
+      ] = await Promise.all([
+        safeRows(`
           SELECT DATE(created_at) AS date, COUNT(*)::int AS count
-          FROM users
-          WHERE created_at > NOW() - INTERVAL '14 days'
-          GROUP BY DATE(created_at)
-          ORDER BY date ASC
-        `);
-        weekly_registrations = r.rows;
-      } catch (_) {}
-
-      // Top packs by purchases
-      let top_packs = [];
-      try {
-        const r = await db.query(`
-          SELECT p.name, COUNT(pu.id)::int AS purchases, COALESCE(SUM(pu.price_paid_stars),0)::int AS stars
-          FROM special_habit_packs p
-          LEFT JOIN special_habit_purchases pu ON pu.pack_id = p.id AND pu.payment_status = 'completed'
-          GROUP BY p.id, p.name
-          ORDER BY purchases DESC
-          LIMIT 5
-        `);
-        top_packs = r.rows;
-      } catch (_) {}
-
-      // Purchases by day (last 14 days)
-      let weekly_purchases = [];
-      try {
-        const r = await db.query(`
+          FROM users WHERE created_at > NOW() - INTERVAL '14 days'
+          GROUP BY DATE(created_at) ORDER BY date ASC
+        `),
+        safeRows(`
           SELECT DATE(purchased_at) AS date, COUNT(*)::int AS count,
                  COALESCE(SUM(price_paid_stars),0)::int AS stars
           FROM special_habit_purchases
           WHERE payment_status = 'completed' AND purchased_at > NOW() - INTERVAL '14 days'
-          GROUP BY DATE(purchased_at)
-          ORDER BY date ASC
-        `);
-        weekly_purchases = r.rows;
-      } catch (_) {}
+          GROUP BY DATE(purchased_at) ORDER BY date ASC
+        `),
+        safeRows(`
+          SELECT date, COUNT(*)::int AS total,
+                 COUNT(*) FILTER (WHERE status = 'completed')::int AS completed
+          FROM habit_marks WHERE date > CURRENT_DATE - 14
+          GROUP BY date ORDER BY date ASC
+        `),
+        safeRows(`
+          SELECT day::date AS date,
+                 COALESCE(p.stars, 0) + COALESCE(i.stars, 0) AS total,
+                 COALESCE(p.stars, 0) AS pack_stars,
+                 COALESCE(i.stars, 0) AS invoice_stars
+          FROM generate_series(CURRENT_DATE - 29, CURRENT_DATE, '1 day'::interval) day
+          LEFT JOIN (
+            SELECT DATE(purchased_at) AS d, COALESCE(SUM(price_paid_stars),0)::int AS stars
+            FROM special_habit_purchases WHERE payment_status = 'completed'
+            GROUP BY DATE(purchased_at)
+          ) p ON p.d = day::date
+          LEFT JOIN (
+            SELECT DATE(paid_at) AS d, COALESCE(SUM(amount),0)::int AS stars
+            FROM payment_invoices WHERE status = 'paid' AND paid_at IS NOT NULL
+            GROUP BY DATE(paid_at)
+          ) i ON i.d = day::date
+          ORDER BY day ASC
+        `),
+        safeRows(`
+          SELECT p.name, COUNT(pu.id)::int AS purchases, COALESCE(SUM(pu.price_paid_stars),0)::int AS stars
+          FROM special_habit_packs p
+          LEFT JOIN special_habit_purchases pu ON pu.pack_id = p.id AND pu.payment_status = 'completed'
+          GROUP BY p.id, p.name ORDER BY purchases DESC LIMIT 5
+        `),
+        safeRows(`
+          SELECT c.name_ru AS name, c.color, COUNT(h.id)::int AS count
+          FROM categories c
+          LEFT JOIN habits h ON h.category_id = c.id AND h.is_active = true
+          GROUP BY c.id, c.name_ru, c.color ORDER BY count DESC LIMIT 8
+        `),
+        safeRows(`
+          SELECT COALESCE(plan_type, 'legacy') AS plan_type, COUNT(*)::int AS count
+          FROM subscriptions WHERE is_active = true
+          GROUP BY plan_type ORDER BY count DESC
+        `),
+        safeRows(`
+          SELECT COALESCE(schedule_type, 'daily') AS schedule_type, COUNT(*)::int AS count
+          FROM habits WHERE is_active = true
+          GROUP BY schedule_type ORDER BY count DESC
+        `),
+        safeRows(`
+          SELECT COALESCE(day_period, 'unknown') AS period, COUNT(*)::int AS count
+          FROM habits WHERE is_active = true
+          GROUP BY day_period ORDER BY count DESC
+        `),
+        safeRows(`
+          SELECT promo_code, COUNT(*)::int AS uses
+          FROM promo_code_usage GROUP BY promo_code ORDER BY uses DESC LIMIT 5
+        `),
+        safeRows(`
+          SELECT DATE(sent_at) AS date, COUNT(*)::int AS sent,
+                 COUNT(*) FILTER (WHERE is_marked = true)::int AS responded
+          FROM reminder_history WHERE sent_at > NOW() - INTERVAL '14 days'
+          GROUP BY DATE(sent_at) ORDER BY date ASC
+        `),
+      ]);
+
+      const total_stars_earned = total_stars_packs + total_stars_invoices;
+      const reminder_response_rate = reminders_week > 0
+        ? Math.round((reminders_responded / reminders_week) * 100) : 0;
+      const premium_rate = total_users > 0
+        ? Math.round((premium_users / total_users) * 100) : 0;
 
       res.json({
         // Users
-        total_users, new_users_week, new_users_month, new_users_today,
-        premium_users, users_ru, users_en, users_kk,
+        total_users, new_users_today, new_users_week, new_users_month,
+        premium_users, premium_rate, users_ru, users_en, users_kk,
+        dau, wau, mau,
         // Habits
-        total_habits, active_habits, special_habits,
+        total_habits, active_habits, special_habits, bad_habits,
         marks_today, marks_completed_today,
+        avg_habits_per_user, avg_streak, max_streak,
+        shared_habits_count, habit_members_count,
         // Subscriptions
-        active_subscriptions, premium_subscriptions,
+        active_subscriptions, expiring_soon,
         // Packs
         total_packs, active_packs, total_templates,
         total_purchases, total_stars_packs,
         // Payments
-        paid_invoices, total_stars_invoices,
-        total_stars_earned: total_stars_packs + total_stars_invoices,
+        paid_invoices, total_stars_invoices, total_stars_earned,
         // Promo
         active_promo_codes, promo_uses_total,
         // Content
         total_phrases, total_categories,
-        // System
-        reminders_today,
+        // Reminders
+        reminders_today, reminders_week, reminders_responded, reminder_response_rate,
         // Charts
-        weekly_registrations,
-        top_packs,
-        weekly_purchases,
+        weekly_registrations, weekly_purchases, completion_14d, revenue_30d,
+        top_packs, habits_by_category, subscription_plans,
+        habits_by_schedule, habits_by_period, top_promo_codes, reminders_14d,
       });
     } catch (err) {
       console.error('AdminJS /api/stats error:', err.message);
