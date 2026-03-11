@@ -513,7 +513,7 @@ router.get('/habits/:id/statistics', async (req, res) => {
     const userId = req.user.id;
     
     const habitCheck = await db.query(
-      'SELECT id, title, streak_current, streak_best FROM habits WHERE id = $1 AND user_id = $2',
+      'SELECT id, title, streak_current FROM habits WHERE id = $1 AND user_id = $2',
       [id, userId]
     );
     
@@ -562,42 +562,22 @@ router.get('/habits/:id/statistics', async (req, res) => {
     );
     
     const yearStats = await db.query(
-      `SELECT COUNT(*) as completed
-       FROM habit_marks
-       WHERE habit_id = $1
+      `SELECT COUNT(*) as completed 
+       FROM habit_marks 
+       WHERE habit_id = $1 
        AND status = 'completed'
-       AND date >= $2::date
+       AND date >= $2::date 
        AND date <= $3::date`,
       [id, yearStart, yearEnd]
     );
-
-    // Всего выполнений за всё время
-    const totalStats = await db.query(
-      `SELECT COUNT(*) as total FROM habit_marks WHERE habit_id = $1 AND status = 'completed'`,
-      [id]
-    );
-
-    // Данные за последние 7 дней (для графика)
-    const last7Days = await db.query(
-      `SELECT date::text AS date, status
-       FROM habit_marks
-       WHERE habit_id = $1
-         AND date >= CURRENT_DATE - INTERVAL '6 days'
-         AND date <= CURRENT_DATE
-       ORDER BY date ASC`,
-      [id]
-    );
-
+    
     res.json({
       success: true,
       currentStreak: habit.streak_current || 0,
-      bestStreak: habit.streak_best || 0,
       weekCompleted: parseInt(weekStats.rows[0].completed),
       monthCompleted: parseInt(monthStats.rows[0].completed),
       monthTotal: monthEnd.getDate(),
-      yearCompleted: parseInt(yearStats.rows[0].completed),
-      totalCompleted: parseInt(totalStats.rows[0].total),
-      weeklyData: last7Days.rows
+      yearCompleted: parseInt(yearStats.rows[0].completed)
     });
   } catch (error) {
     console.error('Get habit statistics error:', error);
