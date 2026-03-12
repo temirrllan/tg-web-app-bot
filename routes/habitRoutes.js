@@ -511,80 +511,101 @@ router.get('/habits/:id/statistics', async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    
+
+    // Fetch streak_current, streak_best and also allow shared habit owners to view stats
     const habitCheck = await db.query(
-      'SELECT id, title, streak_current FROM habits WHERE id = $1 AND user_id = $2',
+      `SELECT id, title, streak_current, streak_best
+       FROM habits
+       WHERE id = $1 AND (user_id = $2 OR parent_habit_id IS NOT NULL)`,
       [id, userId]
     );
-    
+
     if (habitCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Habit not found'
-      });
+      return res.status(404).json({ success: false, error: 'Habit not found' });
     }
-    
+
     const habit = habitCheck.rows[0];
     const now = new Date();
-    
+
+    // Week: Mon–Sun (ISO week)
+    const dayOfWeek = now.getDay(); // 0=Sun,1=Mon...6=Sat
+    const diffToMon = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay() + 1);
+    weekStart.setDate(now.getDate() + diffToMon);
     weekStart.setHours(0, 0, 0, 0);
-    
+
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekStart.getDate() + 6);
     weekEnd.setHours(23, 59, 59, 999);
-    
+
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    
+    const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
     const yearStart = new Date(now.getFullYear(), 0, 1);
-    const yearEnd = new Date(now.getFullYear(), 11, 31);
-    
-    const weekStats = await db.query(
-      `SELECT COUNT(*) as completed 
-       FROM habit_marks 
-       WHERE habit_id = $1 
-       AND status = 'completed'
-       AND date >= $2::date 
-       AND date <= $3::date`,
-      [id, weekStart, weekEnd]
-    );
-    
-    const monthStats = await db.query(
-      `SELECT COUNT(*) as completed 
-       FROM habit_marks 
-       WHERE habit_id = $1 
-       AND status = 'completed'
-       AND date >= $2::date 
-       AND date <= $3::date`,
-      [id, monthStart, monthEnd]
-    );
-    
-    const yearStats = await db.query(
-      `SELECT COUNT(*) as completed 
-       FROM habit_marks 
-       WHERE habit_id = $1 
-       AND status = 'completed'
-       AND date >= $2::date 
-       AND date <= $3::date`,
-      [id, yearStart, yearEnd]
-    );
-    
+    const yearEnd   = new Date(now.getFullYear(), 11, 31);
+
+    // Run all queries in parallel
+    const [weekRows, monthRows, yearRows, weekDaysRows, totalRows] = await Promise.all([
+      // Week count
+      db.query(
+        `SELECT COUNT(*) AS completed FROM habit_marks
+         WHERE habit_id = $1 AND status = 'completed'
+           AND date >= $2::date AND date <= $3::date`,
+        [id, weekStart, weekEnd]
+      ),
+      // Month count
+      db.query(
+        `SELECT COUNT(*) AS completed FROM habit_marks
+         WHERE habit_id = $1 AND status = 'completed'
+           AND date >= $2::date AND date <= $3::date`,
+        [id, monthStart, monthEnd]
+      ),
+      // Year count
+      db.query(
+        `SELECT COUNT(*) AS completed FROM habit_marks
+         WHERE habit_id = $1 AND status = 'completed'
+           AND date >= $2::date AND date <= $3::date`,
+        [id, yearStart, yearEnd]
+      ),
+      // Which specific days of this week were completed (to build weeklyData array)
+      db.query(
+        `SELECT date FROM habit_marks
+         WHERE habit_id = $1 AND status = 'completed'
+           AND date >= $2::date AND date <= $3::date`,
+        [id, weekStart, weekEnd]
+      ),
+      // Total completed marks ever
+      db.query(
+        `SELECT COUNT(*) AS total FROM habit_marks
+         WHERE habit_id = $1 AND status = 'completed'`,
+        [id]
+      )
+    ]);
+
+    // Build weeklyData[0..6] where index 0 = Monday, 6 = Sunday
+    const weeklyData = new Array(7).fill(false);
+    weekDaysRows.rows.forEach(row => {
+      const d = new Date(row.date);
+      // getDay(): 0=Sun, 1=Mon ... 6=Sat  →  map to Mon=0..Sun=6
+      const dow = d.getDay();
+      const idx = dow === 0 ? 6 : dow - 1;
+      weeklyData[idx] = true;
+    });
+
     res.json({
       success: true,
-      currentStreak: habit.streak_current || 0,
-      weekCompleted: parseInt(weekStats.rows[0].completed),
-      monthCompleted: parseInt(monthStats.rows[0].completed),
-      monthTotal: monthEnd.getDate(),
-      yearCompleted: parseInt(yearStats.rows[0].completed)
+      currentStreak:  habit.streak_current || 0,
+      bestStreak:     habit.streak_best    || habit.streak_current || 0,
+      weekCompleted:  parseInt(weekRows.rows[0].completed),
+      monthCompleted: parseInt(monthRows.rows[0].completed),
+      monthTotal:     monthEnd.getDate(),
+      yearCompleted:  parseInt(yearRows.rows[0].completed),
+      totalCompleted: parseInt(totalRows.rows[0].total),
+      weeklyData
     });
   } catch (error) {
     console.error('Get habit statistics error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get statistics'
-    });
+    res.status(500).json({ success: false, error: 'Failed to get statistics' });
   }
 });
 
