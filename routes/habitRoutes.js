@@ -512,11 +512,11 @@ router.get('/habits/:id/statistics', async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Fetch streak_current, streak_best and also allow shared habit owners to view stats
+    // Fetch streak_current and streak_best — habit must belong to this user
     const habitCheck = await db.query(
       `SELECT id, title, streak_current, streak_best
        FROM habits
-       WHERE id = $1 AND (user_id = $2 OR parent_habit_id IS NOT NULL)`,
+       WHERE id = $1 AND user_id = $2`,
       [id, userId]
     );
 
