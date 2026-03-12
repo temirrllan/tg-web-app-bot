@@ -12,6 +12,7 @@ const { generalLimiter } = require("./middleware/rateLimit");
 const keepAliveService = require("./services/keepAlive");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
+const HabitMark = require("./models/HabitMark");
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -1209,20 +1210,14 @@ bot.on("callback_query", async (callbackQuery) => {
 
     try {
       await db.query(
-        `INSERT INTO habit_marks (habit_id, date, status) 
+        `INSERT INTO habit_marks (habit_id, date, status)
          VALUES ($1, CURRENT_DATE, 'completed')
-         ON CONFLICT (habit_id, date) 
+         ON CONFLICT (habit_id, date)
          DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
         [habitId]
       );
-
-      await db.query(
-        `UPDATE habits 
-         SET streak_current = streak_current + 1,
-             streak_best = GREATEST(streak_current + 1, streak_best)
-         WHERE id = $1`,
-        [habitId]
-      );
+      // Пересчёт стрика из реальных данных (вместо слепого +1)
+      await HabitMark.recalculateStreak(habitId);
 
       await bot.editMessageText(
         "✅ Отлично! Привычка отмечена как выполненная.",
@@ -1329,20 +1324,14 @@ bot.on("callback_query", async (callbackQuery) => {
       const habitTitle = userHabitResult.rows[0].title;
 
       await db.query(
-        `INSERT INTO habit_marks (habit_id, date, status) 
+        `INSERT INTO habit_marks (habit_id, date, status)
          VALUES ($1, $2::date, 'completed')
-         ON CONFLICT (habit_id, date) 
+         ON CONFLICT (habit_id, date)
          DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
         [userHabitId, date]
       );
-
-      await db.query(
-        `UPDATE habits 
-         SET streak_current = streak_current + 1,
-             streak_best = GREATEST(streak_current + 1, streak_best)
-         WHERE id = $1`,
-        [userHabitId]
-      );
+      // Пересчёт стрика из реальных данных (вместо слепого +1)
+      await HabitMark.recalculateStreak(userHabitId);
 
       await bot.editMessageText(
         `✅ <b>Отлично, ${userName}!</b>\n\nПривычка <b>"${habitTitle}"</b> отмечена как выполненная!\n\nПродолжайте в том же духе! 💪`,

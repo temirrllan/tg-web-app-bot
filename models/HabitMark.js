@@ -35,43 +35,14 @@ class HabitMark {
         status: result.rows[0].status
       });
 
-      // Обновляем streak только для completed/failed
-      if (status === 'completed') {
-        await this.updateStreak(habitId, true);
-      } else if (status === 'failed') {
-        await this.updateStreak(habitId, false);
-      }
-      // Для skipped не меняем streak
+      // Всегда пересчитываем стрик из реальных данных — никакого +1 вслепую.
+      // Это защищает от дублей при быстрой смене статусов.
+      await this.recalculateStreak(habitId);
 
       return result.rows[0];
     } catch (error) {
       console.error('Error saving mark:', error);
       throw error;
-    }
-  }
-
-  static async updateStreak(habitId, isCompleted) {
-    console.log('Updating streak:', { habitId, isCompleted });
-    
-    try {
-      if (isCompleted) {
-        // Увеличиваем текущий streak
-        await db.query(
-          `UPDATE habits 
-           SET streak_current = streak_current + 1,
-               streak_best = GREATEST(streak_current + 1, streak_best)
-           WHERE id = $1`,
-          [habitId]
-        );
-      } else {
-        // Сбрасываем текущий streak для failed
-        await db.query(
-          'UPDATE habits SET streak_current = 0 WHERE id = $1',
-          [habitId]
-        );
-      }
-    } catch (error) {
-      console.error('Error updating streak:', error);
     }
   }
 
@@ -151,39 +122,55 @@ class HabitMark {
 
   static async recalculateStreak(habitId) {
     console.log('Recalculating streak for habit:', habitId);
-    
+
     try {
-      // Получаем последние отметки для пересчета streak
       const result = await db.query(
-        `SELECT date::text as date, status 
-         FROM habit_marks 
+        `SELECT date::text AS date
+         FROM habit_marks
          WHERE habit_id = $1 AND status = 'completed'
          ORDER BY date DESC`,
         [habitId]
       );
 
       let currentStreak = 0;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
 
-      // Проверяем непрерывность выполнения с сегодняшнего дня назад
-      for (let i = 0; i < result.rows.length; i++) {
-        const markDate = new Date(result.rows[i].date + 'T00:00:00');
-        const expectedDate = new Date(today);
-        expectedDate.setDate(expectedDate.getDate() - i);
+      if (result.rows.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-        if (markDate.toDateString() === expectedDate.toDateString()) {
-          currentStreak++;
-        } else {
-          break;
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+
+        // Берём самую последнюю выполненную дату
+        const latestMark = new Date(result.rows[0].date + 'T00:00:00');
+
+        // Стрик активен только если последняя отметка — сегодня или вчера
+        // (если позавчера и раньше — стрик уже прерван)
+        if (latestMark >= yesterday) {
+          // Считаем подряд идущие дни НАЗАД от самой последней отметки
+          for (let i = 0; i < result.rows.length; i++) {
+            const markDate = new Date(result.rows[i].date + 'T00:00:00');
+            const expected = new Date(latestMark);
+            expected.setDate(latestMark.getDate() - i);
+
+            if (markDate.toDateString() === expected.toDateString()) {
+              currentStreak++;
+            } else {
+              break; // цепочка прервалась
+            }
+          }
         }
       }
 
-      // Обновляем streak в таблице habits
       await db.query(
-        'UPDATE habits SET streak_current = $1 WHERE id = $2',
+        `UPDATE habits
+         SET streak_current = $1,
+             streak_best = GREATEST(streak_best, $1)
+         WHERE id = $2`,
         [currentStreak, habitId]
       );
+
+      console.log(`Streak recalculated: ${currentStreak} for habit ${habitId}`);
     } catch (error) {
       console.error('Error recalculating streak:', error);
     }
