@@ -1,5 +1,6 @@
 // controllers/specialHabitsController.js
 const db = require('../config/database');
+const HabitMark = require('../models/HabitMark');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -426,6 +427,9 @@ const specialHabitsController = {
         }
 
         await client.query('COMMIT');
+
+        // Пересчитываем стрик ПОСЛЕ коммита (использует пул, не клиент транзакции)
+        await HabitMark.recalculateStreak(habitId);
 
         res.json({
           success: true,
