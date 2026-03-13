@@ -1505,38 +1505,55 @@ router.post('/subscription/cancel', authMiddleware, async (req, res) => {
 router.get('/subscription/history', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    
-    const result = await db.query(
-      `SELECT 
-        s.id as subscription_id,
+
+    // Subscriptions
+    const subsResult = await db.query(
+      `SELECT
+        'subscription'            AS purchase_type,
+        s.id                      AS purchase_id,
         s.plan_type,
-        s.plan_name,
+        s.plan_name               AS title,
         s.price_stars,
-        s.started_at as created_at,
+        s.started_at              AS created_at,
         s.expires_at,
         s.is_active,
         s.payment_method,
-        tp.telegram_payment_charge_id
+        NULL::text                AS pack_photo_url,
+        NULL::text                AS pack_short_description
        FROM subscriptions s
-       LEFT JOIN telegram_payments tp ON tp.telegram_payment_charge_id = s.telegram_payment_charge_id
-       WHERE s.user_id = $1
-       ORDER BY s.created_at DESC
-       LIMIT 20`,
+       WHERE s.user_id = $1`,
       [userId]
     );
-    
-    console.log(`📜 Found ${result.rows.length} subscription history records for user ${userId}`);
-    
-    res.json({
-      success: true,
-      history: result.rows
-    });
+
+    // Pack purchases
+    const packsResult = await db.query(
+      `SELECT
+        'pack'                             AS purchase_type,
+        shp.id                             AS purchase_id,
+        NULL::text                         AS plan_type,
+        p.name                             AS title,
+        shp.price_paid_stars               AS price_stars,
+        shp.purchased_at                   AS created_at,
+        NULL::timestamptz                  AS expires_at,
+        (shp.payment_status = 'completed') AS is_active,
+        'telegram_stars'                   AS payment_method,
+        p.photo_url                        AS pack_photo_url,
+        p.short_description                AS pack_short_description
+       FROM special_habit_purchases shp
+       JOIN special_habit_packs p ON p.id = shp.pack_id
+       WHERE shp.user_id = $1 AND shp.payment_status = 'completed'`,
+      [userId]
+    );
+
+    // Merge and sort by date desc
+    const all = [...subsResult.rows, ...packsResult.rows]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 50);
+
+    res.json({ success: true, history: all });
   } catch (error) {
     console.error('💥 Get history error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get subscription history'
-    });
+    res.status(500).json({ success: false, error: 'Failed to get purchase history' });
   }
 });
 
