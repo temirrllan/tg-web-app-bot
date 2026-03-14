@@ -5,9 +5,31 @@
 
 'use strict';
 
-const path = require('path');
-const fs   = require('fs');
-const db   = require('../config/database');
+const path   = require('path');
+const fs     = require('fs');
+const db     = require('../config/database');
+const https  = require('https');
+
+// ─── Lightweight Telegram sender (no polling, no circular deps) ───────────────
+// Used only by the admin broadcast endpoint — sends messages via Bot API directly.
+function tgSendMessage(chatId, text, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...opts });
+    const token = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '';
+    const req = https.request(
+      { hostname: 'api.telegram.org', path: `/bot${token}/sendMessage`, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+      (res) => {
+        let raw = '';
+        res.on('data', d => raw += d);
+        res.on('end', () => { try { resolve(JSON.parse(raw)); } catch { resolve({}); } });
+      }
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 // ─── DB connection ────────────────────────────────────────────────────────────
 
@@ -737,6 +759,57 @@ async function buildAdminRouter() {
     } catch (err) {
       console.error('AdminJS /api/stats error:', err.message);
       res.status(500).json({ error: 'Database error' });
+    }
+  });
+
+  // ── Broadcast API ─────────────────────────────────────────────────────────
+  // POST /admin/api/broadcast  { message, parse_mode? }
+  // GET  /admin/api/broadcast/count  → { total }
+  router.get('/api/broadcast/count', async (req, res) => {
+    if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const r = await db.query('SELECT COUNT(*) AS cnt FROM users WHERE telegram_id IS NOT NULL');
+      res.json({ total: Number(r.rows[0]?.cnt || 0) });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/api/broadcast', async (req, res) => {
+    if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { message } = req.body || {};
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: 'Сообщение не может быть пустым' });
+    }
+
+    try {
+      const usersResult = await db.query(
+        'SELECT telegram_id, first_name FROM users WHERE telegram_id IS NOT NULL'
+      );
+      const users = usersResult.rows;
+      console.log(`📢 Admin broadcast: ${users.length} users`);
+
+      let successCount = 0;
+      let failCount    = 0;
+
+      for (const user of users) {
+        try {
+          await tgSendMessage(user.telegram_id, message.trim());
+          successCount++;
+          // Telegram rate limit: ~30 msg/s — 35 ms gap is safe
+          await new Promise(r => setTimeout(r, 35));
+        } catch (err) {
+          console.error(`Broadcast fail → ${user.telegram_id}:`, err.message);
+          failCount++;
+        }
+      }
+
+      console.log(`✅ Broadcast done: ${successCount} ok, ${failCount} fail`);
+      res.json({ success: true, successCount, failCount, total: users.length });
+    } catch (err) {
+      console.error('Admin broadcast error:', err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 

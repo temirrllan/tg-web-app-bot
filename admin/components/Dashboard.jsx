@@ -273,6 +273,183 @@ const PLAN_LABEL = {
   '3_months':'3 месяца', '1_month':'1 месяц', 'legacy':'Старый', 'free':'Бесплатно'
 }
 
+// ─── Broadcast ────────────────────────────────────────────────────────────────
+const BroadcastCard = styled.div`
+  background: ${C.white}; border-radius: 16px; padding: 28px 28px 24px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 1px solid ${C.border};
+  margin-bottom: 24px;
+`
+const BroadcastTextarea = styled.textarea`
+  width: 100%; min-height: 120px; padding: 14px 16px;
+  font-size: 14px; font-family: inherit; line-height: 1.6;
+  border: 1.5px solid ${C.border}; border-radius: 10px;
+  background: #FAFAFA; color: ${C.dark}; resize: vertical;
+  outline: none; transition: border 0.15s;
+  box-sizing: border-box;
+  &:focus { border-color: ${C.indigo}; background: #fff; }
+`
+const BroadcastPreview = styled.div`
+  padding: 14px 16px; border: 1.5px dashed ${C.border}; border-radius: 10px;
+  background: #F8F9FF; font-size: 14px; line-height: 1.6; color: ${C.dark};
+  min-height: 80px; white-space: pre-wrap; word-break: break-word;
+  font-family: 'Segoe UI', sans-serif;
+`
+const BroadcastBtn = styled.button`
+  padding: 11px 28px; border-radius: 10px; border: none; cursor: pointer;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.2px;
+  transition: opacity 0.15s, transform 0.1s;
+  &:hover { opacity: 0.85; transform: translateY(-1px); }
+  &:active { transform: translateY(0); }
+  &:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+`
+
+const BroadcastSection = () => {
+  const [msg, setMsg]           = useState('')
+  const [recipientCount, setRC] = useState(null)
+  const [step, setStep]         = useState('compose') // compose | confirm | sending | done | error
+  const [result, setResult]     = useState(null)
+  const [errMsg, setErrMsg]     = useState('')
+
+  useEffect(() => {
+    fetch('/admin/api/broadcast/count', { credentials: 'same-origin' })
+      .then(r => r.json()).then(d => setRC(d.total)).catch(() => {})
+  }, [])
+
+  const handleConfirm = () => { if (msg.trim()) setStep('confirm') }
+  const handleCancel  = () => setStep('compose')
+
+  const handleSend = async () => {
+    setStep('sending')
+    try {
+      const r = await fetch('/admin/api/broadcast', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg.trim() })
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+      setResult(data)
+      setStep('done')
+    } catch (e) {
+      setErrMsg(e.message)
+      setStep('error')
+    }
+  }
+
+  const reset = () => { setMsg(''); setStep('compose'); setResult(null); setErrMsg('') }
+
+  // Simple HTML → displayable (strip tags for preview safety)
+  const previewHtml = msg
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.*?)\*\*/g,'<b>$1</b>')
+    .replace(/__(.*?)__/g,'<i>$1</i>')
+
+  return (
+    <BroadcastCard>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ width:42, height:42, borderRadius:12, background:`linear-gradient(135deg,${C.indigo},${C.purple})`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20 }}>📣</div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:16, color:C.dark }}>Рассылка пользователям</div>
+            <div style={{ fontSize:12, color:C.muted, marginTop:2 }}>
+              {recipientCount !== null ? `${recipientCount.toLocaleString()} получателей` : 'загрузка...'}
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize:11, padding:'4px 10px', borderRadius:20, background:'rgba(99,102,241,0.1)', color:C.indigo, fontWeight:600 }}>HTML поддерживается</div>
+      </div>
+
+      {/* ── COMPOSE ── */}
+      {step === 'compose' && (
+        <>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:8 }}>Текст сообщения</div>
+          <BroadcastTextarea
+            value={msg}
+            onChange={e => setMsg(e.target.value)}
+            placeholder={'Введите сообщение...\n\nПоддерживается HTML: <b>жирный</b>, <i>курсив</i>, <a href="...">ссылка</a>'}
+          />
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10 }}>
+            <BroadcastBtn
+              style={{ background:`linear-gradient(135deg,${C.indigo},${C.purple})`, color:'#fff', flexShrink:0 }}
+              onClick={handleConfirm}
+              disabled={!msg.trim()}
+            >
+              Предварительный просмотр →
+            </BroadcastBtn>
+            <span style={{ fontSize:12, color:C.muted }}>{msg.length} символов</span>
+          </div>
+        </>
+      )}
+
+      {/* ── CONFIRM ── */}
+      {step === 'confirm' && (
+        <>
+          <div style={{ fontSize:12, fontWeight:600, color:C.muted, textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:8 }}>Предпросмотр (как увидит пользователь)</div>
+          <BroadcastPreview dangerouslySetInnerHTML={{ __html: msg.replace(/\n/g,'<br/>') }} />
+          <div style={{ marginTop:8, padding:'10px 14px', background:'#FFF8E1', borderRadius:8, fontSize:13, color:'#92400E', border:'1px solid #FDE68A' }}>
+            ⚠️ Сообщение будет отправлено <strong>{recipientCount !== null ? recipientCount.toLocaleString() : '...'} пользователям</strong>. Это действие нельзя отменить.
+          </div>
+          <div style={{ display:'flex', gap:10, marginTop:14 }}>
+            <BroadcastBtn
+              style={{ background:`linear-gradient(135deg,#10B981,#059669)`, color:'#fff' }}
+              onClick={handleSend}
+            >
+              ✅ Отправить всем
+            </BroadcastBtn>
+            <BroadcastBtn
+              style={{ background:C.border, color:C.text }}
+              onClick={handleCancel}
+            >
+              ← Изменить
+            </BroadcastBtn>
+          </div>
+        </>
+      )}
+
+      {/* ── SENDING ── */}
+      {step === 'sending' && (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'32px 0', gap:16 }}>
+          <div style={{ width:48, height:48, border:`4px solid ${C.border}`, borderTopColor:C.indigo, borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
+          <div style={{ fontSize:14, color:C.muted }}>Отправка сообщений... Пожалуйста, не закрывайте страницу</div>
+          <style>{`@keyframes spin { to { transform:rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      {/* ── DONE ── */}
+      {step === 'done' && result && (
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'16px 20px', background:'#ECFDF5', borderRadius:12, border:'1px solid #A7F3D0' }}>
+            <span style={{ fontSize:28 }}>✅</span>
+            <div>
+              <div style={{ fontWeight:700, fontSize:15, color:'#065F46' }}>Рассылка завершена!</div>
+              <div style={{ fontSize:13, color:'#047857', marginTop:2 }}>
+                Доставлено: <strong>{result.successCount.toLocaleString()}</strong> &nbsp;·&nbsp;
+                Ошибки: <strong style={{ color: result.failCount > 0 ? '#DC2626' : '#047857' }}>{result.failCount}</strong> &nbsp;·&nbsp;
+                Всего: <strong>{result.total.toLocaleString()}</strong>
+              </div>
+            </div>
+          </div>
+          <BroadcastBtn style={{ background:C.indigo, color:'#fff', alignSelf:'flex-start' }} onClick={reset}>
+            Новая рассылка
+          </BroadcastBtn>
+        </div>
+      )}
+
+      {/* ── ERROR ── */}
+      {step === 'error' && (
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          <div style={{ padding:'16px 20px', background:'#FEF2F2', borderRadius:12, border:'1px solid #FCA5A5', fontSize:14, color:'#7F1D1D' }}>
+            ❌ Ошибка: {errMsg}
+          </div>
+          <BroadcastBtn style={{ background:C.border, color:C.text, alignSelf:'flex-start' }} onClick={reset}>
+            ← Попробовать снова
+          </BroadcastBtn>
+        </div>
+      )}
+    </BroadcastCard>
+  )
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const Dashboard = () => {
   const [stats, setStats]     = useState(null)
@@ -301,6 +478,9 @@ const Dashboard = () => {
         </HeroLeft>
         <HeroEmoji>📊</HeroEmoji>
       </Hero>
+
+      {/* ── Broadcast ── */}
+      <BroadcastSection />
 
       {error && <ErrBox>❌ Ошибка загрузки: {error}</ErrBox>}
 
