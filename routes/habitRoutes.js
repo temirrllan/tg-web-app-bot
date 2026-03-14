@@ -359,6 +359,42 @@ router.get('/habits/marks', async (req, res) => {
   }
 });
 
+// ── Lightweight member-counts poll ──────────────────────────────────────────
+// Returns [{id, members_count}] for all active habits of the user.
+// Used by Today.jsx to dynamically refresh the "+N участников" badge.
+router.get('/habits/member-counts', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await db.query(
+      `SELECT
+         h.id,
+         CASE
+           WHEN h.parent_habit_id IS NOT NULL THEN
+             (SELECT COUNT(DISTINCT user_id) - 1
+                FROM habit_members
+               WHERE habit_id IN (
+                 SELECT id FROM habits
+                  WHERE parent_habit_id = h.parent_habit_id OR id = h.parent_habit_id
+               ) AND is_active = true)
+           ELSE
+             (SELECT COUNT(DISTINCT user_id) - 1
+                FROM habit_members
+               WHERE habit_id IN (
+                 SELECT id FROM habits
+                  WHERE parent_habit_id = h.id OR id = h.id
+               ) AND is_active = true)
+         END AS members_count
+       FROM habits h
+       WHERE h.user_id = $1 AND h.is_active = true`,
+      [userId]
+    );
+    res.json({ success: true, counts: result.rows });
+  } catch (err) {
+    console.error('member-counts error:', err.message);
+    res.status(500).json({ success: false });
+  }
+});
+
 // Получение привычек для конкретной даты
 router.get('/habits/date/:date', async (req, res) => {
   try {
