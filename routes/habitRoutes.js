@@ -1296,30 +1296,61 @@ router.get('/habits/:id/members', authMiddleware, async (req, res) => {
     // 🆕 Получаем участников с их статусом на сегодня
     const today = new Date().toISOString().split('T')[0];
     
+    // Monday of current week
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + (weekStart.getDay() === 0 ? -6 : 1));
+    const weekStartStr  = weekStart.toISOString().split('T')[0];
+    // First day of current month
+    const monthStartStr = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString().split('T')[0];
+
     const members = await db.query(
-      `SELECT DISTINCT 
-        u.id, 
-        u.first_name, 
-        u.last_name, 
-        u.username, 
+      `SELECT DISTINCT ON (u.id)
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.username,
         u.photo_url,
-        h.id as member_habit_id,
-        COALESCE(hm.status, 'pending') as today_status
+        h.id            AS member_habit_id,
+        h.streak_current,
+        h.streak_best,
+        COALESCE(hm_today.status, 'pending')  AS today_status,
+        COALESCE(week_agg.count,  0)::int     AS week_completed,
+        COALESCE(month_agg.count, 0)::int     AS month_completed
        FROM habit_members hmem
-       JOIN users u ON hmem.user_id = u.id
-       JOIN habits h ON (h.user_id = u.id AND (h.parent_habit_id = $1 OR h.id = $1))
-       LEFT JOIN habit_marks hm ON (hm.habit_id = h.id AND hm.date = $3::date)
+       JOIN users  u  ON hmem.user_id = u.id
+       JOIN habits h  ON h.user_id = u.id
+                     AND (h.parent_habit_id = $1 OR h.id = $1)
+                     AND h.is_active = true
+       LEFT JOIN habit_marks hm_today
+              ON hm_today.habit_id = h.id
+             AND hm_today.date = $3::date
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS count
+           FROM habit_marks
+          WHERE habit_id = h.id
+            AND status   = 'completed'
+            AND date    >= $4::date
+            AND date    <= $3::date
+       ) week_agg  ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS count
+           FROM habit_marks
+          WHERE habit_id = h.id
+            AND status   = 'completed'
+            AND date    >= $5::date
+            AND date    <= $3::date
+       ) month_agg ON true
        WHERE hmem.habit_id IN (
-         SELECT id FROM habits 
-         WHERE parent_habit_id = $1 OR id = $1
+         SELECT id FROM habits WHERE parent_habit_id = $1 OR id = $1
        )
        AND hmem.is_active = true
        AND u.id != $2
-       ORDER BY u.first_name`,
-      [targetHabitId, userId, today]
+       ORDER BY u.id, u.first_name`,
+      [targetHabitId, userId, today, weekStartStr, monthStartStr]
     );
-    
-    console.log(`📊 Found ${members.rows.length} members with status for ${today}`);
+
+    console.log(`📊 Found ${members.rows.length} members with stats for ${today}`);
     
     res.json({ 
       success: true, 
