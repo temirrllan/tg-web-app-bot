@@ -75,20 +75,27 @@ function loadTables(sqlDb, names) {
 //   Night 00-05 | Morning 06-11 | Afternoon 12-17 | Evening 18-23
 
 function applyReminderTimeToPeriod(payload) {
-  const raw = (payload.reminder_time || '').trim();
+  // Coerce to string — guards against Invalid Date objects sent by AdminJS picker
+  const raw = String(payload.reminder_time ?? '').trim();
   let hh, mm;
 
-  if (raw.includes('T') || (raw.includes('-') && raw.length > 8)) {
-    // ISO datetime from old datetime-picker (e.g. "2026-03-11T14:00:00.000+05:00")
-    const d = new Date(raw);
-    if (!isNaN(d.getTime())) { hh = d.getUTCHours(); mm = d.getUTCMinutes(); }
-  } else {
-    // Plain time string: "14:30" or "14:30:00"
-    const m = raw.match(/^(\d{1,2}):(\d{2})/);
-    if (m) { hh = parseInt(m[1], 10); mm = parseInt(m[2], 10); }
+  if (raw && raw !== 'Invalid Date') {
+    if (raw.includes('T') || (raw.includes('-') && raw.length > 8)) {
+      // ISO datetime from datetime-picker (e.g. "2026-03-11T14:00:00.000+05:00")
+      const d = new Date(raw);
+      if (!isNaN(d.getTime())) { hh = d.getUTCHours(); mm = d.getUTCMinutes(); }
+    } else {
+      // Plain time string: "14:30" or "14:30:00"
+      const m = raw.match(/^(\d{1,2}):(\d{2})/);
+      if (m) { hh = parseInt(m[1], 10); mm = parseInt(m[2], 10); }
+    }
   }
 
-  if (hh === undefined) return payload; // unparseable – leave as-is
+  if (hh === undefined) {
+    // Unparseable or empty → NULL so PostgreSQL doesn't reject the INSERT/UPDATE
+    payload.reminder_time = null;
+    return payload;
+  }
 
   payload.reminder_time = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
 
@@ -292,7 +299,8 @@ async function buildAdminRouter() {
         actions: {
           new: {
             before: async (request) => {
-              if (request.payload && request.payload.reminder_time) {
+              // Always sanitize — reminder_time may arrive as an Invalid Date object
+              if (request.payload) {
                 request.payload = applyReminderTimeToPeriod(request.payload);
               }
               return request;
@@ -300,7 +308,7 @@ async function buildAdminRouter() {
           },
           edit: {
             before: async (request) => {
-              if (request.payload && request.payload.reminder_time) {
+              if (request.payload) {
                 request.payload = applyReminderTimeToPeriod(request.payload);
               }
               return request;
