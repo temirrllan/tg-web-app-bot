@@ -370,16 +370,18 @@ async function buildAdminRouter() {
                   ...request.payload,
                   reminder_time: request.payload.reminder_time_picker ?? '',
                 });
-                // Stash raw picker strings directly on request for the after hook
-                request._timePickerRaw  = request.payload.reminder_time_picker ?? '';
-                request._schedPickerRaw = request.payload.schedule_days_picker  ?? null;
+                // Store in BOTH context and on request — whichever AdminJS actually forwards to after
+                const timeRaw  = request.payload.reminder_time_picker ?? '';
+                const schedRaw = request.payload.schedule_days_picker  ?? null;
+                context._timePickerRaw  = timeRaw;
+                context._schedPickerRaw = schedRaw;
+                request._timePickerRaw  = timeRaw;
+                request._schedPickerRaw = schedRaw;
+                console.log('[AdminJS new.before] timeRaw:', timeRaw, '| schedRaw:', schedRaw);
                 const clean = { ...request.payload };
-                delete clean.reminder_time_picker;   // virtual — not a real DB column
-                delete clean.schedule_days_picker;   // virtual — not a real DB column
+                delete clean.reminder_time_picker;
+                delete clean.schedule_days_picker;
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                // Remove real DB columns @adminjs/sql cannot handle:
-                // INTEGER[] → expands to "col"."0" = $N syntax → rejected by PostgreSQL
-                // TIME      → coerced via new Date() → Invalid Date → rejected by PostgreSQL
                 delete clean.schedule_days;
                 Object.keys(clean).forEach(key => {
                   if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
@@ -389,27 +391,28 @@ async function buildAdminRouter() {
               }
               return request;
             },
-            // ── after: write reminder_time and schedule_days via raw SQL (bypass type coercion).
-            // Reads raw picker values from request._timePickerRaw / request._schedPickerRaw
-            // set by the before hook — no context dependency.
-            after: async (response, request) => {
+            after: async (response, request, context) => {
               const recordId = response.record?.params?.id;
+              // Read from context first (most reliable), fall back to request
+              const timeRaw  = context._timePickerRaw  ?? request._timePickerRaw  ?? '';
+              const schedRaw = context._schedPickerRaw ?? request._schedPickerRaw ?? null;
+              console.log('[AdminJS new.after] recordId:', recordId, '| timeRaw:', timeRaw, '| schedRaw:', schedRaw);
               if (recordId == null) return response;
-              const t    = applyReminderTimeToPeriod({
-                reminder_time: request._timePickerRaw ?? '',
-              }).reminder_time;
-              const days = parseScheduleDays(request._schedPickerRaw);
+              const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
+              const days = parseScheduleDays(schedRaw);
+              console.log('[AdminJS new.after] → t:', t, '| days:', days);
               try {
                 await db.query(
                   'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
                   [t, days, recordId]
                 );
+                console.log('[AdminJS new.after] UPDATE ok for id', recordId);
                 if (response.record?.params) {
                   response.record.params.reminder_time  = t;
                   response.record.params.schedule_days  = days;
                 }
               } catch (err) {
-                console.error('AdminJS after/new: update failed:', err.message);
+                console.error('[AdminJS new.after] UPDATE failed:', err.message);
               }
               return response;
             },
