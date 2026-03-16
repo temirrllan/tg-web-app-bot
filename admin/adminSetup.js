@@ -360,47 +360,44 @@ async function buildAdminRouter() {
             },
           },
           new: {
-            // ── before: parse time → set day_period, replace reminder_time with a valid
-            // ISO datetime placeholder so @adminjs/sql's new Date() coercion succeeds.
-            // Root cause: @adminjs/sql always includes every table column in the INSERT
-            // and calls new Date(value) on "time" columns — any time-only string like
-            // "14:30:00" or undefined → Invalid Date → PostgreSQL rejects the query.
-            // Fix: pass "1970-01-01T00:00:00.000Z" as a dummy (PostgreSQL accepts
-            // ISO timestamps for time columns), then the `after` hook writes the real value.
+            // ── before: set day_period from reminder_time_picker; remove real DB array/time
+            // columns that @adminjs/sql cannot handle (INTEGER[] and TIME).
+            // IMPORTANT: picker virtual fields (reminder_time_picker, schedule_days_picker)
+            // are intentionally kept in the payload — @adminjs/sql ignores non-DB columns,
+            // so they reach the after hook via request.payload for direct reading.
             before: async (request, context) => {
               if (request.payload) {
-                // Read from the virtual UI field, not from reminder_time (which is excluded
-                // from editProperties so @adminjs/sql never touches it in the INSERT).
                 const parsed = applyReminderTimeToPeriod({
                   ...request.payload,
                   reminder_time: request.payload.reminder_time_picker ?? '',
                 });
-                context._reminderTimeParsed = parsed.reminder_time; // "HH:MM:SS" | null
-                context._scheduleDaysParsed = parseScheduleDays(request.payload.schedule_days_picker);
                 const clean = { ...request.payload };
-                delete clean.reminder_time_picker;   // virtual — not a real DB column
-                delete clean.schedule_days_picker;   // virtual — not a real DB column
+                // Set day_period derived from time
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                // Remove schedule_days entirely: @adminjs/sql expands JS arrays into indexed
-                // composite-type syntax ("schedule_days"."0" = $N) that PostgreSQL rejects
-                // for integer[] columns. The after hook updates schedule_days via raw SQL.
+                // Remove real DB columns that @adminjs/sql cannot handle:
+                // INTEGER[] → expands to "col"."0" = $N composite syntax (invalid for arrays)
+                // TIME      → coerced via new Date() → Invalid Date
                 delete clean.schedule_days;
                 Object.keys(clean).forEach(key => {
                   if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
                 });
-                // Remove reminder_time: the after hook updates it via raw SQL to avoid
-                // @adminjs/sql coercing TIME values through new Date() → Invalid Date.
                 delete clean.reminder_time;
+                // Do NOT delete reminder_time_picker / schedule_days_picker:
+                // they are virtual (not DB columns), @adminjs/sql skips them,
+                // and the after hook reads them directly from request.payload.
                 request.payload = clean;
               }
               return request;
             },
             // ── after: write reminder_time and schedule_days via raw SQL (bypass type coercion)
-            after: async (response, request, context) => {
+            // Reads picker values directly from request.payload — no context dependency.
+            after: async (response, request) => {
               const recordId = response.record?.params?.id;
               if (recordId == null) return response;
-              const t    = context._reminderTimeParsed ?? null;
-              const days = context._scheduleDaysParsed ?? [1,2,3,4,5,6,7];
+              const t    = applyReminderTimeToPeriod({
+                reminder_time: request.payload?.reminder_time_picker ?? '',
+              }).reminder_time;
+              const days = parseScheduleDays(request.payload?.schedule_days_picker);
               try {
                 await db.query(
                   'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
@@ -973,4 +970,4 @@ async function buildAdminRouter() {
   return { adminJs, router };
 }
 
-module.exports = { buildAdminRouter };
+module.exports = { buildAdminRouter 
