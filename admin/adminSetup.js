@@ -970,4 +970,4 @@ async function buildAdminRouter() {
   return { adminJs, router };
 }
 
-module.exports = { buildAdminRouter 
+module.exports = { buildAdminRouter };
