@@ -18,6 +18,10 @@ const PRESETS = [
 
 function parseValue(val) {
   if (Array.isArray(val)) return val.map(Number).filter(Boolean)
+  // AdminJS (via flat lib) may unflatten dot-keys → plain object {"0":1,"1":2}
+  if (val !== null && val !== undefined && typeof val === 'object') {
+    return Object.values(val).map(Number).filter(Boolean)
+  }
   if (typeof val === 'string') {
     const cleaned = val.replace(/[{}\[\]]/g, '').trim()
     if (!cleaned) return []
@@ -26,11 +30,20 @@ function parseValue(val) {
   return []
 }
 
-// @adminjs/sql stores INTEGER[] columns as indexed keys in record.params:
-// schedule_days.0 = 1, schedule_days.1 = 2, etc. — not as a direct array value.
+// @adminjs/sql stores INTEGER[] columns as indexed keys in record.params.
+// Depending on the AdminJS version the flat library may unflatten them before
+// reaching the component, so we handle all three forms:
+//   1. Already an array:  schedule_days = [1,2,3]
+//   2. Object with num keys: schedule_days = {"0":1,"1":2}  (flat.unflatten)
+//   3. Dot-notation flat keys: schedule_days.0 = 1, schedule_days.1 = 2
 function getScheduleDaysFromParams(params) {
   const direct = params['schedule_days']
-  if (direct != null && direct !== '') return direct
+  if (Array.isArray(direct) && direct.length > 0) return direct
+  if (direct !== null && direct !== undefined && typeof direct === 'object' && Object.keys(direct).length > 0) {
+    return Object.values(direct)
+  }
+  if (typeof direct === 'string' && direct.trim() !== '') return direct
+  // Flat dot-notation keys
   const indexed = []
   let i = 0
   while (params[`schedule_days.${i}`] !== undefined) {

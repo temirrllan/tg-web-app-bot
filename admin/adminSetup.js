@@ -335,6 +335,30 @@ async function buildAdminRouter() {
           },
         },
         actions: {
+          // ── show: reconstruct schedule_days from indexed flat keys for display
+          // @adminjs/sql returns INTEGER[] as "schedule_days.0"=1, "schedule_days.1"=2, etc.
+          // The show view property "schedule_days" would be blank without this hook.
+          show: {
+            after: async (response) => {
+              const p = response.record?.params;
+              if (!p) return response;
+              const days = [];
+              let i = 0;
+              while (p[`schedule_days.${i}`] !== undefined) {
+                days.push(Number(p[`schedule_days.${i}`]));
+                i++;
+              }
+              // Also handle already-unflattened object {"0":1,"1":2}
+              if (days.length === 0 && p.schedule_days && typeof p.schedule_days === 'object' && !Array.isArray(p.schedule_days)) {
+                days.push(...Object.values(p.schedule_days).map(Number));
+              }
+              if (days.length > 0) {
+                const labels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+                p.schedule_days = days.map(d => labels[d - 1] || d).join(', ');
+              }
+              return response;
+            },
+          },
           new: {
             // ── before: parse time → set day_period, replace reminder_time with a valid
             // ISO datetime placeholder so @adminjs/sql's new Date() coercion succeeds.
