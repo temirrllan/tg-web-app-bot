@@ -360,44 +360,45 @@ async function buildAdminRouter() {
             },
           },
           new: {
-            // ── before: set day_period from reminder_time_picker; remove real DB array/time
-            // columns that @adminjs/sql cannot handle (INTEGER[] and TIME).
-            // IMPORTANT: picker virtual fields (reminder_time_picker, schedule_days_picker)
-            // are intentionally kept in the payload — @adminjs/sql ignores non-DB columns,
-            // so they reach the after hook via request.payload for direct reading.
+            // ── before: parse picker fields → set day_period, remove problematic DB columns.
+            // Raw picker values are attached to the request object so the after hook can read
+            // them — AdminJS passes the exact request returned by before into after, making
+            // request._X more reliable than context (which may not be shared in all versions).
             before: async (request, context) => {
               if (request.payload) {
                 const parsed = applyReminderTimeToPeriod({
                   ...request.payload,
                   reminder_time: request.payload.reminder_time_picker ?? '',
                 });
+                // Stash raw picker strings directly on request for the after hook
+                request._timePickerRaw  = request.payload.reminder_time_picker ?? '';
+                request._schedPickerRaw = request.payload.schedule_days_picker  ?? null;
                 const clean = { ...request.payload };
-                // Set day_period derived from time
+                delete clean.reminder_time_picker;   // virtual — not a real DB column
+                delete clean.schedule_days_picker;   // virtual — not a real DB column
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                // Remove real DB columns that @adminjs/sql cannot handle:
-                // INTEGER[] → expands to "col"."0" = $N composite syntax (invalid for arrays)
-                // TIME      → coerced via new Date() → Invalid Date
+                // Remove real DB columns @adminjs/sql cannot handle:
+                // INTEGER[] → expands to "col"."0" = $N syntax → rejected by PostgreSQL
+                // TIME      → coerced via new Date() → Invalid Date → rejected by PostgreSQL
                 delete clean.schedule_days;
                 Object.keys(clean).forEach(key => {
                   if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
                 });
                 delete clean.reminder_time;
-                // Do NOT delete reminder_time_picker / schedule_days_picker:
-                // they are virtual (not DB columns), @adminjs/sql skips them,
-                // and the after hook reads them directly from request.payload.
                 request.payload = clean;
               }
               return request;
             },
-            // ── after: write reminder_time and schedule_days via raw SQL (bypass type coercion)
-            // Reads picker values directly from request.payload — no context dependency.
+            // ── after: write reminder_time and schedule_days via raw SQL (bypass type coercion).
+            // Reads raw picker values from request._timePickerRaw / request._schedPickerRaw
+            // set by the before hook — no context dependency.
             after: async (response, request) => {
               const recordId = response.record?.params?.id;
               if (recordId == null) return response;
               const t    = applyReminderTimeToPeriod({
-                reminder_time: request.payload?.reminder_time_picker ?? '',
+                reminder_time: request._timePickerRaw ?? '',
               }).reminder_time;
-              const days = parseScheduleDays(request.payload?.schedule_days_picker);
+              const days = parseScheduleDays(request._schedPickerRaw);
               try {
                 await db.query(
                   'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
