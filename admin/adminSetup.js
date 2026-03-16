@@ -70,27 +70,18 @@ function loadTables(sqlDb, names) {
 }
 
 // ─── Schedule days helper ─────────────────────────────────────────────────────
-// @adminjs/sql passes schedule_days to knex as a raw string "{1,2,3,4,5,6,7}".
-// pg can serialise JS arrays correctly for INTEGER[] columns, but may not cast
-// the PostgreSQL array-literal string reliably in all versions.
-// Convert to a proper JS number array here so pg handles binding correctly.
+// @adminjs/sql does not reliably handle INTEGER[] columns — it may silently drop
+// the value or fail to bind it. Same fix as reminder_time: use a virtual field
+// "schedule_days_picker" in editProperties, read it in the before hook, and write
+// the real value via a direct db.query() UPDATE in the after hook.
 
-function normalizeScheduleDays(payload) {
-  const raw = payload.schedule_days;
-  if (raw == null || raw === '') {
-    payload.schedule_days = [1, 2, 3, 4, 5, 6, 7]; // default all days
-    return payload;
-  }
-  if (Array.isArray(raw)) {
-    payload.schedule_days = raw.map(Number).filter(n => n > 0);
-    return payload;
-  }
-  // Strip PostgreSQL literal braces or JSON brackets, e.g. "{1,2,3}" or "[1,2,3]"
+function parseScheduleDays(raw) {
+  if (raw == null || raw === '') return [1, 2, 3, 4, 5, 6, 7];
+  if (Array.isArray(raw)) return raw.map(Number).filter(n => n > 0);
   const stripped = String(raw).replace(/[{}\[\]]/g, '').trim();
-  payload.schedule_days = stripped
+  return stripped
     ? stripped.split(',').map(Number).filter(n => !isNaN(n) && n > 0)
     : [1, 2, 3, 4, 5, 6, 7];
-  return payload;
 }
 
 // ─── Reminder time helper ─────────────────────────────────────────────────────
@@ -301,7 +292,9 @@ async function buildAdminRouter() {
         // a Date object that pg serialises as an ISO datetime string, rejected by PostgreSQL.
         // Instead we use a virtual field "reminder_time_picker" (not a real DB column) to
         // capture the user's input; the before/after hooks write the real value via raw SQL.
-        editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time_picker', 'reminder_enabled', 'sort_order'],
+        // schedule_days excluded for same reason as reminder_time — @adminjs/sql cannot
+        // reliably handle INTEGER[] columns; handled via virtual field + after hook raw SQL.
+        editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days_picker', 'reminder_time_picker', 'reminder_enabled', 'sort_order'],
         filterProperties: ['pack_id', 'day_period'],
         properties: {
           category_id: {
@@ -326,6 +319,13 @@ async function buildAdminRouter() {
             },
           },
           schedule_days: {
+            type: 'string',
+            description: 'Устанавливается хуком.',
+          },
+          schedule_days_picker: {
+            // Virtual field — not a real DB column. Same pattern as reminder_time_picker.
+            type: 'string',
+            label: 'Дни недели',
             components: {
               edit: ScheduleDaysInputComponent,
             },
@@ -352,27 +352,32 @@ async function buildAdminRouter() {
                   reminder_time: request.payload.reminder_time_picker ?? '',
                 });
                 context._reminderTimeParsed = parsed.reminder_time; // "HH:MM:SS" | null
+                context._scheduleDaysParsed = parseScheduleDays(request.payload.schedule_days_picker);
                 const clean = { ...request.payload };
-                delete clean.reminder_time_picker; // virtual field — not a real DB column
+                delete clean.reminder_time_picker;   // virtual — not a real DB column
+                delete clean.schedule_days_picker;   // virtual — not a real DB column
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                normalizeScheduleDays(clean); // convert "{1,2,3}" string → JS array for pg
                 request.payload = clean;
               }
               return request;
             },
-            // ── after: write reminder_time directly with raw SQL (no type coercion)
+            // ── after: write reminder_time and schedule_days via raw SQL (bypass type coercion)
             after: async (response, request, context) => {
               const recordId = response.record?.params?.id;
               if (recordId == null) return response;
-              const t = context._reminderTimeParsed ?? null;
+              const t    = context._reminderTimeParsed ?? null;
+              const days = context._scheduleDaysParsed ?? [1,2,3,4,5,6,7];
               try {
                 await db.query(
-                  'UPDATE special_habit_templates SET reminder_time = $1 WHERE id = $2',
-                  [t, recordId]
+                  'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
+                  [t, days, recordId]
                 );
-                if (response.record?.params) response.record.params.reminder_time = t;
+                if (response.record?.params) {
+                  response.record.params.reminder_time  = t;
+                  response.record.params.schedule_days  = days;
+                }
               } catch (err) {
-                console.error('AdminJS after/new: reminder_time update failed:', err.message);
+                console.error('AdminJS after/new: update failed:', err.message);
               }
               return response;
             },
@@ -385,10 +390,11 @@ async function buildAdminRouter() {
                   reminder_time: request.payload.reminder_time_picker ?? '',
                 });
                 context._reminderTimeParsed = parsed.reminder_time;
+                context._scheduleDaysParsed = parseScheduleDays(request.payload.schedule_days_picker);
                 const clean = { ...request.payload };
                 delete clean.reminder_time_picker;
+                delete clean.schedule_days_picker;
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                normalizeScheduleDays(clean);
                 request.payload = clean;
               }
               return request;
@@ -396,15 +402,19 @@ async function buildAdminRouter() {
             after: async (response, request, context) => {
               const recordId = response.record?.params?.id;
               if (recordId == null) return response;
-              const t = context._reminderTimeParsed ?? null;
+              const t    = context._reminderTimeParsed ?? null;
+              const days = context._scheduleDaysParsed ?? [1,2,3,4,5,6,7];
               try {
                 await db.query(
-                  'UPDATE special_habit_templates SET reminder_time = $1 WHERE id = $2',
-                  [t, recordId]
+                  'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
+                  [t, days, recordId]
                 );
-                if (response.record?.params) response.record.params.reminder_time = t;
+                if (response.record?.params) {
+                  response.record.params.reminder_time = t;
+                  response.record.params.schedule_days = days;
+                }
               } catch (err) {
-                console.error('AdminJS after/edit: reminder_time update failed:', err.message);
+                console.error('AdminJS after/edit: update failed:', err.message);
               }
               return response;
             },
