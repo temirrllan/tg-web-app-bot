@@ -69,6 +69,30 @@ function loadTables(sqlDb, names) {
   return result;
 }
 
+// ─── Schedule days helper ─────────────────────────────────────────────────────
+// @adminjs/sql passes schedule_days to knex as a raw string "{1,2,3,4,5,6,7}".
+// pg can serialise JS arrays correctly for INTEGER[] columns, but may not cast
+// the PostgreSQL array-literal string reliably in all versions.
+// Convert to a proper JS number array here so pg handles binding correctly.
+
+function normalizeScheduleDays(payload) {
+  const raw = payload.schedule_days;
+  if (raw == null || raw === '') {
+    payload.schedule_days = [1, 2, 3, 4, 5, 6, 7]; // default all days
+    return payload;
+  }
+  if (Array.isArray(raw)) {
+    payload.schedule_days = raw.map(Number).filter(n => n > 0);
+    return payload;
+  }
+  // Strip PostgreSQL literal braces or JSON brackets, e.g. "{1,2,3}" or "[1,2,3]"
+  const stripped = String(raw).replace(/[{}\[\]]/g, '').trim();
+  payload.schedule_days = stripped
+    ? stripped.split(',').map(Number).filter(n => !isNaN(n) && n > 0)
+    : [1, 2, 3, 4, 5, 6, 7];
+  return payload;
+}
+
 // ─── Reminder time helper ─────────────────────────────────────────────────────
 // Parses reminder_time (HH:MM string or ISO datetime) → normalises to HH:MM:SS
 // and auto-derives day_period:
@@ -331,6 +355,7 @@ async function buildAdminRouter() {
                 const clean = { ...request.payload };
                 delete clean.reminder_time_picker; // virtual field — not a real DB column
                 if (parsed.day_period) clean.day_period = parsed.day_period;
+                normalizeScheduleDays(clean); // convert "{1,2,3}" string → JS array for pg
                 request.payload = clean;
               }
               return request;
@@ -363,6 +388,7 @@ async function buildAdminRouter() {
                 const clean = { ...request.payload };
                 delete clean.reminder_time_picker;
                 if (parsed.day_period) clean.day_period = parsed.day_period;
+                normalizeScheduleDays(clean);
                 request.payload = clean;
               }
               return request;
