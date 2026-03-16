@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 
 // Map hour → day period label
 function getPeriodLabel(hour) {
@@ -31,6 +31,11 @@ const ReminderTimeInput = ({ property, record, onChange }) => {
   const [timeVal, setTimeVal] = useState(() => parseToHHMM(rawValue))
 
   const hour = timeVal ? parseInt(timeVal.split(':')[0], 10) : null
+
+  // Push initial value into AdminJS form state so it's preserved on save without changes
+  useEffect(() => {
+    onChange(property.path, timeVal || '')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleChange = (e) => {
     const val = e.target.value // "HH:MM"

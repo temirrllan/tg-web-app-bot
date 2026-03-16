@@ -357,13 +357,16 @@ async function buildAdminRouter() {
                 delete clean.reminder_time_picker;   // virtual — not a real DB column
                 delete clean.schedule_days_picker;   // virtual — not a real DB column
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                // @adminjs/sql includes all loaded-record columns in UPDATE; when schedule_days
-                // is a JS array knex expands it as "schedule_days"."0" = $N (composite-type
-                // syntax) which PostgreSQL rejects. Convert to a plain string literal so knex
-                // sends it as a single binding and PostgreSQL casts text → integer[].
-                if (Array.isArray(clean.schedule_days)) {
-                  clean.schedule_days = '{' + clean.schedule_days.join(',') + '}';
-                }
+                // Remove schedule_days entirely: @adminjs/sql expands JS arrays into indexed
+                // composite-type syntax ("schedule_days"."0" = $N) that PostgreSQL rejects
+                // for integer[] columns. The after hook updates schedule_days via raw SQL.
+                delete clean.schedule_days;
+                Object.keys(clean).forEach(key => {
+                  if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
+                });
+                // Remove reminder_time: the after hook updates it via raw SQL to avoid
+                // @adminjs/sql coercing TIME values through new Date() → Invalid Date.
+                delete clean.reminder_time;
                 request.payload = clean;
               }
               return request;
@@ -402,9 +405,16 @@ async function buildAdminRouter() {
                 delete clean.reminder_time_picker;
                 delete clean.schedule_days_picker;
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                if (Array.isArray(clean.schedule_days)) {
-                  clean.schedule_days = '{' + clean.schedule_days.join(',') + '}';
-                }
+                // Remove schedule_days entirely: @adminjs/sql expands JS arrays into indexed
+                // composite-type syntax ("schedule_days"."0" = $N) that PostgreSQL rejects
+                // for integer[] columns. The after hook updates schedule_days via raw SQL.
+                delete clean.schedule_days;
+                Object.keys(clean).forEach(key => {
+                  if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
+                });
+                // Remove reminder_time: the after hook updates it via raw SQL to avoid
+                // @adminjs/sql coercing TIME values through new Date() → Invalid Date.
+                delete clean.reminder_time;
                 request.payload = clean;
               }
               return request;

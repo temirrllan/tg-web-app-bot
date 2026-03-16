@@ -26,8 +26,22 @@ function parseValue(val) {
   return []
 }
 
+// @adminjs/sql stores INTEGER[] columns as indexed keys in record.params:
+// schedule_days.0 = 1, schedule_days.1 = 2, etc. — not as a direct array value.
+function getScheduleDaysFromParams(params) {
+  const direct = params['schedule_days']
+  if (direct != null && direct !== '') return direct
+  const indexed = []
+  let i = 0
+  while (params[`schedule_days.${i}`] !== undefined) {
+    indexed.push(params[`schedule_days.${i}`])
+    i++
+  }
+  return indexed.length > 0 ? indexed : ''
+}
+
 const ScheduleDaysInput = ({ property, record, onChange }) => {
-  const rawValue = record.params[property.path] ?? record.params['schedule_days'] ?? ''
+  const rawValue = record.params[property.path] ?? getScheduleDaysFromParams(record.params) ?? ''
   const isNew = !record.params.id
 
   const [selected, setSelected] = useState(() => {
