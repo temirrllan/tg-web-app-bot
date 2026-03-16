@@ -272,8 +272,12 @@ async function buildAdminRouter() {
         sort: { sortBy: 'sort_order', direction: 'asc' },
         listProperties:   ['id', 'pack_id', 'title', 'goal', 'reminder_time', 'day_period', 'sort_order'],
         showProperties:   ['id', 'pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'day_period', 'sort_order'],
-        // day_period removed from edit — it's auto-set from reminder_time in the before hook
-        editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time', 'reminder_enabled', 'sort_order'],
+        // reminder_time is intentionally excluded from editProperties — @adminjs/sql iterates
+        // over every editProperty and coerces "time" columns via new Date(), which produces
+        // a Date object that pg serialises as an ISO datetime string, rejected by PostgreSQL.
+        // Instead we use a virtual field "reminder_time_picker" (not a real DB column) to
+        // capture the user's input; the before/after hooks write the real value via raw SQL.
+        editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days', 'reminder_time_picker', 'reminder_enabled', 'sort_order'],
         filterProperties: ['pack_id', 'day_period'],
         properties: {
           category_id: {
@@ -281,7 +285,15 @@ async function buildAdminRouter() {
             description: 'Категория привычки',
           },
           reminder_time: {
+            // read-only display — editing goes through reminder_time_picker below
+            description: 'Устанавливается хуком. Для изменения используйте поле "Время напоминания" выше.',
+          },
+          reminder_time_picker: {
+            // Virtual field — not a real DB column. @adminjs/sql skips it during INSERT/UPDATE
+            // because it's absent from the DB schema; the before hook reads it and the after
+            // hook writes the real value to reminder_time via a direct db.query().
             type: 'string',
+            label: 'Время напоминания',
             description: 'Day Period установится автоматически по выбранному времени.',
             components: {
               edit: ReminderTimeInputComponent,
@@ -307,12 +319,15 @@ async function buildAdminRouter() {
             // ISO timestamps for time columns), then the `after` hook writes the real value.
             before: async (request, context) => {
               if (request.payload) {
-                const parsed = applyReminderTimeToPeriod({ ...request.payload });
+                // Read from the virtual UI field, not from reminder_time (which is excluded
+                // from editProperties so @adminjs/sql never touches it in the INSERT).
+                const parsed = applyReminderTimeToPeriod({
+                  ...request.payload,
+                  reminder_time: request.payload.reminder_time_picker ?? '',
+                });
                 context._reminderTimeParsed = parsed.reminder_time; // "HH:MM:SS" | null
                 const clean = { ...request.payload };
-                // Use a valid ISO datetime placeholder — @adminjs/sql coerces time columns
-                // with new Date(); "HH:MM:SS" or undefined both → Invalid Date and crash.
-                clean.reminder_time = '1970-01-01T00:00:00.000Z';
+                delete clean.reminder_time_picker; // virtual field — not a real DB column
                 if (parsed.day_period) clean.day_period = parsed.day_period;
                 request.payload = clean;
               }
@@ -338,10 +353,13 @@ async function buildAdminRouter() {
           edit: {
             before: async (request, context) => {
               if (request.payload) {
-                const parsed = applyReminderTimeToPeriod({ ...request.payload });
+                const parsed = applyReminderTimeToPeriod({
+                  ...request.payload,
+                  reminder_time: request.payload.reminder_time_picker ?? '',
+                });
                 context._reminderTimeParsed = parsed.reminder_time;
                 const clean = { ...request.payload };
-                clean.reminder_time = '1970-01-01T00:00:00.000Z';
+                delete clean.reminder_time_picker;
                 if (parsed.day_period) clean.day_period = parsed.day_period;
                 request.payload = clean;
               }
