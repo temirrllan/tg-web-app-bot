@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 
 const DAYS = [
   { value: 1, label: 'Пн' },
@@ -28,7 +28,19 @@ function parseValue(val) {
 
 const ScheduleDaysInput = ({ property, record, onChange }) => {
   const rawValue = record.params[property.path] ?? record.params['schedule_days'] ?? ''
-  const [selected, setSelected] = useState(() => parseValue(rawValue))
+  const isNew = !record.params.id
+
+  const [selected, setSelected] = useState(() => {
+    const parsed = parseValue(rawValue)
+    // For new records default to all 7 days (matches DB DEFAULT ARRAY[1..7])
+    return parsed.length > 0 ? parsed : (isNew ? [1, 2, 3, 4, 5, 6, 7] : [])
+  })
+
+  // Push initial value into AdminJS form state so it's included in payload
+  // even if the user never touches the component.
+  useEffect(() => {
+    onChange(property.path, `{${selected.join(',')}}`)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commit = (days) => {
     const sorted = [...days].sort((a, b) => a - b)

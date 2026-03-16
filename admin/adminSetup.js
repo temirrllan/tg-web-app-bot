@@ -285,8 +285,10 @@ async function buildAdminRouter() {
             description: 'Категория привычки',
           },
           reminder_time: {
-            // read-only display — editing goes through reminder_time_picker below
-            description: 'Устанавливается хуком. Для изменения используйте поле "Время напоминания" выше.',
+            // type:'string' prevents @adminjs/sql from using its datetime formatter which
+            // calls new Date("HH:MM:SS") → Invalid Date → renders as "NaN-NaN-NaN NaN:NaN"
+            type: 'string',
+            description: 'Устанавливается хуком. Для изменения используйте поле выше.',
           },
           reminder_time_picker: {
             // Virtual field — not a real DB column. @adminjs/sql skips it during INSERT/UPDATE
