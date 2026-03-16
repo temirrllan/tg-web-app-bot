@@ -402,14 +402,9 @@ async function buildAdminRouter() {
                 delete clean.reminder_time_picker;
                 delete clean.schedule_days_picker;
                 if (parsed.day_period) clean.day_period = parsed.day_period;
-                // schedule_days is NOT in editProperties so it's absent from the POST body.
-                // @adminjs/sql loads the full existing record from DB for UPDATE and merges
-                // it with the payload; the DB-loaded schedule_days is a JS array which knex
-                // then expands as "schedule_days"."0" = $N (composite-type syntax), rejected
-                // by PostgreSQL. Explicitly injecting it here as a string overrides the
-                // DB-loaded array in the merge so knex sends a single string binding.
-                // The actual definitive value is written by the after hook via raw SQL.
-                clean.schedule_days = '{' + context._scheduleDaysParsed.join(',') + '}';
+                if (Array.isArray(clean.schedule_days)) {
+                  clean.schedule_days = '{' + clean.schedule_days.join(',') + '}';
+                }
                 request.payload = clean;
               }
               return request;
