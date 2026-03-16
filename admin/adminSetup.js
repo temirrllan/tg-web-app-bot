@@ -298,20 +298,69 @@ async function buildAdminRouter() {
         },
         actions: {
           new: {
-            before: async (request) => {
-              // Always sanitize — reminder_time may arrive as an Invalid Date object
+            // ── before: parse time → set day_period, replace reminder_time with a valid
+            // ISO datetime placeholder so @adminjs/sql's new Date() coercion succeeds.
+            // Root cause: @adminjs/sql always includes every table column in the INSERT
+            // and calls new Date(value) on "time" columns — any time-only string like
+            // "14:30:00" or undefined → Invalid Date → PostgreSQL rejects the query.
+            // Fix: pass "1970-01-01T00:00:00.000Z" as a dummy (PostgreSQL accepts
+            // ISO timestamps for time columns), then the `after` hook writes the real value.
+            before: async (request, context) => {
               if (request.payload) {
-                request.payload = applyReminderTimeToPeriod(request.payload);
+                const parsed = applyReminderTimeToPeriod({ ...request.payload });
+                context._reminderTimeParsed = parsed.reminder_time; // "HH:MM:SS" | null
+                const clean = { ...request.payload };
+                // Use a valid ISO datetime placeholder — @adminjs/sql coerces time columns
+                // with new Date(); "HH:MM:SS" or undefined both → Invalid Date and crash.
+                clean.reminder_time = '1970-01-01T00:00:00.000Z';
+                if (parsed.day_period) clean.day_period = parsed.day_period;
+                request.payload = clean;
               }
               return request;
             },
+            // ── after: write reminder_time directly with raw SQL (no type coercion)
+            after: async (response, request, context) => {
+              const recordId = response.record?.params?.id;
+              if (recordId == null) return response;
+              const t = context._reminderTimeParsed ?? null;
+              try {
+                await db.query(
+                  'UPDATE special_habit_templates SET reminder_time = $1 WHERE id = $2',
+                  [t, recordId]
+                );
+                if (response.record?.params) response.record.params.reminder_time = t;
+              } catch (err) {
+                console.error('AdminJS after/new: reminder_time update failed:', err.message);
+              }
+              return response;
+            },
           },
           edit: {
-            before: async (request) => {
+            before: async (request, context) => {
               if (request.payload) {
-                request.payload = applyReminderTimeToPeriod(request.payload);
+                const parsed = applyReminderTimeToPeriod({ ...request.payload });
+                context._reminderTimeParsed = parsed.reminder_time;
+                const clean = { ...request.payload };
+                clean.reminder_time = '1970-01-01T00:00:00.000Z';
+                if (parsed.day_period) clean.day_period = parsed.day_period;
+                request.payload = clean;
               }
               return request;
+            },
+            after: async (response, request, context) => {
+              const recordId = response.record?.params?.id;
+              if (recordId == null) return response;
+              const t = context._reminderTimeParsed ?? null;
+              try {
+                await db.query(
+                  'UPDATE special_habit_templates SET reminder_time = $1 WHERE id = $2',
+                  [t, recordId]
+                );
+                if (response.record?.params) response.record.params.reminder_time = t;
+              } catch (err) {
+                console.error('AdminJS after/edit: reminder_time update failed:', err.message);
+              }
+              return response;
             },
           },
         },
