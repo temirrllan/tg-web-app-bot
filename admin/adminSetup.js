@@ -405,7 +405,7 @@ async function buildAdminRouter() {
                     } catch (err) {
                       console.error('[AdminJS] deferred UPDATE failed:', err.message);
                     }
-                  }, 500);
+                  }, 200);
                 }
 
                 console.log('[AdminJS before/new] schedule_days=%s reminderTime=%s day_period=%s',
