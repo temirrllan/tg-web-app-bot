@@ -371,8 +371,14 @@ async function buildAdminRouter() {
                 // Compute day_period and reminder_time
                 const parsed = applyReminderTimeToPeriod({ reminder_time: timeRaw });
                 if (parsed.day_period) request.payload.day_period = parsed.day_period;
-                // Set reminder_time as formatted string (or null)
-                request.payload.reminder_time = parsed.reminder_time || null;
+                // @adminjs/sql calls new Date() on TIME columns regardless of type:'string'.
+                // new Date('03:20:00') → Invalid Date. Wrapping in ISO datetime format
+                // makes new Date() produce a valid Date, and PostgreSQL extracts the TIME part.
+                if (parsed.reminder_time) {
+                  request.payload.reminder_time = `1970-01-01T${parsed.reminder_time}Z`;
+                } else {
+                  delete request.payload.reminder_time;
+                }
 
                 // Set schedule_days as PostgreSQL array literal string
                 const days = parseScheduleDays(schedRaw);
@@ -401,7 +407,11 @@ async function buildAdminRouter() {
 
                 const parsed = applyReminderTimeToPeriod({ reminder_time: timeRaw });
                 if (parsed.day_period) request.payload.day_period = parsed.day_period;
-                request.payload.reminder_time = parsed.reminder_time || null;
+                if (parsed.reminder_time) {
+                  request.payload.reminder_time = `1970-01-01T${parsed.reminder_time}Z`;
+                } else {
+                  delete request.payload.reminder_time;
+                }
 
                 const days = parseScheduleDays(schedRaw);
                 request.payload.schedule_days = `{${days.join(',')}}`;
