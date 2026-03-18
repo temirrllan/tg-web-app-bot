@@ -125,6 +125,14 @@ function applyReminderTimeToPeriod(payload) {
 // ─── Main builder ─────────────────────────────────────────────────────────────
 
 async function buildAdminRouter() {
+  // ── Closure-level cache for new action picker data ─────────────────────────
+  // AdminJS v7 does not reliably share context between the before and after
+  // hooks for the `new` action (context/request objects may be re-created).
+  // Using a closure variable is the only guarantee both hooks see the same data.
+  // Safe for single-admin use; the GET before clears it, POST before fills it,
+  // POST after reads-and-clears it.
+  let _newPickerData = null; // { timeRaw: string, schedRaw: string|null }
+
   const { default: AdminJS, ComponentLoader } = await import('adminjs');
   const { default: AdminJSExpress }           = await import('@adminjs/express');
   const { default: Adapter, Database, Resource } = await import('@adminjs/sql');
@@ -366,18 +374,15 @@ async function buildAdminRouter() {
             // request._X more reliable than context (which may not be shared in all versions).
             before: async (request, context) => {
               if (request.payload) {
-                const parsed = applyReminderTimeToPeriod({
-                  ...request.payload,
-                  reminder_time: request.payload.reminder_time_picker ?? '',
-                });
-                // Store in BOTH context and on request — whichever AdminJS actually forwards to after
+                // Capture picker values for the after hook (closure cache).
                 const timeRaw  = request.payload.reminder_time_picker ?? '';
                 const schedRaw = request.payload.schedule_days_picker  ?? null;
-                context._timePickerRaw  = timeRaw;
-                context._schedPickerRaw = schedRaw;
-                request._timePickerRaw  = timeRaw;
-                request._schedPickerRaw = schedRaw;
-                console.log('[AdminJS new.before] timeRaw:', timeRaw, '| schedRaw:', schedRaw);
+                _newPickerData = { timeRaw, schedRaw };
+
+                const parsed = applyReminderTimeToPeriod({
+                  ...request.payload,
+                  reminder_time: timeRaw,
+                });
                 const clean = { ...request.payload };
                 delete clean.reminder_time_picker;
                 delete clean.schedule_days_picker;
@@ -392,21 +397,23 @@ async function buildAdminRouter() {
               return request;
             },
             after: async (response, request, context) => {
+              // Read from closure cache (most reliable) — context/request may not survive
+              // AdminJS v7's internal action dispatch for the `new` action.
+              const cached   = _newPickerData;
+              _newPickerData = null;
+
               const recordId = response.record?.params?.id;
-              // Read from context first (most reliable), fall back to request
-              const timeRaw  = context._timePickerRaw  ?? request._timePickerRaw  ?? '';
-              const schedRaw = context._schedPickerRaw ?? request._schedPickerRaw ?? null;
-              console.log('[AdminJS new.after] recordId:', recordId, '| timeRaw:', timeRaw, '| schedRaw:', schedRaw);
               if (recordId == null) return response;
+
+              const timeRaw  = cached?.timeRaw  ?? '';
+              const schedRaw = cached?.schedRaw ?? null;
               const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
               const days = parseScheduleDays(schedRaw);
-              console.log('[AdminJS new.after] → t:', t, '| days:', days);
               try {
                 await db.query(
                   'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
                   [t, days, recordId]
                 );
-                console.log('[AdminJS new.after] UPDATE ok for id', recordId);
                 if (response.record?.params) {
                   response.record.params.reminder_time  = t;
                   response.record.params.schedule_days  = days;
@@ -420,6 +427,7 @@ async function buildAdminRouter() {
           edit: {
             before: async (request, context) => {
               if (request.payload) {
+                context._isSubmit = true;
                 const parsed = applyReminderTimeToPeriod({
                   ...request.payload,
                   reminder_time: request.payload.reminder_time_picker ?? '',
@@ -445,6 +453,10 @@ async function buildAdminRouter() {
               return request;
             },
             after: async (response, request, context) => {
+              // Only run UPDATE on actual form submission (POST), not on GET form load.
+              // Without this guard the after hook runs on GET too, overwriting the record
+              // with defaults (null reminder_time, all 7 days) every time the edit page opens.
+              if (!context._isSubmit) return response;
               const recordId = response.record?.params?.id;
               if (recordId == null) return response;
               const t    = context._reminderTimeParsed ?? null;
