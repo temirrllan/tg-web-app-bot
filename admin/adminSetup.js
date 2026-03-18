@@ -125,14 +125,6 @@ function applyReminderTimeToPeriod(payload) {
 // ─── Main builder ─────────────────────────────────────────────────────────────
 
 async function buildAdminRouter() {
-  // ── Closure-level cache for new action picker data ─────────────────────────
-  // AdminJS v7 does not reliably share context between the before and after
-  // hooks for the `new` action (context/request objects may be re-created).
-  // Using a closure variable is the only guarantee both hooks see the same data.
-  // Safe for single-admin use; the GET before clears it, POST before fills it,
-  // POST after reads-and-clears it.
-  let _newPickerData = null; // { timeRaw: string, schedRaw: string|null }
-
   const { default: AdminJS, ComponentLoader } = await import('adminjs');
   const { default: AdminJSExpress }           = await import('@adminjs/express');
   const { default: Adapter, Database, Resource } = await import('@adminjs/sql');
@@ -344,8 +336,6 @@ async function buildAdminRouter() {
         },
         actions: {
           // ── show: reconstruct schedule_days from indexed flat keys for display
-          // @adminjs/sql returns INTEGER[] as "schedule_days.0"=1, "schedule_days.1"=2, etc.
-          // The show view property "schedule_days" would be blank without this hook.
           show: {
             after: async (response) => {
               const p = response.record?.params;
@@ -356,7 +346,6 @@ async function buildAdminRouter() {
                 days.push(Number(p[`schedule_days.${i}`]));
                 i++;
               }
-              // Also handle already-unflattened object {"0":1,"1":2}
               if (days.length === 0 && p.schedule_days && typeof p.schedule_days === 'object' && !Array.isArray(p.schedule_days)) {
                 days.push(...Object.values(p.schedule_days).map(Number));
               }
@@ -367,120 +356,103 @@ async function buildAdminRouter() {
               return response;
             },
           },
+          // ── new & edit: custom handlers that bypass @adminjs/sql limitations
+          // with INTEGER[] and TIME columns. We capture the picker values,
+          // clean the payload, let the default handler do INSERT/UPDATE,
+          // then fix schedule_days + reminder_time via raw SQL.
           new: {
-            // ── before: parse picker fields → set day_period, remove problematic DB columns.
-            // Raw picker values are attached to the request object so the after hook can read
-            // them — AdminJS passes the exact request returned by before into after, making
-            // request._X more reliable than context (which may not be shared in all versions).
-            before: async (request, context) => {
-              console.log('[AdminJS new.before] method:', request.method, 'has payload:', !!request.payload);
-              if (request.payload) {
-                console.log('[AdminJS new.before] payload keys:', Object.keys(request.payload));
-                console.log('[AdminJS new.before] reminder_time_picker:', request.payload.reminder_time_picker);
-                console.log('[AdminJS new.before] schedule_days_picker:', request.payload.schedule_days_picker);
-                // Capture picker values for the after hook (closure cache).
-                const timeRaw  = request.payload.reminder_time_picker ?? '';
-                const schedRaw = request.payload.schedule_days_picker  ?? null;
-                _newPickerData = { timeRaw, schedRaw };
-                console.log('[AdminJS new.before] _newPickerData:', JSON.stringify(_newPickerData));
+            handler: async (request, response, context) => {
+              // Capture picker values BEFORE cleaning the payload
+              const timeRaw  = request.payload?.reminder_time_picker  ?? '';
+              const schedRaw = request.payload?.schedule_days_picker   ?? null;
 
+              if (request.payload) {
                 const parsed = applyReminderTimeToPeriod({
                   ...request.payload,
                   reminder_time: timeRaw,
                 });
-                const clean = { ...request.payload };
-                delete clean.reminder_time_picker;
-                delete clean.schedule_days_picker;
-                if (parsed.day_period) clean.day_period = parsed.day_period;
-                delete clean.schedule_days;
-                Object.keys(clean).forEach(key => {
-                  if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
+                delete request.payload.reminder_time_picker;
+                delete request.payload.schedule_days_picker;
+                if (parsed.day_period) request.payload.day_period = parsed.day_period;
+                delete request.payload.schedule_days;
+                Object.keys(request.payload).forEach(key => {
+                  if (/^schedule_days\.\d+$/.test(key)) delete request.payload[key];
                 });
-                delete clean.reminder_time;
-                request.payload = clean;
+                delete request.payload.reminder_time;
               }
-              return request;
-            },
-            after: async (response, request, context) => {
-              // Read from closure cache (most reliable) — context/request may not survive
-              // AdminJS v7's internal action dispatch for the `new` action.
-              const cached   = _newPickerData;
-              _newPickerData = null;
 
-              const recordId = response.record?.params?.id;
-              console.log('[AdminJS new.after] recordId:', recordId, 'cached:', JSON.stringify(cached));
-              if (recordId == null) return response;
+              // Call the default AdminJS new action handler
+              const defaultNew = AdminJS.ACTIONS.new;
+              const result = await defaultNew.handler(request, response, context);
 
-              const timeRaw  = cached?.timeRaw  ?? '';
-              const schedRaw = cached?.schedRaw ?? null;
-              const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
-              const days = parseScheduleDays(schedRaw);
-              console.log('[AdminJS new.after] will UPDATE: time=', t, 'days=', days);
-              try {
-                await db.query(
-                  'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
-                  [t, days, recordId]
-                );
-                if (response.record?.params) {
-                  response.record.params.reminder_time  = t;
-                  response.record.params.schedule_days  = days;
+              // Fix schedule_days and reminder_time via raw SQL
+              const recordId = result.record?.params?.id;
+              if (recordId != null) {
+                const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
+                const days = parseScheduleDays(schedRaw);
+                try {
+                  await db.query(
+                    'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
+                    [t, days, recordId]
+                  );
+                  if (result.record?.params) {
+                    result.record.params.reminder_time = t;
+                    result.record.params.schedule_days = days;
+                  }
+                  console.log('[AdminJS] new: updated id=%s time=%s days=%j', recordId, t, days);
+                } catch (err) {
+                  console.error('[AdminJS] new: UPDATE failed:', err.message);
                 }
-              } catch (err) {
-                console.error('[AdminJS new.after] UPDATE failed:', err.message);
               }
-              return response;
+              return result;
             },
           },
           edit: {
-            before: async (request, context) => {
+            handler: async (request, response, context) => {
+              // Capture picker values BEFORE cleaning the payload
+              const timeRaw  = request.payload?.reminder_time_picker  ?? '';
+              const schedRaw = request.payload?.schedule_days_picker   ?? null;
+              const hasPayload = !!request.payload;
+
               if (request.payload) {
-                context._isSubmit = true;
                 const parsed = applyReminderTimeToPeriod({
                   ...request.payload,
-                  reminder_time: request.payload.reminder_time_picker ?? '',
+                  reminder_time: timeRaw,
                 });
-                context._reminderTimeParsed = parsed.reminder_time;
-                context._scheduleDaysParsed = parseScheduleDays(request.payload.schedule_days_picker);
-                const clean = { ...request.payload };
-                delete clean.reminder_time_picker;
-                delete clean.schedule_days_picker;
-                if (parsed.day_period) clean.day_period = parsed.day_period;
-                // Remove schedule_days entirely: @adminjs/sql expands JS arrays into indexed
-                // composite-type syntax ("schedule_days"."0" = $N) that PostgreSQL rejects
-                // for integer[] columns. The after hook updates schedule_days via raw SQL.
-                delete clean.schedule_days;
-                Object.keys(clean).forEach(key => {
-                  if (/^schedule_days\.\d+$/.test(key)) delete clean[key];
+                delete request.payload.reminder_time_picker;
+                delete request.payload.schedule_days_picker;
+                if (parsed.day_period) request.payload.day_period = parsed.day_period;
+                delete request.payload.schedule_days;
+                Object.keys(request.payload).forEach(key => {
+                  if (/^schedule_days\.\d+$/.test(key)) delete request.payload[key];
                 });
-                // Remove reminder_time: the after hook updates it via raw SQL to avoid
-                // @adminjs/sql coercing TIME values through new Date() → Invalid Date.
-                delete clean.reminder_time;
-                request.payload = clean;
+                delete request.payload.reminder_time;
               }
-              return request;
-            },
-            after: async (response, request, context) => {
-              // Only run UPDATE on actual form submission (POST), not on GET form load.
-              // Without this guard the after hook runs on GET too, overwriting the record
-              // with defaults (null reminder_time, all 7 days) every time the edit page opens.
-              if (!context._isSubmit) return response;
-              const recordId = response.record?.params?.id;
-              if (recordId == null) return response;
-              const t    = context._reminderTimeParsed ?? null;
-              const days = context._scheduleDaysParsed ?? [1,2,3,4,5,6,7];
-              try {
-                await db.query(
-                  'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
-                  [t, days, recordId]
-                );
-                if (response.record?.params) {
-                  response.record.params.reminder_time = t;
-                  response.record.params.schedule_days = days;
+
+              // Call the default AdminJS edit action handler
+              const defaultEdit = AdminJS.ACTIONS.edit;
+              const result = await defaultEdit.handler(request, response, context);
+
+              // Only update DB on actual form submission (POST), not GET form load
+              const recordId = result.record?.params?.id;
+              if (hasPayload && recordId != null) {
+                const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
+                const days = parseScheduleDays(schedRaw);
+                try {
+                  await db.query(
+                    'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
+                    [t, days, recordId]
+                  );
+                  if (result.record?.params) {
+                    result.record.params.reminder_time = t;
+                    result.record.params.schedule_days = days;
+                  }
+                  console.log('[AdminJS] edit: updated id=%s time=%s days=%j', recordId, t, days);
+                } catch (err) {
+                  console.error('[AdminJS] edit: UPDATE failed:', err.message);
                 }
-              } catch (err) {
-                console.error('AdminJS after/edit: update failed:', err.message);
               }
-              return response;
+              return result;
             },
           },
         },
