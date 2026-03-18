@@ -351,6 +351,12 @@ app.use('/admin', (req, res, next) => {
     );
   }
 
+  // Debug: log ALL requests to /admin to a file
+  if (req.method === 'POST') {
+    require('fs').appendFileSync('/tmp/admin-post.log',
+      `${new Date().toISOString()} ${req.method} ${req.url}\n`);
+  }
+
   // ── Intercept POST responses for special_habit_templates ──────────────
   // AdminJS v7 + @adminjs/sql silently ignores action hooks/handlers for this
   // resource, so we patch res.json to fix schedule_days and reminder_time
