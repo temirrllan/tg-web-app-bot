@@ -366,55 +366,64 @@ app.use('/admin', (req, res, next) => {
     (/actions\/new/.test(req.url) || /records\/\d+\/edit/.test(req.url));
 
   if (isTemplateWrite) {
-    const origJson = res.json.bind(res);
-    res.json = function (data) {
-      const recordId = data?.record?.params?.id;
-      if (recordId != null) {
-        // formidable puts parsed fields into req.fields
-        const fields = req.fields || req.body || {};
-        const timeRaw  = fields.reminder_time_picker  || fields['reminder_time_picker'] || '';
-        const schedRaw = fields.schedule_days_picker   || fields['schedule_days_picker'] || null;
-        console.log('[admin-intercept] id=%s timeRaw=%s schedRaw=%s', recordId, timeRaw, schedRaw);
-
-        // Parse reminder_time
-        let reminderTime = null;
-        let dayPeriod = null;
-        const timeStr = String(timeRaw || '').trim();
-        const tm = timeStr.match(/^(\d{1,2}):(\d{2})/);
-        if (tm) {
-          const hh = parseInt(tm[1], 10);
-          const mm = parseInt(tm[2], 10);
-          reminderTime = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
-          if      (hh >= 6  && hh < 12) dayPeriod = 'morning';
-          else if (hh >= 12 && hh < 18) dayPeriod = 'afternoon';
-          else if (hh >= 18)            dayPeriod = 'evening';
-          else                          dayPeriod = 'night';
-        }
-
-        // Parse schedule_days
-        let scheduleDays = [1,2,3,4,5,6,7];
-        if (schedRaw != null && String(schedRaw).trim() !== '') {
-          const stripped = String(schedRaw).replace(/[{}\[\]]/g, '').trim();
-          if (stripped) {
-            const parsed = stripped.split(',').map(Number).filter(n => !isNaN(n) && n > 0);
-            if (parsed.length > 0) scheduleDays = parsed;
-          }
-        }
-
-        const db = require('./config/database');
-        const sql = dayPeriod
-          ? 'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2, day_period = $3 WHERE id = $4'
-          : 'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3';
-        const params = dayPeriod
-          ? [reminderTime, scheduleDays, dayPeriod, recordId]
-          : [reminderTime, scheduleDays, recordId];
-
-        db.query(sql, params)
-          .then(() => console.log('[admin-intercept] UPDATE OK id=%s time=%s days=%j', recordId, reminderTime, scheduleDays))
-          .catch(err => console.error('[admin-intercept] UPDATE FAILED:', err.message));
+    // Helper: extract record ID from response, update schedule_days + reminder_time via raw SQL
+    const fixRecord = (data) => {
+      let parsed = data;
+      if (typeof data === 'string') {
+        try { parsed = JSON.parse(data); } catch { return; }
       }
-      return origJson(data);
+      const recordId = parsed?.record?.params?.id;
+      if (recordId == null) return;
+
+      // formidable puts parsed fields into req.fields
+      const fields = req.fields || req.body || {};
+      const timeRaw  = fields.reminder_time_picker  || fields['reminder_time_picker'] || '';
+      const schedRaw = fields.schedule_days_picker   || fields['schedule_days_picker'] || null;
+      console.log('[admin-intercept] id=%s timeRaw=%s schedRaw=%s fields=%j', recordId, timeRaw, schedRaw, Object.keys(fields));
+
+      // Parse reminder_time
+      let reminderTime = null;
+      let dayPeriod = null;
+      const timeStr = String(timeRaw || '').trim();
+      const tm = timeStr.match(/^(\d{1,2}):(\d{2})/);
+      if (tm) {
+        const hh = parseInt(tm[1], 10);
+        const mm = parseInt(tm[2], 10);
+        reminderTime = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
+        if      (hh >= 6  && hh < 12) dayPeriod = 'morning';
+        else if (hh >= 12 && hh < 18) dayPeriod = 'afternoon';
+        else if (hh >= 18)            dayPeriod = 'evening';
+        else                          dayPeriod = 'night';
+      }
+
+      // Parse schedule_days
+      let scheduleDays = [1,2,3,4,5,6,7];
+      if (schedRaw != null && String(schedRaw).trim() !== '') {
+        const stripped = String(schedRaw).replace(/[{}\[\]]/g, '').trim();
+        if (stripped) {
+          const arr = stripped.split(',').map(Number).filter(n => !isNaN(n) && n > 0);
+          if (arr.length > 0) scheduleDays = arr;
+        }
+      }
+
+      const db = require('./config/database');
+      const sql = dayPeriod
+        ? 'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2, day_period = $3 WHERE id = $4'
+        : 'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3';
+      const params = dayPeriod
+        ? [reminderTime, scheduleDays, dayPeriod, recordId]
+        : [reminderTime, scheduleDays, recordId];
+
+      db.query(sql, params)
+        .then(() => console.log('[admin-intercept] UPDATE OK id=%s time=%s days=%j', recordId, reminderTime, scheduleDays))
+        .catch(err => console.error('[admin-intercept] UPDATE FAILED:', err.message));
     };
+
+    // Wrap both res.json AND res.send — AdminJS may use either
+    const origJson = res.json.bind(res);
+    const origSend = res.send.bind(res);
+    res.json = function (data) { fixRecord(data); return origJson(data); };
+    res.send = function (data) { fixRecord(data); return origSend(data); };
   }
 
   return _adminRouter(req, res, next);
