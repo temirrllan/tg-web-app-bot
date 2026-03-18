@@ -5,6 +5,8 @@
 
 'use strict';
 
+console.log('[adminSetup.js] LOADED AT', new Date().toISOString());
+
 const path   = require('path');
 const fs     = require('fs');
 const db     = require('../config/database');

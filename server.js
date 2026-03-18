@@ -344,11 +344,74 @@ if (!process.env.ADMIN_JS_TMP_DIR) {
 
 let _adminRouter = null;
 app.use('/admin', (req, res, next) => {
-  if (_adminRouter) return _adminRouter(req, res, next);
-  res.status(503).send(
-    '<h2 style="font-family:sans-serif;padding:40px;color:#555">' +
-    '⏳ Admin panel is initializing...<br><small>Refresh in a moment</small></h2>'
-  );
+  if (!_adminRouter) {
+    return res.status(503).send(
+      '<h2 style="font-family:sans-serif;padding:40px;color:#555">' +
+      '⏳ Admin panel is initializing...<br><small>Refresh in a moment</small></h2>'
+    );
+  }
+
+  // ── Intercept POST responses for special_habit_templates ──────────────
+  // AdminJS v7 + @adminjs/sql silently ignores action hooks/handlers for this
+  // resource, so we patch res.json to fix schedule_days and reminder_time
+  // via raw SQL after AdminJS creates/updates the record.
+  const isTemplateWrite = req.method === 'POST' &&
+    /special_habit_templates/.test(req.url) &&
+    (/actions\/new/.test(req.url) || /records\/\d+\/edit/.test(req.url));
+
+  if (isTemplateWrite) {
+    const origJson = res.json.bind(res);
+    res.json = function (data) {
+      const recordId = data?.record?.params?.id;
+      if (recordId != null) {
+        // formidable puts parsed fields into req.fields
+        const fields = req.fields || req.body || {};
+        const timeRaw  = fields.reminder_time_picker  || fields['reminder_time_picker'] || '';
+        const schedRaw = fields.schedule_days_picker   || fields['schedule_days_picker'] || null;
+        console.log('[admin-intercept] id=%s timeRaw=%s schedRaw=%s', recordId, timeRaw, schedRaw);
+
+        // Parse reminder_time
+        let reminderTime = null;
+        let dayPeriod = null;
+        const timeStr = String(timeRaw || '').trim();
+        const tm = timeStr.match(/^(\d{1,2}):(\d{2})/);
+        if (tm) {
+          const hh = parseInt(tm[1], 10);
+          const mm = parseInt(tm[2], 10);
+          reminderTime = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
+          if      (hh >= 6  && hh < 12) dayPeriod = 'morning';
+          else if (hh >= 12 && hh < 18) dayPeriod = 'afternoon';
+          else if (hh >= 18)            dayPeriod = 'evening';
+          else                          dayPeriod = 'night';
+        }
+
+        // Parse schedule_days
+        let scheduleDays = [1,2,3,4,5,6,7];
+        if (schedRaw != null && String(schedRaw).trim() !== '') {
+          const stripped = String(schedRaw).replace(/[{}\[\]]/g, '').trim();
+          if (stripped) {
+            const parsed = stripped.split(',').map(Number).filter(n => !isNaN(n) && n > 0);
+            if (parsed.length > 0) scheduleDays = parsed;
+          }
+        }
+
+        const db = require('./config/database');
+        const sql = dayPeriod
+          ? 'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2, day_period = $3 WHERE id = $4'
+          : 'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3';
+        const params = dayPeriod
+          ? [reminderTime, scheduleDays, dayPeriod, recordId]
+          : [reminderTime, scheduleDays, recordId];
+
+        db.query(sql, params)
+          .then(() => console.log('[admin-intercept] UPDATE OK id=%s time=%s days=%j', recordId, reminderTime, scheduleDays))
+          .catch(err => console.error('[admin-intercept] UPDATE FAILED:', err.message));
+      }
+      return origJson(data);
+    };
+  }
+
+  return _adminRouter(req, res, next);
 });
 
 const { buildAdminRouter } = require('./admin/adminSetup');
