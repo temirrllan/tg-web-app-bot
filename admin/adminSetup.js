@@ -373,11 +373,16 @@ async function buildAdminRouter() {
             // them — AdminJS passes the exact request returned by before into after, making
             // request._X more reliable than context (which may not be shared in all versions).
             before: async (request, context) => {
+              console.log('[AdminJS new.before] method:', request.method, 'has payload:', !!request.payload);
               if (request.payload) {
+                console.log('[AdminJS new.before] payload keys:', Object.keys(request.payload));
+                console.log('[AdminJS new.before] reminder_time_picker:', request.payload.reminder_time_picker);
+                console.log('[AdminJS new.before] schedule_days_picker:', request.payload.schedule_days_picker);
                 // Capture picker values for the after hook (closure cache).
                 const timeRaw  = request.payload.reminder_time_picker ?? '';
                 const schedRaw = request.payload.schedule_days_picker  ?? null;
                 _newPickerData = { timeRaw, schedRaw };
+                console.log('[AdminJS new.before] _newPickerData:', JSON.stringify(_newPickerData));
 
                 const parsed = applyReminderTimeToPeriod({
                   ...request.payload,
@@ -403,12 +408,14 @@ async function buildAdminRouter() {
               _newPickerData = null;
 
               const recordId = response.record?.params?.id;
+              console.log('[AdminJS new.after] recordId:', recordId, 'cached:', JSON.stringify(cached));
               if (recordId == null) return response;
 
               const timeRaw  = cached?.timeRaw  ?? '';
               const schedRaw = cached?.schedRaw ?? null;
               const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
               const days = parseScheduleDays(schedRaw);
+              console.log('[AdminJS new.after] will UPDATE: time=', t, 'days=', days);
               try {
                 await db.query(
                   'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
