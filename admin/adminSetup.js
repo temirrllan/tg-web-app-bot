@@ -358,103 +358,65 @@ async function buildAdminRouter() {
               return response;
             },
           },
-          // ── new & edit: custom handlers that bypass @adminjs/sql limitations
-          // with INTEGER[] and TIME columns. We capture the picker values,
-          // clean the payload, let the default handler do INSERT/UPDATE,
-          // then fix schedule_days + reminder_time via raw SQL.
+          // ── new & edit: before hooks that KEEP schedule_days and reminder_time
+          // in the payload as correctly formatted strings. Since both properties
+          // have type:'string', @adminjs/sql passes them through to knex as-is.
+          // PostgreSQL accepts '{1,3,5}' for INTEGER[] and '14:30:00' for TIME.
           new: {
-            handler: async (request, response, context) => {
-              // Capture picker values BEFORE cleaning the payload
-              const timeRaw  = request.payload?.reminder_time_picker  ?? '';
-              const schedRaw = request.payload?.schedule_days_picker   ?? null;
-
+            before: async (request) => {
               if (request.payload) {
-                const parsed = applyReminderTimeToPeriod({
-                  ...request.payload,
-                  reminder_time: timeRaw,
-                });
-                delete request.payload.reminder_time_picker;
-                delete request.payload.schedule_days_picker;
+                const timeRaw  = request.payload.reminder_time_picker ?? '';
+                const schedRaw = request.payload.schedule_days_picker ?? null;
+
+                // Compute day_period and reminder_time
+                const parsed = applyReminderTimeToPeriod({ reminder_time: timeRaw });
                 if (parsed.day_period) request.payload.day_period = parsed.day_period;
-                delete request.payload.schedule_days;
+                // Set reminder_time as formatted string (or null)
+                request.payload.reminder_time = parsed.reminder_time || null;
+
+                // Set schedule_days as PostgreSQL array literal string
+                const days = parseScheduleDays(schedRaw);
+                request.payload.schedule_days = `{${days.join(',')}}`;
+
+                // Remove all indexed keys (schedule_days.0, schedule_days.1, ...)
                 Object.keys(request.payload).forEach(key => {
                   if (/^schedule_days\.\d+$/.test(key)) delete request.payload[key];
                 });
-                delete request.payload.reminder_time;
-              }
 
-              // Call the default AdminJS new action handler
-              const defaultNew = AdminJS.ACTIONS.new;
-              const result = await defaultNew.handler(request, response, context);
+                // Remove virtual picker fields
+                delete request.payload.reminder_time_picker;
+                delete request.payload.schedule_days_picker;
 
-              // Fix schedule_days and reminder_time via raw SQL
-              const recordId = result.record?.params?.id;
-              if (recordId != null) {
-                const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
-                const days = parseScheduleDays(schedRaw);
-                try {
-                  await db.query(
-                    'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
-                    [t, days, recordId]
-                  );
-                  if (result.record?.params) {
-                    result.record.params.reminder_time = t;
-                    result.record.params.schedule_days = days;
-                  }
-                  console.log('[AdminJS] new: updated id=%s time=%s days=%j', recordId, t, days);
-                } catch (err) {
-                  console.error('[AdminJS] new: UPDATE failed:', err.message);
-                }
+                console.log('[AdminJS before] schedule_days=%s reminder_time=%s day_period=%s',
+                  request.payload.schedule_days, request.payload.reminder_time, request.payload.day_period);
               }
-              return result;
+              return request;
             },
           },
           edit: {
-            handler: async (request, response, context) => {
-              // Capture picker values BEFORE cleaning the payload
-              const timeRaw  = request.payload?.reminder_time_picker  ?? '';
-              const schedRaw = request.payload?.schedule_days_picker   ?? null;
-              const hasPayload = !!request.payload;
-
+            before: async (request) => {
               if (request.payload) {
-                const parsed = applyReminderTimeToPeriod({
-                  ...request.payload,
-                  reminder_time: timeRaw,
-                });
-                delete request.payload.reminder_time_picker;
-                delete request.payload.schedule_days_picker;
+                const timeRaw  = request.payload.reminder_time_picker ?? '';
+                const schedRaw = request.payload.schedule_days_picker ?? null;
+
+                const parsed = applyReminderTimeToPeriod({ reminder_time: timeRaw });
                 if (parsed.day_period) request.payload.day_period = parsed.day_period;
-                delete request.payload.schedule_days;
+                request.payload.reminder_time = parsed.reminder_time || null;
+
+                const days = parseScheduleDays(schedRaw);
+                request.payload.schedule_days = `{${days.join(',')}}`;
+
                 Object.keys(request.payload).forEach(key => {
                   if (/^schedule_days\.\d+$/.test(key)) delete request.payload[key];
                 });
-                delete request.payload.reminder_time;
-              }
 
-              // Call the default AdminJS edit action handler
-              const defaultEdit = AdminJS.ACTIONS.edit;
-              const result = await defaultEdit.handler(request, response, context);
+                delete request.payload.reminder_time_picker;
+                delete request.payload.schedule_days_picker;
 
-              // Only update DB on actual form submission (POST), not GET form load
-              const recordId = result.record?.params?.id;
-              if (hasPayload && recordId != null) {
-                const t    = applyReminderTimeToPeriod({ reminder_time: timeRaw }).reminder_time;
-                const days = parseScheduleDays(schedRaw);
-                try {
-                  await db.query(
-                    'UPDATE special_habit_templates SET reminder_time = $1, schedule_days = $2 WHERE id = $3',
-                    [t, days, recordId]
-                  );
-                  if (result.record?.params) {
-                    result.record.params.reminder_time = t;
-                    result.record.params.schedule_days = days;
-                  }
-                  console.log('[AdminJS] edit: updated id=%s time=%s days=%j', recordId, t, days);
-                } catch (err) {
-                  console.error('[AdminJS] edit: UPDATE failed:', err.message);
-                }
+                console.log('[AdminJS before/edit] schedule_days=%s reminder_time=%s',
+                  request.payload.schedule_days, request.payload.reminder_time);
               }
-              return result;
+              return request;
             },
           },
         },
