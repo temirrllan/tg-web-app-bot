@@ -359,32 +359,29 @@ async function buildAdminRouter() {
             },
           },
           // ── new & edit: before hooks that KEEP schedule_days and reminder_time
-          // in the payload as correctly formatted strings. Since both properties
-          // have type:'string', @adminjs/sql passes them through to knex as-is.
-          // PostgreSQL accepts '{1,3,5}' for INTEGER[] and '14:30:00' for TIME.
+          // ── new: before hook sets schedule_days as PG array literal (works),
+          // removes reminder_time (so @adminjs/sql can't corrupt it with new Date()),
+          // then schedules a deferred UPDATE to set reminder_time via raw SQL.
           new: {
             before: async (request) => {
               if (request.payload) {
                 const timeRaw  = request.payload.reminder_time_picker ?? '';
                 const schedRaw = request.payload.schedule_days_picker ?? null;
 
-                // Compute day_period and reminder_time
+                // Compute day_period
                 const parsed = applyReminderTimeToPeriod({ reminder_time: timeRaw });
                 if (parsed.day_period) request.payload.day_period = parsed.day_period;
-                // @adminjs/sql calls new Date() on TIME columns regardless of type:'string'.
-                // new Date('03:20:00') → Invalid Date. Wrapping in ISO datetime format
-                // makes new Date() produce a valid Date, and PostgreSQL extracts the TIME part.
-                if (parsed.reminder_time) {
-                  request.payload.reminder_time = `1970-01-01T${parsed.reminder_time}Z`;
-                } else {
-                  delete request.payload.reminder_time;
-                }
+                const reminderTime = parsed.reminder_time; // e.g. '03:20:00' or null
 
-                // Set schedule_days as PostgreSQL array literal string
+                // Remove reminder_time — @adminjs/sql wraps it in new Date() which
+                // produces Invalid Date for TIME strings. INSERT will use NULL default.
+                delete request.payload.reminder_time;
+
+                // Set schedule_days as PostgreSQL array literal (this works!)
                 const days = parseScheduleDays(schedRaw);
                 request.payload.schedule_days = `{${days.join(',')}}`;
 
-                // Remove all indexed keys (schedule_days.0, schedule_days.1, ...)
+                // Remove indexed keys (schedule_days.0, schedule_days.1, ...)
                 Object.keys(request.payload).forEach(key => {
                   if (/^schedule_days\.\d+$/.test(key)) delete request.payload[key];
                 });
@@ -393,8 +390,26 @@ async function buildAdminRouter() {
                 delete request.payload.reminder_time_picker;
                 delete request.payload.schedule_days_picker;
 
-                console.log('[AdminJS before] schedule_days=%s reminder_time=%s day_period=%s',
-                  request.payload.schedule_days, request.payload.reminder_time, request.payload.day_period);
+                // Deferred UPDATE: after INSERT completes, fix reminder_time via raw SQL
+                if (reminderTime) {
+                  setTimeout(async () => {
+                    try {
+                      const res = await db.query(
+                        `UPDATE special_habit_templates
+                         SET reminder_time = $1
+                         WHERE id = (SELECT id FROM special_habit_templates ORDER BY id DESC LIMIT 1)
+                         AND reminder_time IS NULL`,
+                        [reminderTime]
+                      );
+                      console.log('[AdminJS] deferred UPDATE reminder_time=%s rows=%d', reminderTime, res.rowCount);
+                    } catch (err) {
+                      console.error('[AdminJS] deferred UPDATE failed:', err.message);
+                    }
+                  }, 500);
+                }
+
+                console.log('[AdminJS before/new] schedule_days=%s reminderTime=%s day_period=%s',
+                  request.payload.schedule_days, reminderTime, request.payload.day_period);
               }
               return request;
             },
@@ -407,11 +422,10 @@ async function buildAdminRouter() {
 
                 const parsed = applyReminderTimeToPeriod({ reminder_time: timeRaw });
                 if (parsed.day_period) request.payload.day_period = parsed.day_period;
-                if (parsed.reminder_time) {
-                  request.payload.reminder_time = `1970-01-01T${parsed.reminder_time}Z`;
-                } else {
-                  delete request.payload.reminder_time;
-                }
+                const reminderTime = parsed.reminder_time;
+
+                // Remove reminder_time — @adminjs/sql corrupts it with new Date()
+                delete request.payload.reminder_time;
 
                 const days = parseScheduleDays(schedRaw);
                 request.payload.schedule_days = `{${days.join(',')}}`;
@@ -423,8 +437,25 @@ async function buildAdminRouter() {
                 delete request.payload.reminder_time_picker;
                 delete request.payload.schedule_days_picker;
 
-                console.log('[AdminJS before/edit] schedule_days=%s reminder_time=%s',
-                  request.payload.schedule_days, request.payload.reminder_time);
+                // For edit, we know the record ID from the URL
+                const idMatch = request.params?.recordId;
+                if (idMatch) {
+                  // Deferred UPDATE to fix reminder_time
+                  setTimeout(async () => {
+                    try {
+                      await db.query(
+                        'UPDATE special_habit_templates SET reminder_time = $1 WHERE id = $2',
+                        [reminderTime, idMatch]
+                      );
+                      console.log('[AdminJS] edit deferred UPDATE id=%s time=%s', idMatch, reminderTime);
+                    } catch (err) {
+                      console.error('[AdminJS] edit deferred UPDATE failed:', err.message);
+                    }
+                  }, 500);
+                }
+
+                console.log('[AdminJS before/edit] schedule_days=%s reminderTime=%s id=%s',
+                  request.payload.schedule_days, reminderTime, idMatch);
               }
               return request;
             },
