@@ -276,7 +276,12 @@ async function buildAdminRouter() {
             description: 'URL фото или загрузите файл с устройства',
             components: { edit: PhotoUrlInputComponent },
           },
-          bg_color:     { description: 'CSS-цвет фона карточки, например: #FF5733' },
+          bg_color: {
+            description: 'Градиент фона карточки',
+            availableValues: require('../config/gradientPresets').map(g => ({
+              value: g.key, label: g.label,
+            })),
+          },
           price_stars:  { description: 'Цена в Telegram Stars (0 = бесплатно)' },
         },
       },
