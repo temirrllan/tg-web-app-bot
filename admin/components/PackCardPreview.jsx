@@ -25,12 +25,8 @@ const PackCardPreview = ({ record }) => {
   const shortDescription = p.short_description || 'Short description'
   const photoUrl         = p.photo_url || ''
   const bgColorKey       = p.bg_color || ''
-  const priceStars       = Number(p.price_stars) || 0
-  const originalPrice    = Number(p.original_price_stars) || 0
 
   const bgGradient = GRADIENT_PRESETS[bgColorKey] || FALLBACK_BG
-  const isFree     = priceStars === 0
-  const hasDiscount = originalPrice > 0 && originalPrice > priceStars
 
   return (
     <div style={{ marginBottom: 24 }}>
@@ -53,87 +49,73 @@ const PackCardPreview = ({ record }) => {
         alignItems: 'flex-start',
         flexWrap: 'wrap',
       }}>
-        {/* ── Card Preview (replicates frontend PackCard) ── */}
+        {/* ── Hero Preview (replicates SpecialHabitPackDetail hero) ── */}
         <div style={{
-          width: 180,
-          background: '#fff',
-          borderRadius: 20,
+          width: 320,
+          borderRadius: 16,
           overflow: 'hidden',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.07)',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.10)',
           flexShrink: 0,
         }}>
-          {/* Image area with gradient */}
           <div style={{
             width: '100%',
-            aspectRatio: '1 / 1',
+            padding: '32px 20px 24px',
             background: bgGradient,
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-            position: 'relative',
+            textAlign: 'center',
+            boxSizing: 'border-box',
           }}>
-            {photoUrl ? (
-              <img
-                src={photoUrl}
-                alt={name}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  objectPosition: 'top center',
-                  display: 'block',
-                }}
-              />
-            ) : (
-              <span style={{ fontSize: 52, lineHeight: 1 }}>✨</span>
-            )}
-          </div>
-
-          {/* Info area */}
-          <div style={{
-            padding: '10px 13px 13px',
-            background: '#fff',
-          }}>
-            <p style={{
-              fontSize: 14,
-              fontWeight: 700,
-              color: '#1c1c1e',
-              margin: '0 0 2px',
-              whiteSpace: 'nowrap',
+            {/* Avatar circle */}
+            <div style={{
+              width: 100,
+              height: 100,
+              borderRadius: '50%',
               overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              lineHeight: 1.3,
+              marginBottom: 14,
+              background: 'rgba(255,255,255,0.4)',
+              boxShadow: '0 0 0 4px rgba(255,255,255,0.55)',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              {photoUrl ? (
+                <img
+                  src={photoUrl}
+                  alt={name}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    objectPosition: 'top center',
+                    display: 'block',
+                  }}
+                />
+              ) : (
+                <span style={{ fontSize: 44, lineHeight: 1 }}>✨</span>
+              )}
+            </div>
+
+            {/* Name */}
+            <div style={{
+              fontSize: 20,
+              fontWeight: 800,
+              color: '#1c1c1e',
+              margin: '0 0 4px',
+              letterSpacing: -0.3,
             }}>
               {name}
-            </p>
-            <p style={{
-              fontSize: 12,
-              color: '#8e8e93',
-              margin: '0 0 8px',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              lineHeight: 1.3,
+            </div>
+
+            {/* Short description */}
+            <div style={{
+              fontSize: 14,
+              color: '#555',
+              margin: 0,
             }}>
               {shortDescription}
-            </p>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              {isFree ? (
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#1c1c1e' }}>FREE</span>
-              ) : (
-                <>
-                  {hasDiscount && (
-                    <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>
-                      ⭐ {originalPrice}
-                    </span>
-                  )}
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#1c1c1e' }}>
-                    ⭐ {priceStars}
-                  </span>
-                </>
-              )}
             </div>
           </div>
         </div>
@@ -146,8 +128,8 @@ const PackCardPreview = ({ record }) => {
           lineHeight: 1.5,
           paddingTop: 4,
         }}>
-          Так карточка будет выглядеть в магазине Special Habits.
-          Заполните поля выше — превью обновится автоматически.
+          Так будет выглядеть шапка страницы пакета.
+          Измените фото, градиент или текст — превью обновится.
         </div>
       </div>
     </div>

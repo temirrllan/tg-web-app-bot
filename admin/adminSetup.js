@@ -156,6 +156,10 @@ async function buildAdminRouter() {
     'PackCardPreview',
     path.join(__dirname, 'components/PackCardPreview')
   );
+  const GradientSelectComponent = componentLoader.add(
+    'GradientSelect',
+    path.join(__dirname, 'components/GradientSelect')
+  );
 
   // ── Connect DB ──────────────────────────────────────────────────────────
   const sqlDb = await new Adapter('postgresql', getConnectionOptions()).init();
@@ -282,9 +286,7 @@ async function buildAdminRouter() {
           },
           bg_color: {
             description: 'Градиент фона карточки',
-            availableValues: require('../config/gradientPresets').map(g => ({
-              value: g.key, label: g.label,
-            })),
+            components: { edit: GradientSelectComponent },
           },
           price_stars:  { description: 'Цена в Telegram Stars (0 = бесплатно)' },
           pack_preview: {
