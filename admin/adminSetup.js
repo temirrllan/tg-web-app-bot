@@ -152,6 +152,10 @@ async function buildAdminRouter() {
     'PhotoUrlInput',
     path.join(__dirname, 'components/PhotoUrlInput')
   );
+  const PackCardPreviewComponent = componentLoader.add(
+    'PackCardPreview',
+    path.join(__dirname, 'components/PackCardPreview')
+  );
 
   // ── Connect DB ──────────────────────────────────────────────────────────
   const sqlDb = await new Adapter('postgresql', getConnectionOptions()).init();
@@ -268,7 +272,7 @@ async function buildAdminRouter() {
         sort: { sortBy: 'sort_order', direction: 'asc' },
         listProperties:   ['id', 'name', 'price_stars', 'original_price_stars', 'is_active', 'sort_order'],
         showProperties:   ['id', 'name', 'short_description', 'biography', 'photo_url', 'learn_more_url', 'price_stars', 'original_price_stars', 'bg_color', 'sort_order', 'is_active', 'created_at'],
-        editProperties:   ['name', 'short_description', 'biography', 'photo_url', 'learn_more_url', 'price_stars', 'original_price_stars', 'bg_color', 'sort_order', 'is_active'],
+        editProperties:   ['name', 'short_description', 'photo_url', 'bg_color', 'price_stars', 'original_price_stars', 'pack_preview', 'biography', 'learn_more_url', 'sort_order', 'is_active'],
         filterProperties: ['name', 'is_active', 'price_stars'],
         properties: {
           biography:    { type: 'textarea' },
@@ -283,6 +287,11 @@ async function buildAdminRouter() {
             })),
           },
           price_stars:  { description: 'Цена в Telegram Stars (0 = бесплатно)' },
+          pack_preview: {
+            type: 'string',
+            label: ' ',
+            components: { edit: PackCardPreviewComponent },
+          },
         },
       },
     },
