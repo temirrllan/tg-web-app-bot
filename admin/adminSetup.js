@@ -788,9 +788,9 @@ async function buildAdminRouter() {
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_templates`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_purchases WHERE payment_status = 'completed'`),
         safe(`SELECT COALESCE(SUM(price_paid_stars),0)::int AS val FROM special_habit_purchases WHERE payment_status = 'completed'`),
-        // Payments
-        safe(`SELECT COUNT(*)::int AS val FROM payment_invoices WHERE status = 'paid'`),
-        safe(`SELECT COALESCE(SUM(amount),0)::int AS val FROM payment_invoices WHERE status = 'paid'`),
+        // Payments (subscription payments are in telegram_payments, not payment_invoices)
+        safe(`SELECT COUNT(*)::int AS val FROM telegram_payments WHERE status = 'completed'`),
+        safe(`SELECT COALESCE(SUM(total_amount),0)::int AS val FROM telegram_payments WHERE status = 'completed'`),
         // Promo
         safe(`SELECT COUNT(*)::int AS val FROM promo_codes WHERE is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM promo_code_usage`),
@@ -847,9 +847,9 @@ async function buildAdminRouter() {
             GROUP BY DATE(purchased_at)
           ) p ON p.d = day::date
           LEFT JOIN (
-            SELECT DATE(paid_at) AS d, COALESCE(SUM(amount),0)::int AS stars
-            FROM payment_invoices WHERE status = 'paid' AND paid_at IS NOT NULL
-            GROUP BY DATE(paid_at)
+            SELECT DATE(created_at) AS d, COALESCE(SUM(total_amount),0)::int AS stars
+            FROM telegram_payments WHERE status = 'completed'
+            GROUP BY DATE(created_at)
           ) i ON i.d = day::date
           ORDER BY day ASC
         `),
@@ -948,7 +948,10 @@ async function buildAdminRouter() {
   router.post('/api/broadcast', async (req, res) => {
     if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { message } = req.body || {};
+    // AdminJS uses express-formidable which parses multipart/form-data and
+    // x-www-form-urlencoded into req.fields. JSON Content-Type is NOT parsed.
+    // Dashboard sends as x-www-form-urlencoded so data lands in req.fields.
+    const { message } = req.fields || {};
     if (!message || !message.trim()) {
       return res.status(400).json({ error: 'Сообщение не может быть пустым' });
     }
