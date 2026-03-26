@@ -79,8 +79,8 @@ const authController = {
         // Создаем нового пользователя
         const insertUser = await pool.query(
           `INSERT INTO users (
-             telegram_id, username, first_name, last_name, language, is_premium, photo_url
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+             telegram_id, username, first_name, last_name, language, is_premium, photo_url, last_login_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
            RETURNING *`,
           [
             user.id.toString(),

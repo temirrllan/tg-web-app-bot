@@ -763,10 +763,10 @@ async function buildAdminRouter() {
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'ru'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'en'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'kk'`),
-        // DAU / WAU / MAU (по last_login_at — реальные входы в приложение)
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at >= CURRENT_DATE`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at > CURRENT_DATE - 7`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at > CURRENT_DATE - 30`),
+        // DAU / WAU / MAU (по last_login_at, fallback на created_at для новых юзеров)
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) >= CURRENT_DATE`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > CURRENT_DATE - 7`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > CURRENT_DATE - 30`),
         // Habits
         safe(`SELECT COUNT(*)::int AS val FROM habits`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_active = true`),
