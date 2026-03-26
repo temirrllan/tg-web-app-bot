@@ -1209,16 +1209,25 @@ bot.on("callback_query", async (callbackQuery) => {
   // ========================================
 
   if (data.startsWith("mark_done_")) {
-    // Формат: mark_done_{habitId} или mark_done_{habitId}_{date}
+    // Формат: mark_done_{habitId} или mark_done_{habitId}_{YYYY-MM-DD}
     const parts = data.replace("mark_done_", "").split("_");
     const habitId = parts[0];
-    const reminderDate = parts[1] || null; // дата из напоминания (YYYY-MM-DD)
+    const reminderDate = parts[1] || null; // YYYY-MM-DD (дефисы не разделяются split'ом по "_")
 
-    // Проверяем: можно отмечать только за сегодня или вчера
     const today = new Date().toISOString().split("T")[0];
     const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
-    if (reminderDate && reminderDate !== today && reminderDate !== yesterday) {
+    // Определяем дату: из callback_data или из message.date (для старых кнопок)
+    let markDate = today;
+    if (reminderDate) {
+      markDate = reminderDate;
+    } else if (callbackQuery.message && callbackQuery.message.date) {
+      const msgDate = new Date(callbackQuery.message.date * 1000).toISOString().split("T")[0];
+      markDate = msgDate;
+    }
+
+    // Проверяем: можно отмечать только за сегодня или вчера
+    if (markDate !== today && markDate !== yesterday) {
       await bot.editMessageText(
         "⏰ Это напоминание устарело. Отметить привычку можно только за сегодня или вчера через приложение.",
         {
@@ -1236,9 +1245,6 @@ bot.on("callback_query", async (callbackQuery) => {
       });
       return;
     }
-
-    // Используем дату из напоминания если есть, иначе сегодня
-    const markDate = reminderDate || today;
 
     try {
       await db.query(
@@ -1276,15 +1282,24 @@ bot.on("callback_query", async (callbackQuery) => {
       });
     }
   } else if (data.startsWith("mark_skip_")) {
-    // Формат: mark_skip_{habitId} или mark_skip_{habitId}_{date}
+    // Формат: mark_skip_{habitId} или mark_skip_{habitId}_{YYYY-MM-DD}
     const parts = data.replace("mark_skip_", "").split("_");
     const habitId = parts[0];
-    const reminderDate = parts[1] || null;
+    const reminderDate = parts[1] || null; // YYYY-MM-DD
 
     const today = new Date().toISOString().split("T")[0];
     const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
-    if (reminderDate && reminderDate !== today && reminderDate !== yesterday) {
+    // Определяем дату: из callback_data или из message.date (для старых кнопок)
+    let markDate = today;
+    if (reminderDate) {
+      markDate = reminderDate;
+    } else if (callbackQuery.message && callbackQuery.message.date) {
+      const msgDate = new Date(callbackQuery.message.date * 1000).toISOString().split("T")[0];
+      markDate = msgDate;
+    }
+
+    if (markDate !== today && markDate !== yesterday) {
       await bot.editMessageText(
         "⏰ Это напоминание устарело. Управлять привычками можно через приложение.",
         {
@@ -1302,8 +1317,6 @@ bot.on("callback_query", async (callbackQuery) => {
       });
       return;
     }
-
-    const markDate = reminderDate || today;
 
     try {
       await db.query(
