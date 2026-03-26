@@ -1,6 +1,7 @@
 // controllers/specialHabitsController.js
 const db = require('../config/database');
 const HabitMark = require('../models/HabitMark');
+const { getToday } = require('../utils/dateHelper');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -380,7 +381,7 @@ const specialHabitsController = {
       const userId    = req.user.id;
       const habitId   = parseInt(req.params.habitId);
       const { status, date } = req.body;
-      const markDate  = date || new Date().toISOString().split('T')[0];
+      const markDate  = date || getToday();
 
       const client = await db.getClient();
       try {

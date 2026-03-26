@@ -8,6 +8,7 @@ const { checkSubscriptionLimit } = require('../middleware/subscription');
 const { createHabitLimiter } = require('../middleware/rateLimit');
 const db = require('../config/database');
 const SubscriptionService = require('../services/subscriptionService');
+const { getToday, getAlmatyDate } = require('../utils/dateHelper');
 
 // Категории
 router.get('/categories', categoryController.getAll);
@@ -1048,7 +1049,7 @@ router.post('/habits/:habitId/punch/:userId', authMiddleware, async (req, res) =
     
     console.log(`🥊 Punch request from user ${fromUserId} to user ${targetUserId} for habit ${habitId}`);
     
-    const today = new Date().toISOString().split('T')[0];
+    const today = getToday();
     
     const targetHabitResult = await db.query(
       `SELECT h.id, h.title, h.parent_habit_id
@@ -1330,15 +1331,14 @@ router.get('/habits/:id/members', authMiddleware, async (req, res) => {
     const targetHabitId = parentHabitId || id;
     
     // 🆕 Получаем участников с их статусом на сегодня
-    const today = new Date().toISOString().split('T')[0];
+    const today = getToday();
     
     // Monday of current week
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - weekStart.getDay() + (weekStart.getDay() === 0 ? -6 : 1));
-    const weekStartStr  = weekStart.toISOString().split('T')[0];
+    const weekStartStr  = getAlmatyDate(weekStart);
     // First day of current month
-    const monthStartStr = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString().split('T')[0];
+    const monthStartStr = getAlmatyDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
     const members = await db.query(
       `SELECT DISTINCT ON (u.id)

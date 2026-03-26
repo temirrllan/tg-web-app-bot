@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const SubscriptionService = require('./subscriptionService');
 const db = require('../config/database');
+const { TIMEZONE } = require('../utils/dateHelper');
 
 class SubscriptionCronService {
   constructor() {
@@ -20,7 +21,7 @@ class SubscriptionCronService {
       }
     }, {
       scheduled: true,
-      timezone: process.env.TZ || "UTC"
+      timezone: TIMEZONE
     });
     
     console.log('⏰ Subscription cron service started');

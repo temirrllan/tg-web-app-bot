@@ -1,8 +1,8 @@
 const Phrase = require('../models/Phrase');
 const Habit = require('../models/Habit');
 const HabitMark = require('../models/HabitMark');
-// const Phrase = require('../models/Phrase');
 const db = require('../config/database');
+const { getToday } = require('../utils/dateHelper');
 
 
 /**
@@ -217,7 +217,7 @@ async getTodayHabits(req, res) {
     const userId = req.user.id;
     const today = new Date();
     const dayOfWeek = today.getDay() || 7; // 0 (Sunday) becomes 7
-    const todayDate = today.toISOString().split('T')[0];
+    const todayDate = getToday();
     
     console.log('Getting today habits for user:', userId);
     console.log('Today is:', {

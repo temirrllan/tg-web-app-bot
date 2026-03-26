@@ -13,6 +13,7 @@ const keepAliveService = require("./services/keepAlive");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
 const HabitMark = require("./models/HabitMark");
+const { getToday, getYesterday, getAlmatyDate } = require("./utils/dateHelper");
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -1214,16 +1215,15 @@ bot.on("callback_query", async (callbackQuery) => {
     const habitId = parts[0];
     const reminderDate = parts[1] || null; // YYYY-MM-DD (дефисы не разделяются split'ом по "_")
 
-    const today = new Date().toISOString().split("T")[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+    const today = getToday();
+    const yesterday = getYesterday();
 
     // Определяем дату: из callback_data или из message.date (для старых кнопок)
     let markDate = today;
     if (reminderDate) {
       markDate = reminderDate;
     } else if (callbackQuery.message && callbackQuery.message.date) {
-      const msgDate = new Date(callbackQuery.message.date * 1000).toISOString().split("T")[0];
-      markDate = msgDate;
+      markDate = getAlmatyDate(new Date(callbackQuery.message.date * 1000));
     }
 
     // Проверяем: можно отмечать только за сегодня или вчера
@@ -1287,16 +1287,15 @@ bot.on("callback_query", async (callbackQuery) => {
     const habitId = parts[0];
     const reminderDate = parts[1] || null; // YYYY-MM-DD
 
-    const today = new Date().toISOString().split("T")[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+    const today = getToday();
+    const yesterday = getYesterday();
 
     // Определяем дату: из callback_data или из message.date (для старых кнопок)
     let markDate = today;
     if (reminderDate) {
       markDate = reminderDate;
     } else if (callbackQuery.message && callbackQuery.message.date) {
-      const msgDate = new Date(callbackQuery.message.date * 1000).toISOString().split("T")[0];
-      markDate = msgDate;
+      markDate = getAlmatyDate(new Date(callbackQuery.message.date * 1000));
     }
 
     if (markDate !== today && markDate !== yesterday) {
@@ -1355,7 +1354,7 @@ bot.on("callback_query", async (callbackQuery) => {
   } else if (data.startsWith("quick_done_")) {
     const parts = data.split("_");
     const habitId = parts[2];
-    const date = parts[3] || new Date().toISOString().split("T")[0];
+    const date = parts[3] || getToday();
 
     try {
       const userResult = await db.query(

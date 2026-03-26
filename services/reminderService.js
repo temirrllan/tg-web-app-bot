@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const db = require('../config/database');
+const { getToday, getAlmatyDate, TIMEZONE } = require('../utils/dateHelper');
 
 class ReminderService {
   constructor(bot) {
@@ -22,7 +23,7 @@ class ReminderService {
       await this.checkAndSendReminders();
     }, {
       scheduled: true,
-      timezone: process.env.TZ || "UTC" // Используем часовой пояс из переменных окружения
+      timezone: TIMEZONE
     });
     
     this.tasks.set('main', task);
@@ -39,7 +40,7 @@ class ReminderService {
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
       const currentDay = now.getDay() || 7; // 0 (Sunday) = 7
-      const today = now.toISOString().split('T')[0];
+      const today = getToday();
       
       console.log(`🕐 Checking reminders: ${currentTime}, Day: ${currentDay} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]})`);
       
@@ -216,7 +217,7 @@ Don't forget to mark your progress:`;
       }
       
       // Кнопки для отметки (дата включена чтобы старые напоминания нельзя было нажать)
-      const todayDate = new Date().toISOString().split('T')[0];
+      const todayDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Almaty' });
       const keyboard = {
         inline_keyboard: [
           [
@@ -265,7 +266,7 @@ Don't forget to mark your progress:`;
     try {
       console.log(`🧪 Testing reminders for user ${userId}`);
       
-      const today = new Date().toISOString().split('T')[0];
+      const today = getToday();
       
       // Получаем все активные привычки пользователя с напоминаниями и их статусами
       const result = await db.query(
@@ -386,7 +387,7 @@ This is a test message. Real reminders will come at ${timeStr}.`;
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
       const currentDay = now.getDay() || 7;
-      const today = now.toISOString().split('T')[0];
+      const today = getToday();
       
       const result = await db.query(
         `SELECT 
