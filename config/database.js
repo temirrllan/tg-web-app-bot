@@ -51,6 +51,12 @@ function buildConfig() {
 const config = buildConfig();
 const pool = new Pool(config);
 
+// 🆕 Устанавливаем timezone Asia/Almaty на каждом новом подключении
+// Без этого CURRENT_DATE и NOW() возвращают UTC, а habit_marks.date — в локальном времени
+pool.on('connect', (client) => {
+  client.query("SET timezone = 'Asia/Almaty'");
+});
+
 // Проверяем подключение при запуске
 (async () => {
   try {
