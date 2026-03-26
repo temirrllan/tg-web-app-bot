@@ -1209,15 +1209,44 @@ bot.on("callback_query", async (callbackQuery) => {
   // ========================================
 
   if (data.startsWith("mark_done_")) {
-    const habitId = data.replace("mark_done_", "");
+    // Формат: mark_done_{habitId} или mark_done_{habitId}_{date}
+    const parts = data.replace("mark_done_", "").split("_");
+    const habitId = parts[0];
+    const reminderDate = parts[1] || null; // дата из напоминания (YYYY-MM-DD)
+
+    // Проверяем: можно отмечать только за сегодня или вчера
+    const today = new Date().toISOString().split("T")[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+
+    if (reminderDate && reminderDate !== today && reminderDate !== yesterday) {
+      await bot.editMessageText(
+        "⏰ Это напоминание устарело. Отметить привычку можно только за сегодня или вчера через приложение.",
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
+            ],
+          },
+        }
+      );
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: "⏰ Напоминание устарело",
+      });
+      return;
+    }
+
+    // Используем дату из напоминания если есть, иначе сегодня
+    const markDate = reminderDate || today;
 
     try {
       await db.query(
         `INSERT INTO habit_marks (habit_id, date, status)
-         VALUES ($1, CURRENT_DATE, 'completed')
+         VALUES ($1, $2, 'completed')
          ON CONFLICT (habit_id, date)
          DO UPDATE SET status = 'completed', marked_at = CURRENT_TIMESTAMP`,
-        [habitId]
+        [habitId, markDate]
       );
       // Пересчёт стрика из реальных данных (вместо слепого +1)
       await HabitMark.recalculateStreak(habitId);
@@ -1239,7 +1268,7 @@ bot.on("callback_query", async (callbackQuery) => {
         text: "✅ Выполнено!",
       });
 
-      console.log(`✅ Habit ${habitId} marked as done`);
+      console.log(`✅ Habit ${habitId} marked as done for ${markDate}`);
     } catch (error) {
       console.error("Error marking habit done:", error);
       await bot.answerCallbackQuery(callbackQuery.id, {
@@ -1247,15 +1276,42 @@ bot.on("callback_query", async (callbackQuery) => {
       });
     }
   } else if (data.startsWith("mark_skip_")) {
-    const habitId = data.replace("mark_skip_", "");
+    // Формат: mark_skip_{habitId} или mark_skip_{habitId}_{date}
+    const parts = data.replace("mark_skip_", "").split("_");
+    const habitId = parts[0];
+    const reminderDate = parts[1] || null;
+
+    const today = new Date().toISOString().split("T")[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+
+    if (reminderDate && reminderDate !== today && reminderDate !== yesterday) {
+      await bot.editMessageText(
+        "⏰ Это напоминание устарело. Управлять привычками можно через приложение.",
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📱 Открыть приложение", web_app: { url: WEBAPP_URL } }],
+            ],
+          },
+        }
+      );
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: "⏰ Напоминание устарело",
+      });
+      return;
+    }
+
+    const markDate = reminderDate || today;
 
     try {
       await db.query(
-        `INSERT INTO habit_marks (habit_id, date, status) 
-         VALUES ($1, CURRENT_DATE, 'skipped')
-         ON CONFLICT (habit_id, date) 
+        `INSERT INTO habit_marks (habit_id, date, status)
+         VALUES ($1, $2, 'skipped')
+         ON CONFLICT (habit_id, date)
          DO UPDATE SET status = 'skipped', marked_at = CURRENT_TIMESTAMP`,
-        [habitId]
+        [habitId, markDate]
       );
 
       await db.query("UPDATE habits SET streak_current = 0 WHERE id = $1", [
@@ -1276,7 +1332,7 @@ bot.on("callback_query", async (callbackQuery) => {
         text: "⏭ Пропущено",
       });
 
-      console.log(`⏭ Habit ${habitId} marked as skipped`);
+      console.log(`⏭ Habit ${habitId} marked as skipped for ${markDate}`);
     } catch (error) {
       console.error("Error marking habit skipped:", error);
       await bot.answerCallbackQuery(callbackQuery.id, {

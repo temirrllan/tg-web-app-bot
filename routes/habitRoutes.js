@@ -1013,10 +1013,10 @@ router.delete('/habits/:habitId/members/:memberId', authMiddleware, async (req, 
     );
     
     await client.query(
-      `UPDATE habits 
-       SET is_active = false 
-       WHERE user_id = $1 
-       AND (parent_habit_id = $2 OR 
+      `UPDATE habits
+       SET is_active = false, reminder_enabled = false
+       WHERE user_id = $1
+       AND (parent_habit_id = $2 OR
             parent_habit_id = (SELECT parent_habit_id FROM habits WHERE id = $2 AND parent_habit_id IS NOT NULL))`,
       [memberId, habitId]
     );

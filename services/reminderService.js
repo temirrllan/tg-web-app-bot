@@ -44,7 +44,7 @@ class ReminderService {
       console.log(`🕐 Checking reminders: ${currentTime}, Day: ${currentDay} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]})`);
       
       // Получаем все привычки с напоминаниями на текущее время
-      // Исключаем общие привычки, где юзер уже вышел из группы (habit_members.is_active = false)
+      // Для shared-привычек проверяем что юзер — активный участник
       const result = await db.query(
         `SELECT
           h.id,
@@ -61,11 +61,18 @@ class ReminderService {
          AND h.reminder_time = $1
          AND h.is_active = true
          AND $2 = ANY(h.schedule_days)
-         AND NOT EXISTS (
-           SELECT 1 FROM habit_members hm
-           WHERE hm.user_id = h.user_id
-           AND hm.is_active = false
-           AND hm.habit_id = COALESCE(h.parent_habit_id, h.id)
+         AND (
+           h.parent_habit_id IS NULL
+           OR EXISTS (
+             SELECT 1 FROM habit_members hm
+             WHERE hm.user_id = h.user_id
+             AND hm.is_active = true
+             AND hm.habit_id IN (
+               SELECT id FROM habits
+               WHERE id = COALESCE(h.parent_habit_id, h.id)
+                  OR parent_habit_id = COALESCE(h.parent_habit_id, h.id)
+             )
+           )
          )`,
         [currentTime, currentDay]
       );
@@ -208,12 +215,13 @@ Every moment is a new opportunity!`;
 Don't forget to mark your progress:`;
       }
       
-      // Кнопки для отметки
+      // Кнопки для отметки (дата включена чтобы старые напоминания нельзя было нажать)
+      const todayDate = new Date().toISOString().split('T')[0];
       const keyboard = {
         inline_keyboard: [
           [
-            { text: '✅ Done', callback_data: `mark_done_${habit.id}` },
-            { text: '⏭ Skip', callback_data: `mark_skip_${habit.id}` }
+            { text: '✅ Done', callback_data: `mark_done_${habit.id}_${todayDate}` },
+            { text: '⏭ Skip', callback_data: `mark_skip_${habit.id}_${todayDate}` }
           ],
           [
             { 
