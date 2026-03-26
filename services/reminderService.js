@@ -44,8 +44,9 @@ class ReminderService {
       console.log(`🕐 Checking reminders: ${currentTime}, Day: ${currentDay} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]})`);
       
       // Получаем все привычки с напоминаниями на текущее время
+      // Исключаем общие привычки, где юзер уже вышел из группы (habit_members.is_active = false)
       const result = await db.query(
-        `SELECT 
+        `SELECT
           h.id,
           h.title,
           h.goal,
@@ -59,7 +60,13 @@ class ReminderService {
          WHERE h.reminder_enabled = true
          AND h.reminder_time = $1
          AND h.is_active = true
-         AND $2 = ANY(h.schedule_days)`,
+         AND $2 = ANY(h.schedule_days)
+         AND NOT EXISTS (
+           SELECT 1 FROM habit_members hm
+           WHERE hm.user_id = h.user_id
+           AND hm.is_active = false
+           AND hm.habit_id = COALESCE(h.parent_habit_id, h.id)
+         )`,
         [currentTime, currentDay]
       );
       
