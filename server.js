@@ -925,6 +925,63 @@ bot.on('message', async (msg) => {
         }
       }
       
+      // ОБРАБОТКА DEEP LINK — ПРОСМОТР ПАКЕТА ПРИВЫЧЕК
+      if (startParam && startParam.startsWith('pack_')) {
+        const packId = startParam.replace('pack_', '');
+
+        console.log('📦 PACK SHARE DETECTED:', packId);
+
+        const packResult = await db.query(
+          `SELECT id, name, short_description, photo_url, price_stars
+           FROM special_habit_packs
+           WHERE id = $1 AND is_active = true`,
+          [packId]
+        );
+
+        if (packResult.rows.length > 0) {
+          const packInfo = packResult.rows[0];
+
+          const priceText = packInfo.price_stars === 0
+            ? { en: 'FREE', ru: 'БЕСПЛАТНО', kk: 'ТЕГІН' }
+            : { en: `⭐ ${packInfo.price_stars}`, ru: `⭐ ${packInfo.price_stars}`, kk: `⭐ ${packInfo.price_stars}` };
+
+          const packMessages = {
+            en: `📦 <b>Habit Pack</b>\n\n<b>"${packInfo.name}"</b>\n${packInfo.short_description || ''}\n\n💰 Price: ${priceText.en}\n\nOpen the app to check it out! 👇`,
+            ru: `📦 <b>Набор привычек</b>\n\n<b>«${packInfo.name}»</b>\n${packInfo.short_description || ''}\n\n💰 Цена: ${priceText.ru}\n\nОткройте приложение, чтобы посмотреть! 👇`,
+            kk: `📦 <b>Әдет жинағы</b>\n\n<b>«${packInfo.name}»</b>\n${packInfo.short_description || ''}\n\n💰 Бағасы: ${priceText.kk}\n\nҚарау үшін қосымшаны ашыңыз! 👇`
+          };
+
+          const openBtnTexts = {
+            en: '📱 Open & View Pack',
+            ru: '📱 Открыть и посмотреть',
+            kk: '📱 Ашу және қарау'
+          };
+
+          const webAppUrl = `${WEBAPP_URL}?action=viewpack&packId=${packId}`;
+
+          await bot.sendMessage(
+            chatId,
+            packMessages[userLanguage] || packMessages['en'],
+            {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[
+                  {
+                    text: openBtnTexts[userLanguage] || openBtnTexts['en'],
+                    web_app: { url: webAppUrl }
+                  }
+                ]]
+              }
+            }
+          );
+
+          console.log('✅ Pack share message sent');
+          return;
+        } else {
+          console.log('⚠️ Pack not found:', packId);
+        }
+      }
+
       // ОБЫЧНОЕ ПРИВЕТСТВИЕ
       const welcomeMessages = {
         en: `👋 <b>Welcome to Habit Tracker!</b>\n\nI'll help you build good habits and achieve your goals.\n\n🎯 Track your progress daily\n👥 Share habits with friends\n📊 View detailed statistics\n⏰ Get reminders\n\nLet's start! 👇`,
