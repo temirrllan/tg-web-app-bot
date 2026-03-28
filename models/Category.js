@@ -2,9 +2,10 @@ const db = require('../config/database');
 
 class Category {
   static async findAll(language = 'en') {
-    const nameField = language === 'ru' ? 'name_ru' : 'name_en';
+    const lang = String(language || 'en').toLowerCase();
+    const nameField = lang === 'ru' ? 'name_ru' : 'name_en';
     const result = await db.query(
-      `SELECT id, ${nameField} AS name, icon, color, sort_order
+      `SELECT id, ${nameField} AS name, name_en, icon, color, sort_order
        FROM categories
        ORDER BY sort_order ASC`
     );

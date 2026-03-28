@@ -2,8 +2,9 @@ const db = require('../config/database');
 
 class Phrase {
   static async getRandomPhrase(language = 'en', completedCount = 0, totalCount = 0) {
-    const lang = String(language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en';
-    
+    const langStr = String(language || 'en').toLowerCase();
+    const lang = langStr === 'ru' || langStr.startsWith('ru') ? 'ru' : 'en';
+
     try {
       // Определяем тип фразы в зависимости от прогресса
       let phraseType = 'encouragement';
@@ -72,32 +73,37 @@ class Phrase {
     }
     
     // Запасные варианты для разных ситуаций с цветами
-    if (lang === 'ru') {
-      if (totalCount === 0) {
-        return { text: 'Создай свою первую привычку!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' };
-      } else if (completedCount === 0) {
-        return { text: 'Продолжай пробовать, друг!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' };
-      } else if (completedCount === totalCount) {
-        return { text: 'Ты всё сделал! Невероятно!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' };
-      } else {
-        return { text: 'Продолжай в том же духе!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' };
+    const fallbacks = {
+      ru: {
+        noHabits:    { text: 'Создай свою первую привычку!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' },
+        noDone:      { text: 'Продолжай пробовать, друг!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' },
+        allDone:     { text: 'Ты всё сделал! Невероятно!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' },
+        inProgress:  { text: 'Продолжай в том же духе!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' }
+      },
+      kk: {
+        noHabits:    { text: 'Алғашқы әдетіңізді жасаңыз!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' },
+        noDone:      { text: 'Жалғастырыңыз, дос!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' },
+        allDone:     { text: 'Барлығы орындалды! Керемет!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' },
+        inProgress:  { text: 'Жалғастырыңыз!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' }
+      },
+      en: {
+        noHabits:    { text: 'Create your first habit!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' },
+        noDone:      { text: 'Keep trying buddy!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' },
+        allDone:     { text: 'All done! Amazing!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' },
+        inProgress:  { text: 'Keep going!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' }
       }
-    } else {
-      if (totalCount === 0) {
-        return { text: 'Create your first habit!', emoji: '🚀', type: 'encouragement', backgroundColor: '#FFE4B5' };
-      } else if (completedCount === 0) {
-        return { text: 'Keep trying buddy!', emoji: '🍫', type: 'encouragement', backgroundColor: '#FFB3BA' };
-      } else if (completedCount === totalCount) {
-        return { text: 'All done! Amazing!', emoji: '🎉', type: 'perfect', backgroundColor: '#87CEEB' };
-      } else {
-        return { text: 'Keep going!', emoji: '✨', type: 'success', backgroundColor: '#B5E7A0' };
-      }
-    }
+    };
+    const fb = fallbacks[langStr] || fallbacks[lang] || fallbacks.en;
+    if (totalCount === 0) return fb.noHabits;
+    if (completedCount === 0) return fb.noDone;
+    if (completedCount === totalCount) return fb.allDone;
+    return fb.inProgress;
   }
 
   // Метод для получения фразы при изменении статуса привычки
   static async getPhraseForStatusChange(language = 'en', completedCount = 0, totalCount = 0, wasCompleted = false) {
-    const lang = String(language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+    const langStr = String(language || 'en').toLowerCase();
+    const lang = langStr === 'ru' || langStr.startsWith('ru') ? 'ru' : 'en';
     
     try {
       // Если привычка была отмечена как выполненная
