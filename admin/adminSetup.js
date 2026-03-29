@@ -315,6 +315,14 @@ async function buildAdminRouter() {
         editProperties:   ['pack_id', 'title', 'goal', 'category_id', 'schedule_days_picker', 'reminder_time_picker', 'reminder_enabled', 'sort_order'],
         filterProperties: ['pack_id', 'day_period'],
         properties: {
+          title: {
+            props: { maxLength: 50 },
+            description: 'Название привычки (макс. 50 символов)',
+          },
+          goal: {
+            props: { maxLength: 100 },
+            description: 'Цель/мотивация (макс. 100 символов)',
+          },
           category_id: {
             reference: 'categories',
             description: 'Категория привычки',
@@ -381,6 +389,11 @@ async function buildAdminRouter() {
           new: {
             before: async (request) => {
               if (request.payload) {
+                // Validate goal length (max 100 for pack templates)
+                if (request.payload.goal && request.payload.goal.length > 100) {
+                  throw new Error('Цель не может быть длиннее 100 символов');
+                }
+
                 const timeRaw  = request.payload.reminder_time_picker ?? '';
                 const schedRaw = request.payload.schedule_days_picker ?? null;
 
@@ -433,6 +446,11 @@ async function buildAdminRouter() {
           edit: {
             before: async (request) => {
               if (request.payload) {
+                // Validate goal length (max 100 for pack templates)
+                if (request.payload.goal && request.payload.goal.length > 100) {
+                  throw new Error('Цель не может быть длиннее 100 символов');
+                }
+
                 const timeRaw  = request.payload.reminder_time_picker ?? '';
                 const schedRaw = request.payload.schedule_days_picker ?? null;
 
