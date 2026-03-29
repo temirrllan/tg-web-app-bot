@@ -25,7 +25,7 @@ function calculateDayPeriod(reminderTime) {
   return 'night'; // 0-5
 }
 const TITLE_MAX_LENGTH = 25;
-const GOAL_MAX_LENGTH = 35;
+const GOAL_MAX_LENGTH = 100;
 const habitController = {
   async create(req, res) {
   console.log('🎯 habitController.create called');
