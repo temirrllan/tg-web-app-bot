@@ -317,6 +317,59 @@ const specialHabitsController = {
     }
   },
 
+  // POST /api/special-habits/packs/:id/confirm-payment
+  // Called by frontend after Telegram openInvoice returns 'paid'.
+  // Waits for the webhook to complete, or creates habits directly as a fallback.
+  async confirmPayment(req, res) {
+    try {
+      const userId = req.user.id;
+      const packId = parseInt(req.params.id);
+
+      // Quick check: already completed?
+      const done = await db.query(
+        `SELECT id FROM special_habit_purchases
+         WHERE user_id = $1 AND pack_id = $2 AND payment_status = 'completed'`,
+        [userId, packId]
+      );
+      if (done.rows.length > 0) {
+        return res.json({ success: true, status: 'completed' });
+      }
+
+      // Must have a pending purchase (created by purchasePack)
+      const pending = await db.query(
+        `SELECT id FROM special_habit_purchases
+         WHERE user_id = $1 AND pack_id = $2 AND payment_status = 'pending'`,
+        [userId, packId]
+      );
+      if (pending.rows.length === 0) {
+        return res.status(400).json({ success: false, error: 'No pending purchase found' });
+      }
+
+      // Poll briefly — give the webhook a chance to finish (up to 10s)
+      for (let i = 0; i < 5; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const check = await db.query(
+          `SELECT id FROM special_habit_purchases
+           WHERE user_id = $1 AND pack_id = $2 AND payment_status = 'completed'`,
+          [userId, packId]
+        );
+        if (check.rows.length > 0) {
+          return res.json({ success: true, status: 'completed' });
+        }
+      }
+
+      // Webhook didn't complete after 10s — create habits directly as fallback
+      console.log(`⚠️ confirm-payment fallback: creating pack ${packId} habits for user ${userId} (webhook didn't fire)`);
+      const result = await createPackHabitsForUser(userId, packId);
+      console.log(`✅ confirm-payment fallback result:`, result);
+
+      return res.json({ success: true, status: 'completed_via_fallback', ...result });
+    } catch (err) {
+      console.error('❌ confirmPayment error:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+
   // GET /api/special-habits/my-packs
   async getMyPacks(req, res) {
     try {

@@ -10,7 +10,8 @@ router.use(authMiddleware);
 // Pack store
 router.get('/packs',               specialHabitsController.getPacks);
 router.get('/packs/:id',           specialHabitsController.getPackDetails);
-router.post('/packs/:id/purchase', specialHabitsController.purchasePack);
+router.post('/packs/:id/purchase',         specialHabitsController.purchasePack);
+router.post('/packs/:id/confirm-payment',  specialHabitsController.confirmPayment);
 
 // User's purchased packs
 router.get('/my-packs',            specialHabitsController.getMyPacks);
