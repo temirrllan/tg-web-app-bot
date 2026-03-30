@@ -556,12 +556,13 @@ async function buildAdminRouter() {
         navigation: { name: 'Контент' },
         sort: { sortBy: 'id', direction: 'desc' },
         listProperties:   ['id', 'emoji', 'type', 'min_completed', 'phrase_ru'],
-        showProperties:   ['id', 'phrase_ru', 'phrase_en', 'emoji', 'type', 'min_completed', 'background_color', 'created_at'],
-        editProperties:   ['phrase_ru', 'phrase_en', 'emoji', 'type', 'min_completed', 'background_color'],
+        showProperties:   ['id', 'phrase_ru', 'phrase_en', 'phrase_kk', 'emoji', 'type', 'min_completed', 'background_color', 'created_at'],
+        editProperties:   ['phrase_ru', 'phrase_en', 'phrase_kk', 'emoji', 'type', 'min_completed', 'background_color'],
         filterProperties: ['type'],
         properties: {
           phrase_ru:        { type: 'textarea' },
           phrase_en:        { type: 'textarea' },
+          phrase_kk:        { type: 'textarea' },
           type:             { availableValues: [
             { value: 'success',       label: 'Успех' },
             { value: 'encouragement', label: 'Ободрение' },

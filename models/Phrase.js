@@ -3,7 +3,8 @@ const db = require('../config/database');
 class Phrase {
   static async getRandomPhrase(language = 'en', completedCount = 0, totalCount = 0) {
     const langStr = String(language || 'en').toLowerCase();
-    const lang = langStr === 'ru' || langStr.startsWith('ru') ? 'ru' : 'en';
+    const lang = langStr === 'kk' || langStr.startsWith('kk') ? 'kk'
+               : langStr === 'ru' || langStr.startsWith('ru') ? 'ru' : 'en';
 
     try {
       // Определяем тип фразы в зависимости от прогресса
@@ -103,7 +104,8 @@ class Phrase {
   // Метод для получения фразы при изменении статуса привычки
   static async getPhraseForStatusChange(language = 'en', completedCount = 0, totalCount = 0, wasCompleted = false) {
     const langStr = String(language || 'en').toLowerCase();
-    const lang = langStr === 'ru' || langStr.startsWith('ru') ? 'ru' : 'en';
+    const lang = langStr === 'kk' || langStr.startsWith('kk') ? 'kk'
+               : langStr === 'ru' || langStr.startsWith('ru') ? 'ru' : 'en';
     
     try {
       // Если привычка была отмечена как выполненная
