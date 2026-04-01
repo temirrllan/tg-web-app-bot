@@ -525,15 +525,18 @@ const specialHabitsController = {
            h.id, h.title, h.goal, h.day_period, h.pack_id, h.template_id,
            h.is_special, h.schedule_days,
            c.icon AS category_icon,
-           COALESCE(hm.status, 'pending') AS today_status
+           COALESCE(hm.status, 'pending') AS today_status,
+           sp.name AS pack_name,
+           sp.photo_url AS pack_photo_url
          FROM habits h
          LEFT JOIN categories c ON c.id = h.category_id
          LEFT JOIN habit_marks hm ON hm.habit_id = h.id AND hm.date = $2::date
+         LEFT JOIN special_habit_packs sp ON sp.id = h.pack_id
          WHERE h.user_id = $1
            AND h.is_active = true
            AND h.is_special = true
            AND $3 = ANY(h.schedule_days)
-         ORDER BY h.day_period, h.id`,
+         ORDER BY h.pack_id, h.day_period, h.id`,
         [userId, date, dow]
       );
 
