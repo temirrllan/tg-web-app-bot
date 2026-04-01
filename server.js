@@ -646,7 +646,23 @@ bot.on("pre_checkout_query", async (query) => {
       return;
     }
 
-    const expectedAmount = TelegramStarsService.getPlanPrice(planType);
+    // Проверяем сумму: если есть промокод, берём цену из записи платежа
+    let expectedAmount = TelegramStarsService.getPlanPrice(planType);
+
+    if (parsed.promoCodeId) {
+      // С промокодом — проверяем по записи в telegram_payments
+      const paymentRecord = await db.query(
+        `SELECT total_amount FROM telegram_payments
+         WHERE invoice_payload = $1 AND status = 'pending'
+         ORDER BY created_at DESC LIMIT 1`,
+        [invoicePayload]
+      );
+      if (paymentRecord.rows.length > 0) {
+        expectedAmount = paymentRecord.rows[0].total_amount;
+        console.log(`🏷️ Promo code detected, expected amount from payment record: ${expectedAmount} XTR`);
+      }
+    }
+
     if (query.total_amount !== expectedAmount) {
       console.error("❌ Amount mismatch:", {
         expected: expectedAmount,
