@@ -777,6 +777,7 @@ async function buildAdminRouter() {
         total_purchases, total_stars_packs,
         paid_invoices, total_stars_invoices,
         active_promo_codes, promo_uses_total,
+        promo_subscriptions, promo_total_discount, promo_free_activations,
         total_phrases, total_categories,
         reminders_today, reminders_week, reminders_responded,
       ] = await Promise.all([
