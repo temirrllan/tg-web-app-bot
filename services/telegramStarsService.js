@@ -2,6 +2,7 @@
 
 const db = require('../config/database');
 const crypto = require('crypto');
+const PromoCodeService = require('./promoCodeService');
 
 class TelegramStarsService {
   static PLANS = {
@@ -51,43 +52,54 @@ class TelegramStarsService {
     return planType;
   }
 
-  static generateInvoicePayload(userId, planType) {
+  static generateInvoicePayload(userId, planType, promoCodeId = null) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
-    
+
     if (!this.PLANS[planType]) {
       console.error(`❌ Cannot generate payload for unknown plan: ${planType}`);
       throw new Error(`Invalid plan type: ${planType}`);
     }
-    
-    const payload = `${userId}|${planType}|${timestamp}|${randomString}`;
-    console.log(`🔑 Generated payload: ${payload} (plan: ${planType}, price: ${this.PLANS[planType].price_stars} XTR)`);
+
+    let payload = `${userId}|${planType}|${timestamp}|${randomString}`;
+    if (promoCodeId) {
+      payload += `|promo_${promoCodeId}`;
+    }
+    console.log(`🔑 Generated payload: ${payload} (plan: ${planType}, price: ${this.PLANS[planType].price_stars} XTR, promo: ${promoCodeId || 'none'})`);
     return payload;
   }
 
   static parseInvoicePayload(payload) {
     try {
       const parts = payload.split('|');
-      
+
       if (parts.length < 2) {
         throw new Error('Invalid payload format');
       }
-      
+
       const planType = parts[1];
-      
+
       if (!this.PLANS[planType]) {
         console.error(`❌ Unknown plan type in payload: ${planType}`);
         console.log('Available plans:', Object.keys(this.PLANS));
         throw new Error(`Invalid plan type: ${planType}`);
       }
-      
-      console.log(`✅ Parsed payload: userId=${parts[0]}, planType=${planType}, price=${this.PLANS[planType].price_stars} XTR`);
-      
+
+      // Извлекаем promoCodeId если есть (формат: promo_123)
+      let promoCodeId = null;
+      if (parts.length >= 5 && parts[4] && parts[4].startsWith('promo_')) {
+        promoCodeId = parseInt(parts[4].replace('promo_', ''), 10);
+        if (isNaN(promoCodeId)) promoCodeId = null;
+      }
+
+      console.log(`✅ Parsed payload: userId=${parts[0]}, planType=${planType}, price=${this.PLANS[planType].price_stars} XTR, promoCodeId=${promoCodeId}`);
+
       return {
         userId: parts[0],
         planType: planType,
         timestamp: parts[2],
-        randomString: parts[3]
+        randomString: parts[3],
+        promoCodeId: promoCodeId
       };
     } catch (error) {
       console.error('❌ Error parsing payload:', error);
@@ -95,40 +107,44 @@ class TelegramStarsService {
     }
   }
 
-  static async createPaymentRecord(userId, planType, invoicePayload, amount) {
+  static async createPaymentRecord(userId, planType, invoicePayload, amount, promoCodeId = null) {
     const client = await db.getClient();
-    
+
     try {
       await client.query('BEGIN');
-      
+
       if (!this.PLANS[planType]) {
         throw new Error(`Invalid plan type: ${planType}`);
       }
-      
+
       const existingPayment = await client.query(
         'SELECT id FROM telegram_payments WHERE invoice_payload = $1',
         [invoicePayload]
       );
-      
+
       if (existingPayment.rows.length > 0) {
         console.log(`⚠️ Payment with payload ${invoicePayload} already exists`);
         await client.query('COMMIT');
         return existingPayment.rows[0].id;
       }
-      
+
+      const originalPrice = this.PLANS[planType].price_stars;
+      const promoDiscount = promoCodeId ? (originalPrice - amount) : 0;
+
       const result = await client.query(
         `INSERT INTO telegram_payments (
-          user_id, invoice_payload, currency, total_amount, plan_type, status, created_at
-        ) VALUES ($1, $2, 'XTR', $3, $4, 'pending', CURRENT_TIMESTAMP)
+          user_id, invoice_payload, currency, total_amount, plan_type, status, created_at,
+          promo_code_id, promo_discount_stars
+        ) VALUES ($1, $2, 'XTR', $3, $4, 'pending', CURRENT_TIMESTAMP, $5, $6)
         RETURNING id`,
-        [userId, invoicePayload, amount, planType]
+        [userId, invoicePayload, amount, planType, promoCodeId, promoDiscount]
       );
-      
+
       await client.query('COMMIT');
-      
-      console.log(`✅ Payment record created: ID ${result.rows[0].id}, Plan: ${planType}, Amount: ${amount} XTR`);
+
+      console.log(`✅ Payment record created: ID ${result.rows[0].id}, Plan: ${planType}, Amount: ${amount} XTR, Promo: ${promoCodeId || 'none'}`);
       return result.rows[0].id;
-      
+
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('❌ Error creating payment record:', error);
@@ -228,12 +244,32 @@ class TelegramStarsService {
       }
 
       const plan = this.PLANS[planType];
-      console.log(`📦 Plan: ${plan.name} (${planType}), Expected: ${plan.price_stars} XTR, Received: ${total_amount} XTR`);
+      const promoCodeId = parsed.promoCodeId || null;
+      console.log(`📦 Plan: ${plan.name} (${planType}), Expected: ${plan.price_stars} XTR, Received: ${total_amount} XTR, Promo: ${promoCodeId || 'none'}`);
 
       const actualPrice = total_amount;
 
-      if (actualPrice !== plan.price_stars) {
+      // При промокоде цена может быть ниже — это нормально
+      if (!promoCodeId && actualPrice !== plan.price_stars) {
         console.warn(`⚠️ Amount mismatch! Expected ${plan.price_stars}, got ${actualPrice}`);
+      }
+
+      // Получаем данные промокода для bonus_days
+      let promoBonusDays = 0;
+      let promoDiscountStars = 0;
+      if (promoCodeId) {
+        try {
+          const promoResult = await client.query(
+            'SELECT bonus_days, discount_stars FROM promo_codes WHERE id = $1',
+            [promoCodeId]
+          );
+          if (promoResult.rows.length > 0) {
+            promoBonusDays = promoResult.rows[0].bonus_days || 0;
+            promoDiscountStars = promoResult.rows[0].discount_stars || 0;
+          }
+        } catch (promoErr) {
+          console.warn('⚠️ Failed to get promo data:', promoErr.message);
+        }
       }
 
       // Сохраняем платеж
@@ -262,10 +298,16 @@ class TelegramStarsService {
       // Вычисляем даты подписки
       let expiresAt = null;
       const startedAt = new Date();
-      
+
       if (plan.duration_months) {
         expiresAt = new Date(startedAt);
         expiresAt.setMonth(expiresAt.getMonth() + plan.duration_months);
+      }
+
+      // Добавляем бонусные дни от промокода
+      if (promoBonusDays > 0 && expiresAt) {
+        expiresAt.setDate(expiresAt.getDate() + promoBonusDays);
+        console.log(`🎁 Added ${promoBonusDays} bonus days from promo code`);
       }
 
       console.log(`📅 Subscription: ${startedAt.toISOString()} → ${expiresAt ? expiresAt.toISOString() : 'LIFETIME'}`);
@@ -295,10 +337,11 @@ class TelegramStarsService {
       // Создаём новую подписку
       const subscriptionResult = await client.query(
         `INSERT INTO subscriptions (
-          user_id, plan_type, plan_name, price_stars, 
+          user_id, plan_type, plan_name, price_stars,
           started_at, expires_at, is_active, is_trial,
-          payment_method, telegram_payment_charge_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, true, false, 'telegram_stars', $7)
+          payment_method, telegram_payment_charge_id,
+          promo_code_id, promo_discount_stars, bonus_days
+        ) VALUES ($1, $2, $3, $4, $5, $6, true, false, 'telegram_stars', $7, $8, $9, $10)
         RETURNING id`,
         [
           internalUserId,
@@ -307,10 +350,23 @@ class TelegramStarsService {
           actualPrice,
           startedAt,
           expiresAt,
-          telegram_payment_charge_id
+          telegram_payment_charge_id,
+          promoCodeId,
+          promoDiscountStars,
+          promoBonusDays
         ]
       );
       console.log(`✅ Subscription created for user ${internalUserId}, ID: ${subscriptionResult.rows[0].id}`);
+
+      // Применяем промокод (записываем использование)
+      if (promoCodeId) {
+        try {
+          await PromoCodeService.applyPromoCode(client, promoCodeId, internalUserId);
+          console.log(`🏷️ Promo code ${promoCodeId} applied for user ${internalUserId}`);
+        } catch (promoApplyError) {
+          console.warn('⚠️ Failed to apply promo code (non-critical):', promoApplyError.message);
+        }
+      }
 
       // 🔥 КРИТИЧНО: Обновляем ТОЛЬКО ЭТОГО конкретного пользователя
       console.log(`🔄 Updating ONLY user ${internalUserId} (telegram_id: ${from_user_id}) to premium...`);

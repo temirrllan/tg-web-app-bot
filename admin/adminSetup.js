@@ -170,7 +170,7 @@ async function buildAdminRouter() {
     'categories', 'motivational_phrases',
     'special_habit_packs', 'special_habit_templates', 'pack_achievements',
     'special_habit_purchases', 'pack_achievement_progress',
-    'payment_invoices', 'promo_codes', 'promo_code_usage', 'stars_transfers',
+    'payment_invoices', 'promo_codes', 'promo_uses', 'stars_transfers',
     'reminder_history',
   ]);
 
@@ -203,9 +203,14 @@ async function buildAdminRouter() {
         navigation: { name: 'Пользователи' },
         actions: viewOnly,
         sort: { sortBy: 'id', direction: 'desc' },
-        listProperties:   ['id', 'user_id', 'type', 'plan_type', 'stars_amount', 'is_active', 'started_at', 'expires_at'],
-        showProperties:   ['id', 'user_id', 'type', 'plan_type', 'stars_amount', 'transaction_id', 'is_active', 'started_at', 'expires_at', 'cancelled_at'],
-        filterProperties: ['type', 'plan_type', 'is_active'],
+        listProperties:   ['id', 'user_id', 'plan_type', 'price_stars', 'is_active', 'promo_code_id', 'promo_discount_stars', 'started_at', 'expires_at'],
+        showProperties:   ['id', 'user_id', 'plan_type', 'plan_name', 'price_stars', 'is_active', 'promo_code_id', 'promo_discount_stars', 'bonus_days', 'payment_method', 'telegram_payment_charge_id', 'started_at', 'expires_at', 'cancelled_at'],
+        filterProperties: ['plan_type', 'is_active', 'payment_method'],
+        properties: {
+          promo_code_id:       { description: 'ID промокода (если был)' },
+          promo_discount_stars: { description: 'Скидка по промокоду в звёздах' },
+          bonus_days:          { description: 'Бонусные дни от промокода' },
+        },
       },
     },
 
@@ -594,25 +599,27 @@ async function buildAdminRouter() {
         navigation: { name: 'Платежи' },
         actions: { ...noDelete },
         sort: { sortBy: 'created_at', direction: 'desc' },
-        listProperties:   ['id', 'code', 'discount_percent', 'is_active', 'max_uses', 'current_uses', 'expires_at'],
-        showProperties:   ['id', 'code', 'discount_percent', 'is_active', 'max_uses', 'current_uses', 'expires_at', 'created_at'],
-        editProperties:   ['code', 'discount_percent', 'is_active', 'max_uses', 'expires_at'],
-        filterProperties: ['is_active'],
+        listProperties:   ['id', 'code', 'description', 'discount_stars', 'bonus_days', 'is_active', 'max_uses', 'used_count', 'valid_until'],
+        showProperties:   ['id', 'code', 'description', 'discount_stars', 'bonus_days', 'is_active', 'max_uses', 'used_count', 'valid_from', 'valid_until', 'created_at'],
+        editProperties:   ['code', 'description', 'discount_stars', 'bonus_days', 'is_active', 'max_uses', 'valid_from', 'valid_until'],
+        filterProperties: ['is_active', 'code'],
         properties: {
-          discount_percent: { description: 'Скидка в % (0–100)' },
-          max_uses:         { description: 'Максимум использований (пусто = без лимита)' },
+          discount_stars: { description: 'Скидка в звёздах (XTR)' },
+          bonus_days:     { description: 'Бонусные дни к подписке' },
+          max_uses:       { description: 'Максимум использований (пусто = без лимита)' },
+          used_count:     { description: 'Сколько раз использован' },
         },
       },
     },
 
-    t.promo_code_usage && {
-      resource: t.promo_code_usage,
+    t.promo_uses && {
+      resource: t.promo_uses,
       options: {
         navigation: { name: 'Платежи' },
         actions: viewOnly,
         sort: { sortBy: 'used_at', direction: 'desc' },
-        listProperties:   ['id', 'user_id', 'promo_code', 'discount_amount', 'used_at'],
-        filterProperties: ['promo_code', 'user_id'],
+        listProperties:   ['id', 'promo_code_id', 'user_id', 'used_at'],
+        filterProperties: ['promo_code_id', 'user_id'],
       },
     },
 
@@ -812,7 +819,10 @@ async function buildAdminRouter() {
         safe(`SELECT COALESCE(SUM(total_amount),0)::int AS val FROM telegram_payments WHERE status = 'completed'`),
         // Promo
         safe(`SELECT COUNT(*)::int AS val FROM promo_codes WHERE is_active = true`),
-        safe(`SELECT COUNT(*)::int AS val FROM promo_code_usage`),
+        safe(`SELECT COUNT(*)::int AS val FROM promo_uses`),
+        safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE promo_code_id IS NOT NULL`),
+        safe(`SELECT COALESCE(SUM(promo_discount_stars),0)::int AS val FROM subscriptions WHERE promo_code_id IS NOT NULL`),
+        safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE promo_code_id IS NOT NULL AND price_stars = 0`),
         // Content
         safe(`SELECT COUNT(*)::int AS val FROM motivational_phrases`),
         safe(`SELECT COUNT(*)::int AS val FROM categories`),
@@ -900,8 +910,10 @@ async function buildAdminRouter() {
           GROUP BY day_period ORDER BY count DESC
         `),
         safeRows(`
-          SELECT promo_code, COUNT(*)::int AS uses
-          FROM promo_code_usage GROUP BY promo_code ORDER BY uses DESC LIMIT 5
+          SELECT pc.code AS promo_code, COUNT(*)::int AS uses
+          FROM promo_uses pu
+          JOIN promo_codes pc ON pc.id = pu.promo_code_id
+          GROUP BY pc.code ORDER BY uses DESC LIMIT 5
         `),
         safeRows(`
           SELECT DATE(sent_at) AS date, COUNT(*)::int AS sent,
@@ -935,7 +947,7 @@ async function buildAdminRouter() {
         // Payments
         paid_invoices, total_stars_invoices, total_stars_earned,
         // Promo
-        active_promo_codes, promo_uses_total,
+        active_promo_codes, promo_uses_total, promo_subscriptions, promo_total_discount, promo_free_activations,
         // Content
         total_phrases, total_categories,
         // Reminders

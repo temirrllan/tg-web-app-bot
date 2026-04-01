@@ -1,4 +1,6 @@
 const TelegramStarsService = require('../services/telegramStarsService');
+const PromoCodeService = require('../services/promoCodeService');
+const SubscriptionService = require('../services/subscriptionService');
 const db = require('../config/database');
 
 const telegramPaymentController = {
@@ -128,10 +130,10 @@ const telegramPaymentController = {
   // Создать invoice и получить invoice URL
   async createInvoice(req, res) {
     try {
-      const { planType } = req.body;
+      const { planType, promoCode } = req.body;
       const userId = req.user.id;
 
-      console.log(`📨 Creating Telegram Stars invoice for user ${userId}, plan: ${planType}`);
+      console.log(`📨 Creating Telegram Stars invoice for user ${userId}, plan: ${planType}, promo: ${promoCode || 'none'}`);
 
       const userResult = await db.query(
         'SELECT telegram_id, first_name FROM users WHERE id = $1',
@@ -150,10 +152,10 @@ const telegramPaymentController = {
       const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
       console.log(`🔄 Plan mapping: ${planType} -> ${normalizedPlan}`);
 
-      const price = TelegramStarsService.getPlanPrice(normalizedPlan);
+      const originalPrice = TelegramStarsService.getPlanPrice(normalizedPlan);
       const plan = TelegramStarsService.PLANS[normalizedPlan];
 
-      if (!price || !plan) {
+      if (!originalPrice || !plan) {
         console.error(`❌ Invalid plan: ${planType} (normalized: ${normalizedPlan})`);
         return res.status(400).json({
           success: false,
@@ -161,11 +163,32 @@ const telegramPaymentController = {
         });
       }
 
+      // Валидация и применение промокода
+      let promoData = null;
+      let finalPrice = originalPrice;
+
+      if (promoCode) {
+        const validation = await PromoCodeService.validatePromoCode(promoCode, userId);
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            error: `promo_${validation.error}`,
+            promoError: validation.error
+          });
+        }
+        promoData = validation;
+        finalPrice = PromoCodeService.calculateDiscountedPrice(originalPrice, validation.discountStars);
+        console.log(`🏷️ Promo applied: -${validation.discountStars} stars, final price: ${finalPrice} XTR`);
+      }
+
+      const price = finalPrice;
       console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR (Telegram Stars)`);
 
-      const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
+      // Генерируем payload с promoCodeId если есть
+      const promoCodeId = promoData ? promoData.promo.id : null;
+      const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType, promoCodeId);
 
-      await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
+      await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price, promoCodeId);
 
       const bot = require('../server').bot;
       
@@ -197,8 +220,12 @@ const telegramPaymentController = {
           invoiceUrl: invoiceLink,
           invoicePayload: invoicePayload,
           price: price,
+          originalPrice: originalPrice,
           planName: plan.name,
-          currency: 'XTR'
+          currency: 'XTR',
+          promoApplied: !!promoData,
+          promoDiscount: promoData ? promoData.discountStars : 0,
+          promoBonusDays: promoData ? promoData.bonusDays : 0
         });
 
       } catch (botError) {
@@ -332,6 +359,200 @@ const telegramPaymentController = {
         success: false,
         error: 'Failed to send invoice'
       });
+    }
+  },
+
+  // Валидация промокода
+  async validatePromo(req, res) {
+    try {
+      const { code, planType } = req.body;
+      const userId = req.user.id;
+
+      if (!code) {
+        return res.status(400).json({ success: false, error: 'Code required' });
+      }
+
+      const validation = await PromoCodeService.validatePromoCode(code, userId);
+
+      if (!validation.valid) {
+        return res.json({
+          success: true,
+          valid: false,
+          error: validation.error
+        });
+      }
+
+      // Рассчитываем цену со скидкой для указанного плана
+      const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
+      const originalPrice = normalizedPlan ? TelegramStarsService.getPlanPrice(normalizedPlan) : null;
+      const finalPrice = originalPrice !== null
+        ? PromoCodeService.calculateDiscountedPrice(originalPrice, validation.discountStars)
+        : null;
+
+      return res.json({
+        success: true,
+        valid: true,
+        discount_stars: validation.discountStars,
+        bonus_days: validation.bonusDays,
+        original_price: originalPrice,
+        final_price: finalPrice,
+        promo_id: validation.promo.id,
+        promo_description: validation.promo.description
+      });
+    } catch (error) {
+      console.error('❌ Validate promo error:', error);
+      res.status(500).json({ success: false, error: 'Failed to validate promo code' });
+    }
+  },
+
+  // Активация подписки с промокодом (бесплатная — 100% скидка)
+  async activateWithPromo(req, res) {
+    try {
+      const { planType, promoCode } = req.body;
+      const userId = req.user.id;
+
+      if (!promoCode || !planType) {
+        return res.status(400).json({ success: false, error: 'planType and promoCode required' });
+      }
+
+      const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
+      const plan = TelegramStarsService.PLANS[normalizedPlan];
+      if (!plan) {
+        return res.status(400).json({ success: false, error: `Invalid plan: ${planType}` });
+      }
+
+      // Валидация промокода
+      const validation = await PromoCodeService.validatePromoCode(promoCode, userId);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: `promo_${validation.error}`,
+          promoError: validation.error
+        });
+      }
+
+      const originalPrice = plan.price_stars;
+      const finalPrice = PromoCodeService.calculateDiscountedPrice(originalPrice, validation.discountStars);
+
+      if (finalPrice > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'not_free',
+          message: 'This promo code does not cover 100% of the price. Use create-invoice instead.',
+          final_price: finalPrice
+        });
+      }
+
+      console.log(`🎁 Free activation with promo for user ${userId}, plan: ${planType}`);
+
+      // Активация в транзакции
+      const client = await db.getClient();
+      try {
+        await client.query('BEGIN');
+
+        // Применяем промокод (с блокировкой)
+        await PromoCodeService.applyPromoCode(client, validation.promo.id, userId);
+
+        // Деактивируем старые подписки ТОЛЬКО этого пользователя
+        await client.query(
+          `UPDATE subscriptions
+           SET is_active = false, cancelled_at = CURRENT_TIMESTAMP, expires_at = NULL
+           WHERE user_id = $1 AND is_active = true`,
+          [userId]
+        );
+
+        // Рассчитываем даты
+        const startedAt = new Date();
+        let expiresAt = new Date(startedAt);
+        expiresAt.setMonth(expiresAt.getMonth() + plan.duration_months);
+
+        // Добавляем бонусные дни
+        if (validation.bonusDays > 0) {
+          expiresAt.setDate(expiresAt.getDate() + validation.bonusDays);
+        }
+
+        // Создаём подписку
+        const subResult = await client.query(
+          `INSERT INTO subscriptions (
+            user_id, plan_type, plan_name, price_stars,
+            started_at, expires_at, is_active, is_trial,
+            payment_method, promo_code_id, promo_discount_stars, bonus_days
+          ) VALUES ($1, $2, $3, 0, $4, $5, true, false, 'promo_code', $6, $7, $8)
+          RETURNING id`,
+          [userId, planType, plan.name, startedAt, expiresAt,
+           validation.promo.id, validation.discountStars, validation.bonusDays]
+        );
+
+        // Обновляем пользователя
+        await client.query(
+          `UPDATE users
+           SET is_premium = true, subscription_type = $2,
+               subscription_expires_at = $3, subscription_start_date = $4
+           WHERE id = $1`,
+          [userId, planType, expiresAt, startedAt]
+        );
+
+        // История
+        await client.query(
+          `INSERT INTO subscription_history (
+            user_id, subscription_id, plan_type, price_stars, action, created_at
+          ) VALUES ($1, $2, $3, 0, 'purchased', CURRENT_TIMESTAMP)`,
+          [userId, subResult.rows[0].id, planType]
+        );
+
+        // Запись в telegram_payments для учёта
+        await client.query(
+          `INSERT INTO telegram_payments (
+            user_id, invoice_payload, currency, total_amount, plan_type,
+            status, processed_at, promo_code_id, promo_discount_stars
+          ) VALUES ($1, $2, 'XTR', 0, $3, 'completed', CURRENT_TIMESTAMP, $4, $5)`,
+          [userId, `promo_${userId}_${planType}_${Date.now()}`, planType,
+           validation.promo.id, validation.discountStars]
+        );
+
+        await client.query('COMMIT');
+
+        console.log(`🎉 Free subscription activated for user ${userId} via promo code`);
+
+        // Уведомление через бот
+        try {
+          const bot = require('../server').bot;
+          const userResult = await db.query(
+            'SELECT telegram_id, language FROM users WHERE id = $1',
+            [userId]
+          );
+          if (userResult.rows.length > 0) {
+            const { telegram_id, language } = userResult.rows[0];
+            const messages = {
+              ru: '🎉 <b>Промокод активирован!</b>\n\nВаша Premium подписка активирована бесплатно!\n\n✅ Безлимитные привычки\n✅ Расширенная статистика\n✅ Приоритетная поддержка\n\nОткройте приложение и наслаждайтесь! 💪',
+              en: '🎉 <b>Promo code activated!</b>\n\nYour Premium subscription is now active for free!\n\n✅ Unlimited habits\n✅ Advanced statistics\n✅ Priority support\n\nOpen the app and enjoy! 💪',
+              kk: '🎉 <b>Промокод белсендірілді!</b>\n\nСіздің Premium жазылымыңыз тегін белсендірілді!\n\n✅ Шексіз әдеттер\n✅ Кеңейтілген статистика\n✅ Басым қолдау\n\nҚосымшаны ашып, ләззат алыңыз! 💪'
+            };
+            const msg = messages[language] || messages['en'];
+            await bot.sendMessage(telegram_id, msg, { parse_mode: 'HTML' });
+          }
+        } catch (botErr) {
+          console.warn('⚠️ Failed to send promo notification:', botErr.message);
+        }
+
+        return res.json({
+          success: true,
+          subscription_id: subResult.rows[0].id,
+          plan_type: planType,
+          expires_at: expiresAt,
+          promo_applied: true,
+          free_activation: true
+        });
+
+      } catch (txError) {
+        await client.query('ROLLBACK');
+        throw txError;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('❌ Activate with promo error:', error);
+      res.status(500).json({ success: false, error: error.message });
     }
   },
 

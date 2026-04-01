@@ -12,6 +12,12 @@ router.post('/create-invoice', authMiddleware, telegramPaymentController.createI
 // Отправить invoice кнопку (старый метод, оставляем для совместимости)
 router.post('/request-invoice-button', authMiddleware, telegramPaymentController.requestInvoiceButton);
 
+// Валидация промокода
+router.post('/validate-promo', authMiddleware, telegramPaymentController.validatePromo);
+
+// Активация подписки с промокодом (бесплатная — 100% скидка)
+router.post('/activate-promo', authMiddleware, telegramPaymentController.activateWithPromo);
+
 // Проверить статус платежа по payload
 router.get('/check-status', authMiddleware, telegramPaymentController.checkPaymentStatusByPayload);
 

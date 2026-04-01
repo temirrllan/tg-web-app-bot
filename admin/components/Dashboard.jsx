@@ -807,6 +807,12 @@ const Dashboard = () => {
                 <CardLabel>Активных промокодов</CardLabel>
                 <CardSub positive>{fmt(stats.promo_uses_total)} использований</CardSub>
               </Card>
+              <Card accent={C.purple}>
+                <CardIcon>🎁</CardIcon>
+                <CardValue>{fmt(stats.promo_subscriptions)}</CardValue>
+                <CardLabel>Подписок по промо</CardLabel>
+                <CardSub positive>Скидка: {fmt(stats.promo_total_discount)} ⭐ | Бесплатных: {fmt(stats.promo_free_activations)}</CardSub>
+              </Card>
               <Card accent={C.rose}>
                 <CardIcon>💬</CardIcon>
                 <CardValue>{fmt(stats.total_phrases)}</CardValue>
