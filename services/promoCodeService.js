@@ -20,7 +20,7 @@ class PromoCodeService {
       // Ищем промокод
       const promoResult = await db.query(
         `SELECT id, code, description, discount_stars, bonus_days,
-                max_uses, used_count, valid_from, valid_until, is_active
+                max_uses, current_uses, valid_from, valid_until, is_active
          FROM promo_codes
          WHERE UPPER(code) = $1`,
         [normalizedCode]
@@ -47,7 +47,7 @@ class PromoCodeService {
       }
 
       // Проверяем лимит использований
-      if (promo.max_uses && promo.used_count >= promo.max_uses) {
+      if (promo.max_uses && promo.current_uses >= promo.max_uses) {
         return { valid: false, error: 'max_used' };
       }
 
@@ -88,7 +88,7 @@ class PromoCodeService {
   static async applyPromoCode(client, promoCodeId, userId) {
     // Блокируем строку промокода для предотвращения race condition
     const promoResult = await client.query(
-      'SELECT id, used_count, max_uses FROM promo_codes WHERE id = $1 FOR UPDATE',
+      'SELECT id, current_uses, max_uses FROM promo_codes WHERE id = $1 FOR UPDATE',
       [promoCodeId]
     );
 
@@ -99,7 +99,7 @@ class PromoCodeService {
     const promo = promoResult.rows[0];
 
     // Перепроверяем лимит (с блокировкой)
-    if (promo.max_uses && promo.used_count >= promo.max_uses) {
+    if (promo.max_uses && promo.current_uses >= promo.max_uses) {
       throw new Error('Promo code max uses exceeded');
     }
 
@@ -113,7 +113,7 @@ class PromoCodeService {
 
     // Инкрементим счётчик
     await client.query(
-      'UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1',
+      'UPDATE promo_codes SET current_uses = current_uses + 1 WHERE id = $1',
       [promoCodeId]
     );
 
