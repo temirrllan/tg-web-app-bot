@@ -10,11 +10,11 @@ const db = require('../config/database');
 const SubscriptionService = require('../services/subscriptionService');
 const { getToday, getAlmatyDate } = require('../utils/dateHelper');
 
-// Категории
-router.get('/categories', categoryController.getAll);
-
 // Применяем auth middleware к остальным роутам
 router.use(authMiddleware);
+
+// Категории (после auth — нужен req.user.language)
+router.get('/categories', categoryController.getAll);
 
 // Привычки
 router.post('/habits', createHabitLimiter, checkSubscriptionLimit, habitController.create);

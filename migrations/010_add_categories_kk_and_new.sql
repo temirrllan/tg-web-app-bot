@@ -1,4 +1,10 @@
--- 010: Add name_kk column to categories + new categories
+-- 010: Add name_kk column to categories + new categories + remove duplicates
+
+-- 0. Remove duplicate categories (keep lowest id for each sort_order)
+DELETE FROM categories
+WHERE id NOT IN (
+  SELECT MIN(id) FROM categories GROUP BY sort_order
+);
 
 -- 1. Add Kazakh language column
 ALTER TABLE categories ADD COLUMN IF NOT EXISTS name_kk VARCHAR(50);
@@ -15,8 +21,9 @@ UPDATE categories SET name_kk = 'Тамақтану' WHERE sort_order = 8;
 UPDATE categories SET name_kk = 'Ұйқы' WHERE sort_order = 9;
 UPDATE categories SET name_kk = 'Басқа' WHERE sort_order = 10;
 
--- 3. Insert new categories (with all 3 languages)
-INSERT INTO categories (name_ru, name_en, name_kk, icon, color, sort_order) VALUES
+-- 3. Insert new categories (skip if sort_order already exists)
+INSERT INTO categories (name_ru, name_en, name_kk, icon, color, sort_order)
+SELECT * FROM (VALUES
     ('Финансы', 'Finance', 'Қаржы', '💰', '#F97316', 11),
     ('Продуктивность', 'Productivity', 'Өнімділік', '⚡', '#0EA5E9', 12),
     ('Социальные', 'Social', 'Әлеуметтік', '👥', '#EC4899', 13),
@@ -30,4 +37,7 @@ INSERT INTO categories (name_ru, name_en, name_kk, icon, color, sort_order) VALU
     ('Прогулки', 'Walking', 'Серуендеу', '🚶', '#22C55E', 21),
     ('Питомцы', 'Pets', 'Үй жануарлары', '🐾', '#A16207', 22),
     ('Духовность', 'Spirituality', 'Рухaniят', '🙏', '#9333EA', 23)
-ON CONFLICT DO NOTHING;
+) AS new_cats(name_ru, name_en, name_kk, icon, color, sort_order)
+WHERE NOT EXISTS (
+    SELECT 1 FROM categories WHERE categories.sort_order = new_cats.sort_order
+);
