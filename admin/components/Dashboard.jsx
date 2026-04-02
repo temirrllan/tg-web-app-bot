@@ -260,7 +260,7 @@ function fillDays(data, n = 14, valueKey = 'count') {
   const result = []
   for (let i = n - 1; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i)
-    const key = d.toISOString().slice(0, 10)
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
     result.push(map[key] || { date: key, [valueKey]: 0, count: 0 })
   }
   return result
@@ -502,7 +502,7 @@ const Dashboard = () => {
           return found || d
         })
 
-        const totalLang = (stats.users_ru || 0) + (stats.users_en || 0) + (stats.users_kk || 0)
+        const totalLang = stats.total_users || ((stats.users_ru || 0) + (stats.users_en || 0) + (stats.users_kk || 0))
         const habSched  = stats.habits_by_schedule || []
         const habPeriod = stats.habits_by_period || []
         const habCat    = stats.habits_by_category || []
@@ -607,7 +607,7 @@ const Dashboard = () => {
                     <div style={{ fontSize:11, color:C.muted }}>из пакетов</div>
                   </div>
                   <div style={{ textAlign:'right' }}>
-                    <div style={{ fontSize:20, fontWeight:800, color:C.orange }}>{fmt(stats.total_stars_invoices)} ⭐</div>
+                    <div style={{ fontSize:20, fontWeight:800, color:C.orange }}>{fmt(stats.total_stars_subscriptions)} ⭐</div>
                     <div style={{ fontSize:11, color:C.muted }}>подписки</div>
                   </div>
                 </div>
@@ -761,8 +761,8 @@ const Dashboard = () => {
                     </div>
                   )}
                   <div>
-                    <div style={{ fontSize:18, fontWeight:800, color:C.amber }}>{fmt(stats.paid_invoices)}</div>
-                    <div style={{ fontSize:11, color:C.muted }}>счётов оплачено</div>
+                    <div style={{ fontSize:18, fontWeight:800, color:C.amber }}>{fmt(stats.paid_payments)}</div>
+                    <div style={{ fontSize:11, color:C.muted }}>оплат подписок</div>
                   </div>
                 </div>
               </WideCard>

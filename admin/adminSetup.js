@@ -545,9 +545,9 @@ async function buildAdminRouter() {
         navigation: { name: 'Контент', icon: 'Grid' },
         sort: { sortBy: 'sort_order', direction: 'asc' },
         titleProperty: 'name_ru',
-        listProperties:   ['id', 'name_ru', 'name_en', 'icon', 'color', 'sort_order'],
-        showProperties:   ['id', 'name_ru', 'name_en', 'icon', 'color', 'sort_order', 'created_at'],
-        editProperties:   ['name_ru', 'name_en', 'icon', 'color', 'sort_order'],
+        listProperties:   ['id', 'name_ru', 'name_en', 'name_kk', 'icon', 'color', 'sort_order'],
+        showProperties:   ['id', 'name_ru', 'name_en', 'name_kk', 'icon', 'color', 'sort_order', 'created_at'],
+        editProperties:   ['name_ru', 'name_en', 'name_kk', 'icon', 'color', 'sort_order'],
         properties: {
           icon:  { description: 'Emoji иконка, например 🏃' },
           color: { description: 'HEX цвет, например #EF4444' },
@@ -775,7 +775,7 @@ async function buildAdminRouter() {
         active_subscriptions, expiring_soon,
         total_packs, active_packs, total_templates,
         total_purchases, total_stars_packs,
-        paid_invoices, total_stars_invoices,
+        paid_payments, total_stars_subscriptions,
         active_promo_codes, promo_uses_total,
         promo_subscriptions, promo_total_discount, promo_free_activations,
         total_phrases, total_categories,
@@ -801,21 +801,21 @@ async function buildAdminRouter() {
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_bad_habit = true AND is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = CURRENT_DATE`),
         safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = CURRENT_DATE AND status = 'completed'`),
-        safe(`SELECT ROUND(AVG(cnt), 1)::float AS val FROM (SELECT COUNT(*) AS cnt FROM habits WHERE is_active = true GROUP BY user_id) t`, 0),
+        safe(`SELECT ROUND(COALESCE((SELECT COUNT(*)::float FROM habits WHERE is_active = true) / NULLIF((SELECT COUNT(*) FROM users), 0), 0), 1)::float AS val`, 0),
         safe(`SELECT ROUND(AVG(streak_current), 1)::float AS val FROM habits WHERE is_active = true`, 0),
         safe(`SELECT COALESCE(MAX(streak_best), 0)::int AS val FROM habits`),
         safe(`SELECT COUNT(*)::int AS val FROM shared_habits`),
         safe(`SELECT COUNT(*)::int AS val FROM habit_members WHERE is_active = true`),
         // Subscriptions
         safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE is_active = true`),
-        safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE is_active = true AND expires_at IS NOT NULL AND expires_at < NOW() + INTERVAL '7 days'`),
+        safe(`SELECT COUNT(*)::int AS val FROM subscriptions WHERE is_active = true AND expires_at IS NOT NULL AND expires_at > NOW() AND expires_at < NOW() + INTERVAL '7 days'`),
         // Packs
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_packs`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_packs WHERE is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_templates`),
         safe(`SELECT COUNT(*)::int AS val FROM special_habit_purchases WHERE payment_status = 'completed'`),
         safe(`SELECT COALESCE(SUM(price_paid_stars),0)::int AS val FROM special_habit_purchases WHERE payment_status = 'completed'`),
-        // Payments (subscription payments are in telegram_payments, not payment_invoices)
+        // Payments (completed subscription payments via Telegram Stars)
         safe(`SELECT COUNT(*)::int AS val FROM telegram_payments WHERE status = 'completed'`),
         safe(`SELECT COALESCE(SUM(total_amount),0)::int AS val FROM telegram_payments WHERE status = 'completed'`),
         // Promo
@@ -924,7 +924,7 @@ async function buildAdminRouter() {
         `),
       ]);
 
-      const total_stars_earned = total_stars_packs + total_stars_invoices;
+      const total_stars_earned = total_stars_packs + total_stars_subscriptions;
       const reminder_response_rate = reminders_week > 0
         ? Math.round((reminders_responded / reminders_week) * 100) : 0;
       const premium_rate = total_users > 0
@@ -946,7 +946,7 @@ async function buildAdminRouter() {
         total_packs, active_packs, total_templates,
         total_purchases, total_stars_packs,
         // Payments
-        paid_invoices, total_stars_invoices, total_stars_earned,
+        paid_payments, total_stars_subscriptions, total_stars_earned,
         // Promo
         active_promo_codes, promo_uses_total, promo_subscriptions, promo_total_discount, promo_free_activations,
         // Content
