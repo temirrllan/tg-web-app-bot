@@ -316,11 +316,38 @@ const BroadcastSection = () => {
   const [step, setStep]         = useState('compose') // compose | confirm | sending | done | error
   const [result, setResult]     = useState(null)
   const [errMsg, setErrMsg]     = useState('')
+  const textareaRef = React.useRef(null)
 
   useEffect(() => {
     fetch('/admin/api/broadcast/count', { credentials: 'same-origin' })
       .then(r => r.json()).then(d => setRC(d.total)).catch(() => {})
   }, [])
+
+  const wrapSelection = (before, after) => {
+    const ta = textareaRef.current
+    if (!ta) return
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const text = msg
+    const selected = text.slice(start, end)
+    const newText = text.slice(0, start) + before + selected + after + text.slice(end)
+    setMsg(newText)
+    // Restore cursor after React re-render
+    setTimeout(() => {
+      ta.focus()
+      const newPos = selected ? start + before.length + selected.length + after.length : start + before.length
+      ta.setSelectionRange(newPos, newPos)
+    }, 0)
+  }
+
+  const formatButtons = [
+    { label: 'B', title: 'Жирный', before: '<b>', after: '</b>', style: { fontWeight: 800 } },
+    { label: 'I', title: 'Курсив', before: '<i>', after: '</i>', style: { fontStyle: 'italic' } },
+    { label: 'U', title: 'Подчёркнутый', before: '<u>', after: '</u>', style: { textDecoration: 'underline' } },
+    { label: 'S', title: 'Зачёркнутый', before: '<s>', after: '</s>', style: { textDecoration: 'line-through' } },
+    { label: '<>', title: 'Код', before: '<code>', after: '</code>', style: { fontFamily: 'monospace', fontSize: 12 } },
+    { label: '🔗', title: 'Ссылка', before: '<a href="URL">', after: '</a>', style: {} },
+  ]
 
   const handleConfirm = () => { if (msg.trim()) setStep('confirm') }
   const handleCancel  = () => setStep('compose')
@@ -363,17 +390,39 @@ const BroadcastSection = () => {
             </div>
           </div>
         </div>
-        <div style={{ fontSize:11, padding:'4px 10px', borderRadius:20, background:'rgba(99,102,241,0.1)', color:C.indigo, fontWeight:600 }}>HTML поддерживается</div>
+        <div style={{ fontSize:11, padding:'4px 10px', borderRadius:20, background:'rgba(99,102,241,0.1)', color:C.indigo, fontWeight:600 }}>Telegram HTML</div>
       </div>
 
       {/* ── COMPOSE ── */}
       {step === 'compose' && (
         <>
-          <div style={{ fontSize:12, fontWeight:600, color:C.muted, textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:8 }}>Текст сообщения</div>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.muted, textTransform:'uppercase', letterSpacing:'0.8px' }}>Текст сообщения</div>
+          </div>
+          <div style={{ display:'flex', gap:4, marginBottom:8, flexWrap:'wrap' }}>
+            {formatButtons.map(btn => (
+              <button
+                key={btn.label}
+                title={btn.title}
+                onClick={() => wrapSelection(btn.before, btn.after)}
+                style={{
+                  ...btn.style,
+                  padding: '5px 12px', border: `1px solid ${C.border}`, borderRadius: 6,
+                  background: C.white, color: C.dark, cursor: 'pointer', fontSize: 13,
+                  transition: 'all 0.1s', lineHeight: 1.2,
+                }}
+                onMouseEnter={e => { e.target.style.background = '#EEF2FF'; e.target.style.borderColor = C.indigo }}
+                onMouseLeave={e => { e.target.style.background = C.white; e.target.style.borderColor = C.border }}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
           <BroadcastTextarea
+            ref={textareaRef}
             value={msg}
             onChange={e => setMsg(e.target.value)}
-            placeholder={'Введите сообщение...\n\nПоддерживается HTML: <b>жирный</b>, <i>курсив</i>, <a href="...">ссылка</a>'}
+            placeholder={'Введите сообщение...\n\nВыделите текст и нажмите кнопку форматирования'}
           />
           <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10 }}>
             <BroadcastBtn
