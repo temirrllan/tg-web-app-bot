@@ -450,6 +450,78 @@ const BroadcastSection = () => {
   )
 }
 
+// ─── Maintenance Toggle ──────────────────────────────────────────────────────
+const MaintenanceToggle = () => {
+  const [enabled, setEnabled] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/admin/api/maintenance/status', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => { setEnabled(d.maintenance); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const toggle = async () => {
+    setLoading(true)
+    try {
+      const r = await fetch('/admin/api/maintenance/toggle', {
+        method: 'POST', credentials: 'same-origin'
+      })
+      const d = await r.json()
+      setEnabled(d.maintenance)
+    } catch (e) {
+      console.error('Maintenance toggle error:', e)
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div style={{
+      background: enabled ? '#FEF2F2' : C.white,
+      border: `1px solid ${enabled ? '#FECACA' : C.border}`,
+      borderRadius: 12, padding: '16px 20px',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      marginBottom: 24, transition: 'all 0.2s'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          width: 42, height: 42, borderRadius: 12,
+          background: enabled
+            ? 'linear-gradient(135deg, #EF4444, #F97316)'
+            : 'linear-gradient(135deg, #10B981, #14B8A6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20
+        }}>
+          {enabled ? '🔧' : '✅'}
+        </div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: C.dark }}>
+            Режим обслуживания
+          </div>
+          <div style={{ fontSize: 12, color: enabled ? '#B91C1C' : C.muted, marginTop: 2 }}>
+            {enabled ? 'Приложение недоступно для пользователей' : 'Приложение работает нормально'}
+          </div>
+        </div>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={loading}
+        style={{
+          padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer',
+          fontWeight: 600, fontSize: 13, color: '#fff',
+          background: enabled
+            ? 'linear-gradient(135deg, #10B981, #14B8A6)'
+            : 'linear-gradient(135deg, #EF4444, #F97316)',
+          opacity: loading ? 0.5 : 1,
+          transition: 'all 0.15s'
+        }}
+      >
+        {loading ? '...' : enabled ? 'Выключить' : 'Включить'}
+      </button>
+    </div>
+  )
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 const Dashboard = () => {
   const [stats, setStats]     = useState(null)
@@ -478,6 +550,9 @@ const Dashboard = () => {
         </HeroLeft>
         <HeroEmoji>📊</HeroEmoji>
       </Hero>
+
+      {/* ── Maintenance ── */}
+      <MaintenanceToggle />
 
       {/* ── Broadcast ── */}
       <BroadcastSection />

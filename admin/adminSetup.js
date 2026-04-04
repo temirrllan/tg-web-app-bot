@@ -1018,6 +1018,20 @@ async function buildAdminRouter() {
     }
   });
 
+  // ── Maintenance API ──────────────────────────────────────────────────────
+  const maintenanceService = require('../services/maintenanceService');
+
+  router.get('/api/maintenance/status', (req, res) => {
+    if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
+    res.json({ maintenance: maintenanceService.isEnabled() });
+  });
+
+  router.post('/api/maintenance/toggle', (req, res) => {
+    if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
+    const enabled = maintenanceService.toggle();
+    res.json({ maintenance: enabled });
+  });
+
   return { adminJs, router };
 }
 

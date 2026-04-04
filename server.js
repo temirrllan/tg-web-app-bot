@@ -10,6 +10,7 @@ const habitRoutes = require("./routes/habitRoutes");
 const userRoutes = require("./routes/userRoutes");
 const { generalLimiter } = require("./middleware/rateLimit");
 const keepAliveService = require("./services/keepAlive");
+const maintenanceService = require("./services/maintenanceService");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
 const HabitMark = require("./models/HabitMark");
@@ -319,6 +320,69 @@ app.get("/", (req, res) => {
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// ─── Maintenance mode endpoints ───────────────────────────────────────────────
+app.get("/api/maintenance/status", (req, res) => {
+  res.json({ maintenance: maintenanceService.isEnabled() });
+});
+
+app.post("/api/maintenance/toggle", (req, res) => {
+  // Only admins can toggle
+  const initData = req.headers['x-telegram-init-data'];
+  if (initData && initData !== 'development') {
+    try {
+      const decoded = decodeURIComponent(initData);
+      const userMatch = decoded.match(/user=([^&]+)/);
+      if (userMatch) {
+        const tgUser = JSON.parse(decodeURIComponent(userMatch[1]));
+        if (!ADMIN_IDS.includes(tgUser.id)) {
+          return res.status(403).json({ error: 'Forbidden' });
+        }
+      }
+    } catch (e) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const enabled = maintenanceService.toggle();
+  res.json({ maintenance: enabled });
+});
+
+// ─── Maintenance middleware (blocks non-admin API requests) ───────────────────
+app.use("/api", (req, res, next) => {
+  if (!maintenanceService.isEnabled()) return next();
+
+  // Always allow maintenance status check
+  if (req.path === '/maintenance/status') return next();
+
+  // Allow auth endpoint (so we can identify the user)
+  if (req.path === '/auth/telegram') return next();
+
+  // Check if user is admin
+  const initData = req.headers['x-telegram-init-data'];
+  if (initData && initData !== 'development') {
+    try {
+      const decoded = decodeURIComponent(initData);
+      const userMatch = decoded.match(/user=([^&]+)/);
+      if (userMatch) {
+        const tgUser = JSON.parse(decodeURIComponent(userMatch[1]));
+        if (ADMIN_IDS.includes(tgUser.id)) {
+          return next(); // Admin — let through
+        }
+      }
+    } catch (e) { /* not admin */ }
+  } else if (process.env.NODE_ENV !== 'production') {
+    return next(); // Dev mode — let through
+  }
+
+  return res.status(503).json({
+    success: false,
+    maintenance: true,
+    error: 'Service is under maintenance'
+  });
 });
 
 app.use("/api/auth", authRoutes);
