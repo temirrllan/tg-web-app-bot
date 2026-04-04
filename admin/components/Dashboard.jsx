@@ -151,22 +151,26 @@ const DualBarChart = ({ data, height = 70 }) => {
   )
   const max = Math.max(...data.map(d => Number(d.total) || 0), 1)
   return (
-    <div style={{ display:'flex', alignItems:'flex-end', gap:3, height }}>
+    <div style={{ display:'flex', alignItems:'flex-end', gap:3, height, paddingBottom: 20 }}>
       {data.map((d, i) => {
         const total     = Number(d.total) || 0
         const completed = Number(d.completed) || 0
         const hTotal    = Math.max(Math.round((total / max) * (height - 18)), 3)
         const hDone     = total > 0 ? Math.round((completed / total) * hTotal) : 0
-        const label     = d.date ? String(d.date).slice(5) : ''
+        const pct       = total > 0 ? Math.round((completed / total) * 100) : 0
+        const dateStr   = d.date ? String(d.date).slice(0, 10) : ''
+        const dayNum    = dateStr.slice(8)
+        const label     = dateStr.slice(5)
         return (
-          <div key={i} title={`${label}: ${completed}/${total}`}
+          <div key={i} title={`${label}: ${completed}/${total} (${pct}%)`}
             style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
-            <div style={{ width:'100%', height:hTotal, borderRadius:'3px 3px 0 0', overflow:'hidden', display:'flex', flexDirection:'column-reverse' }}>
+            {total > 0 && <span style={{ fontSize:8, fontWeight:700, color: pct >= 50 ? C.green : C.muted }}>{pct}%</span>}
+            <div style={{ width:'100%', height:hTotal, borderRadius:'4px 4px 0 0', overflow:'hidden', display:'flex', flexDirection:'column-reverse' }}>
               <div style={{ height:hDone, background:C.green, transition:'height 0.3s' }} />
               <div style={{ flex:1, background:C.border }} />
             </div>
-            <span style={{ fontSize:9, color:C.muted, transform:'rotate(-45deg)', whiteSpace:'nowrap', transformOrigin:'top center', marginTop:2 }}>
-              {label}
+            <span style={{ fontSize:9, color:C.muted, whiteSpace:'nowrap', marginTop:2 }}>
+              {dayNum}
             </span>
           </div>
         )
@@ -697,18 +701,24 @@ const Dashboard = () => {
             <TwoCol>
               <WideCard>
                 <CardTitle>✅ Выполнение привычек (14 дней)</CardTitle>
-                <DualBarChart data={comp14} height={80} />
-                <div style={{ display:'flex', gap:16, marginTop:12 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                    <div style={{ width:12, height:12, background:C.green, borderRadius:2 }} />
-                    <span style={{ fontSize:11, color:C.muted }}>Выполнено</span>
+                <DualBarChart data={comp14} height={90} />
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
+                  <div style={{ display:'flex', gap:14 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                      <div style={{ width:10, height:10, background:C.green, borderRadius:2 }} />
+                      <span style={{ fontSize:11, color:C.muted }}>Выполнено</span>
+                    </div>
+                    <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                      <div style={{ width:10, height:10, background:C.border, borderRadius:2 }} />
+                      <span style={{ fontSize:11, color:C.muted }}>Всего</span>
+                    </div>
                   </div>
-                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                    <div style={{ width:12, height:12, background:C.border, borderRadius:2 }} />
-                    <span style={{ fontSize:11, color:C.muted }}>Всего</span>
-                  </div>
-                  <div style={{ marginLeft:'auto', fontSize:12, color:C.text, fontWeight:600 }}>
-                    Сегодня: {fmt(stats.marks_completed_today)} / {fmt(stats.marks_today)}
+                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <div style={{ textAlign:'right' }}>
+                      <span style={{ fontSize:16, fontWeight:800, color:C.green }}>{fmt(stats.marks_completed_today)}</span>
+                      <span style={{ fontSize:14, color:C.muted }}> / {fmt(stats.marks_today)}</span>
+                    </div>
+                    <div style={{ fontSize:11, color:C.muted }}>сегодня</div>
                   </div>
                 </div>
               </WideCard>
