@@ -783,24 +783,24 @@ async function buildAdminRouter() {
       ] = await Promise.all([
         // Users
         safe(`SELECT COUNT(*)::int AS val FROM users`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at::date = CURRENT_DATE`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at > NOW() - INTERVAL '7 days'`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at > NOW() - INTERVAL '30 days'`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at > (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '7 days'`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE created_at > (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '30 days'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE is_premium = true`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'ru'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'en'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'kk'`),
-        // DAU / WAU / MAU (по last_login_at, fallback на created_at для новых юзеров)
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) >= CURRENT_DATE`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > CURRENT_DATE - 7`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > CURRENT_DATE - 30`),
+        // DAU / WAU / MAU (по last_login_at, fallback на created_at)
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '7 days'`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '30 days'`),
         // Habits
         safe(`SELECT COUNT(*)::int AS val FROM habits`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_special = true AND is_active = true`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_bad_habit = true AND is_active = true`),
-        safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = CURRENT_DATE`),
-        safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = CURRENT_DATE AND status = 'completed'`),
+        safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
+        safe(`SELECT COUNT(*)::int AS val FROM habit_marks WHERE date = (NOW() AT TIME ZONE 'Asia/Almaty')::date AND status = 'completed'`),
         safe(`SELECT ROUND(COALESCE((SELECT COUNT(*)::numeric FROM habits WHERE is_active = true) / NULLIF((SELECT COUNT(*) FROM users), 0)::numeric, 0), 1)::float AS val`, 0),
         safe(`SELECT ROUND(COALESCE(AVG(streak_current), 0)::numeric, 1)::float AS val FROM habits WHERE is_active = true`, 0),
         safe(`SELECT COALESCE(MAX(streak_best), 0)::int AS val FROM habits`),
@@ -828,7 +828,7 @@ async function buildAdminRouter() {
         safe(`SELECT COUNT(*)::int AS val FROM motivational_phrases`),
         safe(`SELECT COUNT(*)::int AS val FROM categories`),
         // Reminders
-        safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE sent_at::date = CURRENT_DATE`),
+        safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE sent_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
         safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE sent_at > NOW() - INTERVAL '7 days'`),
         safe(`SELECT COUNT(*)::int AS val FROM reminder_history WHERE is_marked = true AND sent_at > NOW() - INTERVAL '7 days'`),
       ]);
