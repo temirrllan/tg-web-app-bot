@@ -790,10 +790,10 @@ async function buildAdminRouter() {
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'ru'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'en'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE language = 'kk'`),
-        // DAU / WAU / MAU (по last_login_at, fallback на created_at)
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '7 days'`),
-        safe(`SELECT COUNT(*)::int AS val FROM users WHERE COALESCE(last_login_at, created_at) > (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '30 days'`),
+        // DAU / WAU / MAU (только по last_login_at — реальные визиты, без fallback на created_at)
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at IS NOT NULL AND last_login_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at IS NOT NULL AND last_login_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '7 days'`),
+        safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at IS NOT NULL AND last_login_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '30 days'`),
         // Habits
         safe(`SELECT COUNT(*)::int AS val FROM habits`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_active = true`),
