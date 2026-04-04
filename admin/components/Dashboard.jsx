@@ -120,18 +120,21 @@ const BarChart = ({ data, valueKey = 'count', color = C.indigo, height = 70, sho
   )
   const max = Math.max(...data.map(d => Number(d[valueKey]) || 0), 1)
   return (
-    <div style={{ display:'flex', alignItems:'flex-end', gap:3, height }}>
+    <div style={{ display:'flex', alignItems:'flex-end', gap:3, height, paddingBottom: showDates ? 20 : 0 }}>
       {data.map((d, i) => {
         const val = Number(d[valueKey]) || 0
         const h   = Math.max(Math.round((val / max) * (height - 18)), 3)
-        const label = d.date ? String(d.date).slice(5) : ''
+        const dateStr = d.date ? String(d.date).slice(0, 10) : ''
+        const label = dateStr.slice(5) // "MM-DD"
+        const dayNum = dateStr.slice(8) // "DD"
         return (
           <div key={i} title={`${label}: ${val}`}
             style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
-            <div style={{ width:'100%', height:h, background:color, borderRadius:'3px 3px 0 0', opacity:0.85 }} />
-            {showDates && data.length <= 14 && (
-              <span style={{ fontSize:9, color:C.muted, transform:'rotate(-45deg)', whiteSpace:'nowrap', transformOrigin:'top center', marginTop:2 }}>
-                {label}
+            {val > 0 && <span style={{ fontSize:9, fontWeight:700, color }}>{val}</span>}
+            <div style={{ width:'100%', height:h, background:color, borderRadius:'4px 4px 0 0', opacity:0.85 }} />
+            {showDates && (data.length <= 14 || i % 5 === 0) && (
+              <span style={{ fontSize:9, color:C.muted, whiteSpace:'nowrap', marginTop:2 }}>
+                {dayNum}
               </span>
             )}
           </div>
@@ -571,7 +574,7 @@ const Dashboard = () => {
           const found = (stats.completion_14d || []).find(x => String(x.date).slice(0,10) === d.date)
           return found || d
         })
-        const rev30  = stats.revenue_30d || []
+        const rev30  = (stats.revenue_30d || []).map(d => ({ ...d, date: String(d.date).slice(0, 10) }))
         const rem14  = fillDays(stats.reminders_14d, 14, 'sent').map(d => {
           const found = (stats.reminders_14d || []).find(x => String(x.date).slice(0,10) === d.date)
           return found || d
@@ -671,7 +674,7 @@ const Dashboard = () => {
 
               <WideCard>
                 <CardTitle>💰 Доход ⭐ Stars (30 дней)</CardTitle>
-                <BarChart data={rev30} valueKey="total" color={C.amber} height={80} showDates={false} />
+                <BarChart data={rev30} valueKey="total" color={C.amber} height={80} />
                 <div style={{ display:'flex', justifyContent:'space-between', marginTop:16, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
                   <div>
                     <div style={{ fontSize:20, fontWeight:800, color:C.amber }}>{fmt(stats.total_stars_earned)} ⭐</div>
