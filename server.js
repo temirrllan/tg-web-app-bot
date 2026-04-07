@@ -1171,6 +1171,25 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // Admin: сброс подсказок для тестирования онбординга
+  if (text === '/reset_hints') {
+    if (!isAdmin(userId)) {
+      await bot.sendMessage(chatId, '⛔ Admin only');
+      return;
+    }
+    try {
+      await db.query(
+        "UPDATE users SET reset_hints = true WHERE telegram_id = $1",
+        [userId.toString()]
+      );
+      await bot.sendMessage(chatId, '✅ Подсказки сброшены! Открой приложение заново.');
+    } catch (err) {
+      console.error('❌ reset_hints error:', err);
+      await bot.sendMessage(chatId, '❌ Ошибка: ' + err.message);
+    }
+    return;
+  }
+
   // Обработка других команд
   if (text === '❓ Help' || text === '/help') {
     await bot.sendMessage(

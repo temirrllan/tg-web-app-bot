@@ -148,6 +148,16 @@ const authController = {
         );
       }
 
+      // Проверяем флаг сброса подсказок (admin /reset_hints)
+      let resetHints = false;
+      if (userData.reset_hints) {
+        resetHints = true;
+        await pool.query(
+          'UPDATE users SET reset_hints = false WHERE id = $1',
+          [userData.id]
+        );
+      }
+
       // ✅ ВОЗВРАЩАЕМ ПРАВИЛЬНЫЙ ФЛАГ
       const responseData = {
         success: true,
@@ -161,7 +171,8 @@ const authController = {
           is_premium: userData.is_premium,
           photo_url: userData.photo_url
         },
-        isNewUser // ✅ true только для СОВСЕМ новых пользователей
+        isNewUser, // ✅ true только для СОВСЕМ новых пользователей
+        resetHints // ✅ true если админ вызвал /reset_hints
       };
       
       console.log('📤 ========== SENDING RESPONSE ==========');
