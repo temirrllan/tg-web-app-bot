@@ -4,26 +4,10 @@ const TelegramStarsService = require('./telegramStarsService');
 const HabitLockService = require('./habitLockService');
 
 class SubscriptionService {
-  static PLANS = {
-    'month': {
-      name: 'Premium for 1 Month',
-      duration_months: 1,
-      price_stars: 59,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
-    },
-    '6_months': {
-      name: 'Premium for 6 Months',
-      duration_months: 6,
-      price_stars: 299,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
-    },
-    '1_year': {
-      name: 'Premium for 1 Year',
-      duration_months: 12,
-      price_stars: 500,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'Save 30%']
-    }
-  };
+  // Планы загружаются из БД через TelegramStarsService
+  static async getPlan(planType) {
+    return TelegramStarsService.getPlan(planType);
+  }
 
   /**
    * 🔥 ИСПРАВЛЕНО: Создание подписки БЕЗ массового обновления
@@ -34,7 +18,7 @@ class SubscriptionService {
     try {
       await client.query('BEGIN');
       
-      const plan = this.PLANS[planType];
+      const plan = await this.getPlan(planType);
       if (!plan) {
         throw new Error(`Invalid plan type: ${planType}`);
       }
@@ -471,8 +455,8 @@ class SubscriptionService {
           
           if (isActive) {
             const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
-            const plan = TelegramStarsService.PLANS[userData.subscription_type];
-            
+            const plan = await TelegramStarsService.getPlan(userData.subscription_type);
+
             subscription = {
               isActive: true,
               planType: userData.subscription_type,
@@ -489,7 +473,7 @@ class SubscriptionService {
           }
         } else {
           // Lifetime
-          const plan = TelegramStarsService.PLANS[userData.subscription_type];
+          const plan = await TelegramStarsService.getPlan(userData.subscription_type);
           subscription = {
             isActive: true,
             planType: userData.subscription_type,

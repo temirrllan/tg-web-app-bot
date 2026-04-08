@@ -5,58 +5,82 @@ const crypto = require('crypto');
 const PromoCodeService = require('./promoCodeService');
 
 class TelegramStarsService {
+  // Fallback plans — используются если БД недоступна
   static PLANS = {
-    'month': {
-      name: 'Premium for 1 Month',
-      display_name: 'For 1 Month',
-      duration_months: 1,
-      price_stars: 59,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
-    },
-    '6_months': {
-      name: 'Premium for 6 Months',
-      display_name: 'For 6 Months',
-      duration_months: 6,
-      price_stars: 299,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support']
-    },
-    '1_year': {
-      name: 'Premium for 1 Year',
-      display_name: 'For 1 Year',
-      duration_months: 12,
-      price_stars: 500,
-      features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'Save 30%']
-    }
+    'month': { name: 'Premium for 1 Month', display_name: 'For 1 Month', duration_months: 1, price_stars: 59, features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support'] },
+    '6_months': { name: 'Premium for 6 Months', display_name: 'For 6 Months', duration_months: 6, price_stars: 299, features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support'] },
+    '1_year': { name: 'Premium for 1 Year', display_name: 'For 1 Year', duration_months: 12, price_stars: 500, features: ['Unlimited habits', 'Unlimited friends', 'Advanced statistics', 'Priority support', 'Save 30%'] }
   };
 
-  static getPlanPrice(planType) {
-    const plan = this.PLANS[planType];
+  // Загрузка планов из БД с кэшем на 5 минут
+  static _plansCache = null;
+  static _plansCacheTime = 0;
+
+  static async loadPlansFromDB() {
+    const now = Date.now();
+    if (this._plansCache && (now - this._plansCacheTime) < 5 * 60 * 1000) {
+      return this._plansCache;
+    }
+    try {
+      const result = await db.query(
+        `SELECT plan_key, name, display_name_en AS display_name, duration_months, price_stars, features
+         FROM subscription_plans WHERE is_active = true ORDER BY sort_order`
+      );
+      if (result.rows.length > 0) {
+        const plans = {};
+        for (const row of result.rows) {
+          let features = [];
+          try { features = JSON.parse(row.features || '[]'); } catch {}
+          plans[row.plan_key] = {
+            name: row.name,
+            display_name: row.display_name,
+            duration_months: row.duration_months,
+            price_stars: row.price_stars,
+            features,
+          };
+        }
+        this._plansCache = plans;
+        this._plansCacheTime = now;
+        return plans;
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to load plans from DB, using fallback:', err.message);
+    }
+    return this.PLANS;
+  }
+
+  static async getPlan(planType) {
+    const plans = await this.loadPlansFromDB();
+    return plans[planType] || null;
+  }
+
+  static async getPlanPrice(planType) {
+    const plan = await this.getPlan(planType);
     if (!plan) {
       console.error(`❌ Invalid plan type: ${planType}`);
-      console.log('Available plans:', Object.keys(this.PLANS));
       return null;
     }
-    
     console.log(`💰 Price for ${planType}: ${plan.price_stars} XTR`);
     return plan.price_stars;
   }
 
-  static normalizePlanType(planType) {
-    if (!this.PLANS[planType]) {
+  static async normalizePlanType(planType) {
+    const plans = await this.loadPlansFromDB();
+    if (!plans[planType]) {
       console.error(`❌ Unknown plan type: ${planType}`);
-      console.log('Valid plans:', Object.keys(this.PLANS));
+      console.log('Valid plans:', Object.keys(plans));
       return null;
     }
-    
     console.log(`✅ Plan type validated: ${planType}`);
     return planType;
   }
 
-  static generateInvoicePayload(userId, planType, promoCodeId = null) {
+  static async generateInvoicePayload(userId, planType, promoCodeId = null) {
     const timestamp = Date.now();
     const randomString = crypto.randomBytes(8).toString('hex');
 
-    if (!this.PLANS[planType]) {
+    const plan = await this.getPlan(planType);
+    if (!plan) {
       console.error(`❌ Cannot generate payload for unknown plan: ${planType}`);
       throw new Error(`Invalid plan type: ${planType}`);
     }
@@ -65,7 +89,7 @@ class TelegramStarsService {
     if (promoCodeId) {
       payload += `|promo_${promoCodeId}`;
     }
-    console.log(`🔑 Generated payload: ${payload} (plan: ${planType}, price: ${this.PLANS[planType].price_stars} XTR, promo: ${promoCodeId || 'none'})`);
+    console.log(`🔑 Generated payload: ${payload} (plan: ${planType}, price: ${plan.price_stars} XTR, promo: ${promoCodeId || 'none'})`);
     return payload;
   }
 
@@ -79,12 +103,6 @@ class TelegramStarsService {
 
       const planType = parts[1];
 
-      if (!this.PLANS[planType]) {
-        console.error(`❌ Unknown plan type in payload: ${planType}`);
-        console.log('Available plans:', Object.keys(this.PLANS));
-        throw new Error(`Invalid plan type: ${planType}`);
-      }
-
       // Извлекаем promoCodeId если есть (формат: promo_123)
       let promoCodeId = null;
       if (parts.length >= 5 && parts[4] && parts[4].startsWith('promo_')) {
@@ -92,7 +110,7 @@ class TelegramStarsService {
         if (isNaN(promoCodeId)) promoCodeId = null;
       }
 
-      console.log(`✅ Parsed payload: userId=${parts[0]}, planType=${planType}, price=${this.PLANS[planType].price_stars} XTR, promoCodeId=${promoCodeId}`);
+      console.log(`✅ Parsed payload: userId=${parts[0]}, planType=${planType}, promoCodeId=${promoCodeId}`);
 
       return {
         userId: parts[0],
@@ -113,7 +131,8 @@ class TelegramStarsService {
     try {
       await client.query('BEGIN');
 
-      if (!this.PLANS[planType]) {
+      const plan = await this.getPlan(planType);
+      if (!plan) {
         throw new Error(`Invalid plan type: ${planType}`);
       }
 
@@ -128,7 +147,7 @@ class TelegramStarsService {
         return existingPayment.rows[0].id;
       }
 
-      const originalPrice = this.PLANS[planType].price_stars;
+      const originalPrice = plan.price_stars;
       const promoDiscount = promoCodeId ? (originalPrice - amount) : 0;
 
       const result = await client.query(
@@ -234,7 +253,8 @@ class TelegramStarsService {
       
       const planType = parsed.planType;
 
-      if (!this.PLANS[planType]) {
+      const plan = await this.getPlan(planType);
+      if (!plan) {
         await client.query('ROLLBACK');
         console.error(`❌ Invalid plan type: ${planType}`);
         return {
@@ -243,7 +263,6 @@ class TelegramStarsService {
         };
       }
 
-      const plan = this.PLANS[planType];
       const promoCodeId = parsed.promoCodeId || null;
       console.log(`📦 Plan: ${plan.name} (${planType}), Expected: ${plan.price_stars} XTR, Received: ${total_amount} XTR, Promo: ${promoCodeId || 'none'}`);
 

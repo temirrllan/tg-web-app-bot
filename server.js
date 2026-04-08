@@ -700,7 +700,7 @@ bot.on("pre_checkout_query", async (query) => {
       return;
     }
 
-    const plan = TelegramStarsService.PLANS[planType];
+    const plan = await TelegramStarsService.getPlan(planType);
 
     if (!plan) {
       console.error("❌ Invalid plan:", planType);
@@ -711,7 +711,7 @@ bot.on("pre_checkout_query", async (query) => {
     }
 
     // Проверяем сумму: если есть промокод, берём цену из записи платежа
-    let expectedAmount = TelegramStarsService.getPlanPrice(planType);
+    let expectedAmount = await TelegramStarsService.getPlanPrice(planType);
 
     if (parsed.promoCodeId) {
       // С промокодом — проверяем по записи в telegram_payments

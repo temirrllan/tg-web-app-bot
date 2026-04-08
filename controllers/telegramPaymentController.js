@@ -149,11 +149,11 @@ const telegramPaymentController = {
 
       const { telegram_id, first_name } = userResult.rows[0];
 
-      const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
+      const normalizedPlan = await TelegramStarsService.normalizePlanType(planType);
       console.log(`🔄 Plan mapping: ${planType} -> ${normalizedPlan}`);
 
-      const originalPrice = TelegramStarsService.getPlanPrice(normalizedPlan);
-      const plan = TelegramStarsService.PLANS[normalizedPlan];
+      const originalPrice = await TelegramStarsService.getPlanPrice(normalizedPlan);
+      const plan = await TelegramStarsService.getPlan(normalizedPlan);
 
       if (!originalPrice || !plan) {
         console.error(`❌ Invalid plan: ${planType} (normalized: ${normalizedPlan})`);
@@ -186,7 +186,7 @@ const telegramPaymentController = {
 
       // Генерируем payload с promoCodeId если есть
       const promoCodeId = promoData ? promoData.promo.id : null;
-      const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType, promoCodeId);
+      const invoicePayload = await TelegramStarsService.generateInvoicePayload(userId, planType, promoCodeId);
 
       await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price, promoCodeId);
 
@@ -301,9 +301,9 @@ const telegramPaymentController = {
 
       const { telegram_id, first_name } = userResult.rows[0];
 
-      const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
-      const price = TelegramStarsService.getPlanPrice(normalizedPlan);
-      const plan = TelegramStarsService.PLANS[normalizedPlan];
+      const normalizedPlan = await TelegramStarsService.normalizePlanType(planType);
+      const price = await TelegramStarsService.getPlanPrice(normalizedPlan);
+      const plan = await TelegramStarsService.getPlan(normalizedPlan);
 
       if (!price || !plan) {
         return res.status(400).json({
@@ -314,7 +314,7 @@ const telegramPaymentController = {
 
       console.log(`💰 Plan: ${plan.name}, Price: ${price} XTR`);
 
-      const invoicePayload = TelegramStarsService.generateInvoicePayload(userId, planType);
+      const invoicePayload = await TelegramStarsService.generateInvoicePayload(userId, planType);
 
       await TelegramStarsService.createPaymentRecord(userId, planType, invoicePayload, price);
 
@@ -383,8 +383,8 @@ const telegramPaymentController = {
       }
 
       // Рассчитываем цену со скидкой для указанного плана
-      const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
-      const originalPrice = normalizedPlan ? TelegramStarsService.getPlanPrice(normalizedPlan) : null;
+      const normalizedPlan = await TelegramStarsService.normalizePlanType(planType);
+      const originalPrice = normalizedPlan ? await TelegramStarsService.getPlanPrice(normalizedPlan) : null;
       const finalPrice = originalPrice !== null
         ? PromoCodeService.calculateDiscountedPrice(originalPrice, validation.discountStars)
         : null;
@@ -415,8 +415,8 @@ const telegramPaymentController = {
         return res.status(400).json({ success: false, error: 'planType and promoCode required' });
       }
 
-      const normalizedPlan = TelegramStarsService.normalizePlanType(planType);
-      const plan = TelegramStarsService.PLANS[normalizedPlan];
+      const normalizedPlan = await TelegramStarsService.normalizePlanType(planType);
+      const plan = await TelegramStarsService.getPlan(normalizedPlan);
       if (!plan) {
         return res.status(400).json({ success: false, error: `Invalid plan: ${planType}` });
       }
@@ -606,6 +606,51 @@ const telegramPaymentController = {
         success: false,
         error: 'Failed to check status'
       });
+    }
+  },
+
+  // Получить активные планы подписок из БД
+  async getSubscriptionPlans(req, res) {
+    try {
+      const result = await db.query(
+        `SELECT plan_key, name, display_name_ru, display_name_en, display_name_kk,
+                duration_months, price_stars, features,
+                badge_ru, badge_en, badge_kk,
+                is_default, sort_order
+         FROM subscription_plans
+         WHERE is_active = true
+         ORDER BY sort_order ASC`
+      );
+
+      const plans = result.rows.map(row => {
+        let features = [];
+        try { features = JSON.parse(row.features || '[]'); } catch {}
+
+        return {
+          id: row.plan_key,
+          name: row.name,
+          displayName: {
+            ru: row.display_name_ru,
+            en: row.display_name_en,
+            kk: row.display_name_kk,
+          },
+          durationMonths: row.duration_months,
+          priceStars: row.price_stars,
+          perMonth: Math.ceil(row.price_stars / row.duration_months),
+          features,
+          badge: {
+            ru: row.badge_ru,
+            en: row.badge_en,
+            kk: row.badge_kk,
+          },
+          isDefault: row.is_default,
+        };
+      });
+
+      res.json({ success: true, plans });
+    } catch (error) {
+      console.error('Failed to get subscription plans:', error);
+      res.status(500).json({ success: false, error: 'Failed to get plans' });
     }
   }
 };

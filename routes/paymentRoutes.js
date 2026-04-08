@@ -21,4 +21,7 @@ router.post('/activate-promo', authMiddleware, telegramPaymentController.activat
 // Проверить статус платежа по payload
 router.get('/check-status', authMiddleware, telegramPaymentController.checkPaymentStatusByPayload);
 
+// Получить активные планы подписок (публичный, без auth)
+router.get('/plans', telegramPaymentController.getSubscriptionPlans);
+
 module.exports = router;

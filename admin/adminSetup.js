@@ -165,7 +165,7 @@ async function buildAdminRouter() {
   const sqlDb = await new Adapter('postgresql', getConnectionOptions()).init();
 
   const t = loadTables(sqlDb, [
-    'users', 'subscriptions', 'subscription_history',
+    'users', 'subscriptions', 'subscription_history', 'subscription_plans',
     'habits', 'habit_marks', 'shared_habits', 'habit_members', 'habit_punches',
     'categories', 'motivational_phrases',
     'special_habit_packs', 'special_habit_templates', 'pack_achievements',
@@ -222,6 +222,65 @@ async function buildAdminRouter() {
         sort: { sortBy: 'id', direction: 'desc' },
         listProperties:   ['id', 'user_id', 'action', 'plan_type', 'price_stars', 'created_at'],
         filterProperties: ['action', 'user_id'],
+      },
+    },
+
+    // ═══════════════════════ 💎 ПЛАНЫ ПОДПИСОК ═════════════════════════════
+
+    t.subscription_plans && {
+      resource: t.subscription_plans,
+      options: {
+        navigation: { name: 'Подписки', icon: 'CreditCard' },
+        sort: { sortBy: 'sort_order', direction: 'asc' },
+        listProperties:   ['id', 'plan_key', 'name', 'duration_months', 'price_stars', 'is_active', 'is_default', 'sort_order'],
+        showProperties:   ['id', 'plan_key', 'name', 'display_name_ru', 'display_name_en', 'display_name_kk', 'duration_months', 'price_stars', 'features', 'badge_ru', 'badge_en', 'badge_kk', 'is_active', 'is_default', 'sort_order', 'created_at', 'updated_at'],
+        editProperties:   ['plan_key', 'name', 'display_name_ru', 'display_name_en', 'display_name_kk', 'duration_months', 'price_stars', 'features', 'badge_ru', 'badge_en', 'badge_kk', 'is_active', 'is_default', 'sort_order'],
+        filterProperties: ['is_active', 'plan_key'],
+        properties: {
+          plan_key:        { description: 'Уникальный ключ плана (month, 6_months, 1_year и т.д.)' },
+          name:            { description: 'Внутреннее название для Telegram invoice' },
+          display_name_ru: { description: 'Отображаемое название (RU)' },
+          display_name_en: { description: 'Отображаемое название (EN)' },
+          display_name_kk: { description: 'Отображаемое название (KK)' },
+          duration_months: { description: 'Длительность в месяцах' },
+          price_stars:     { description: 'Цена в Telegram Stars (XTR)' },
+          features:        { type: 'textarea', description: 'JSON массив фич, например: ["Unlimited habits", "Priority support"]' },
+          badge_ru:        { description: 'Бейдж на плане (RU), например: -30%' },
+          badge_en:        { description: 'Бейдж на плане (EN)' },
+          badge_kk:        { description: 'Бейдж на плане (KK)' },
+          is_active:       { description: 'Активен ли план (виден пользователям)' },
+          is_default:      { description: 'Выбран по умолчанию в UI' },
+          sort_order:      { description: 'Порядок отображения (1, 2, 3...)' },
+        },
+        actions: {
+          edit: {
+            after: async (response) => {
+              // Сбрасываем кэш планов после редактирования
+              try {
+                const TelegramStarsService = require('../services/telegramStarsService');
+                TelegramStarsService._plansCache = null;
+                TelegramStarsService._plansCacheTime = 0;
+                console.log('[AdminJS] Subscription plans cache cleared');
+              } catch (err) {
+                console.error('[AdminJS] Failed to clear plans cache:', err.message);
+              }
+              return response;
+            },
+          },
+          new: {
+            after: async (response) => {
+              try {
+                const TelegramStarsService = require('../services/telegramStarsService');
+                TelegramStarsService._plansCache = null;
+                TelegramStarsService._plansCacheTime = 0;
+                console.log('[AdminJS] Subscription plans cache cleared after new plan');
+              } catch (err) {
+                console.error('[AdminJS] Failed to clear plans cache:', err.message);
+              }
+              return response;
+            },
+          },
+        },
       },
     },
 
