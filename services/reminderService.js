@@ -45,6 +45,8 @@ class ReminderService {
       console.log(`🕐 Checking reminders: ${currentTime}, Day: ${currentDay} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]})`);
       
       // Получаем все привычки с напоминаниями на текущее время
+      // + статус отметки за сегодня (LEFT JOIN вместо отдельного запроса)
+      // + последнее напоминание за сегодня (LEFT JOIN вместо отдельного запроса)
       // Для shared-привычек проверяем что юзер — активный участник
       const result = await db.query(
         `SELECT
@@ -55,9 +57,13 @@ class ReminderService {
           h.schedule_days,
           u.telegram_id,
           u.first_name,
-          u.language
+          u.language,
+          hm.status AS today_status,
+          rh.sent_at AS last_reminder_sent_at
          FROM habits h
          JOIN users u ON h.user_id = u.id
+         LEFT JOIN habit_marks hm ON hm.habit_id = h.id AND hm.date = $3::date
+         LEFT JOIN reminder_history rh ON rh.habit_id = h.id AND DATE(rh.sent_at) = $3::date
          WHERE h.reminder_enabled = true
          AND h.reminder_time = $1
          AND h.is_active = true
@@ -65,39 +71,32 @@ class ReminderService {
          AND (
            h.parent_habit_id IS NULL
            OR EXISTS (
-             SELECT 1 FROM habit_members hm
-             WHERE hm.user_id = h.user_id
-             AND hm.is_active = true
-             AND hm.habit_id IN (
+             SELECT 1 FROM habit_members hm2
+             WHERE hm2.user_id = h.user_id
+             AND hm2.is_active = true
+             AND hm2.habit_id IN (
                SELECT id FROM habits
                WHERE id = COALESCE(h.parent_habit_id, h.id)
                   OR parent_habit_id = COALESCE(h.parent_habit_id, h.id)
              )
            )
          )`,
-        [currentTime, currentDay]
+        [currentTime, currentDay, today]
       );
-      
+
       if (result.rows.length > 0) {
         console.log(`📨 Found ${result.rows.length} habits with reminders at ${currentTime}`);
-        
+
         for (const habit of result.rows) {
-          // Проверяем статус привычки на сегодня
-          const statusResult = await db.query(
-            `SELECT status FROM habit_marks 
-             WHERE habit_id = $1 
-             AND date = $2::date`,
-            [habit.id, today]
-          );
-          
+          const currentStatus = habit.today_status;
+
           // Определяем, нужно ли отправлять напоминание
           let shouldSendReminder = true;
           let reminderReason = 'pending';
-          
-          if (statusResult.rows.length > 0) {
-            const currentStatus = statusResult.rows[0].status;
+
+          if (currentStatus) {
             console.log(`📊 Habit "${habit.title}" (ID: ${habit.id}) status: ${currentStatus}`);
-            
+
             // Логика отправки напоминаний в зависимости от статуса
             switch(currentStatus) {
               case 'completed':
@@ -126,36 +125,25 @@ class ReminderService {
             reminderReason = 'no_mark';
             console.log(`📝 No mark for today - sending reminder`);
           }
-          
+
           if (shouldSendReminder) {
-            // Проверяем, не отправляли ли уже сегодня напоминание
-            // (для избежания дублирования при переходе из completed/failed в skipped)
-            const sentToday = await db.query(
-              `SELECT id, sent_at FROM reminder_history 
-               WHERE habit_id = $1 
-               AND DATE(sent_at) = CURRENT_DATE
-               ORDER BY sent_at DESC
-               LIMIT 1`,
-              [habit.id]
-            );
-            
-            // Если привычка была в skipped, проверяем время последнего напоминания
-            if (sentToday.rows.length > 0 && reminderReason === 'skipped') {
-              const lastSentTime = new Date(sentToday.rows[0].sent_at);
+            // Проверяем историю напоминаний из JOIN (без отдельного запроса)
+            if (habit.last_reminder_sent_at && reminderReason === 'skipped') {
+              const lastSentTime = new Date(habit.last_reminder_sent_at);
               const timeDiff = now - lastSentTime;
               const minutesDiff = Math.floor(timeDiff / 60000);
-              
+
               // Если прошло меньше 60 минут с последнего напоминания, пропускаем
               if (minutesDiff < 60) {
                 console.log(`⏰ Already sent reminder ${minutesDiff} minutes ago for skipped habit - skipping`);
                 continue;
               }
-            } else if (sentToday.rows.length > 0 && reminderReason !== 'skipped') {
+            } else if (habit.last_reminder_sent_at && reminderReason !== 'skipped') {
               // Для обычных напоминаний - одно в день
               console.log(`⏭ Already sent reminder for habit "${habit.title}" today`);
               continue;
             }
-            
+
             await this.sendReminder(habit, reminderReason);
             // Добавляем задержку между отправками
             await new Promise(resolve => setTimeout(resolve, 1000));
