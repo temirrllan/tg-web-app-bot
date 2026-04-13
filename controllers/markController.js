@@ -313,22 +313,23 @@ Teamwork makes the dream work! 🚀`;
         }
       }
     } else {
+      // Получаем всех участников, которые уже выполнили привычку — одним запросом
+      const completedMembersResult = await db.query(
+        `SELECT DISTINCT h.user_id
+         FROM habits h
+         JOIN habit_marks hm ON hm.habit_id = h.id
+         WHERE (h.parent_habit_id = $1 OR h.id = $1)
+         AND h.is_active = true
+         AND hm.date = $2::date
+         AND hm.status = 'completed'`,
+        [parentHabitId, markDate]
+      );
+      const completedUserIds = new Set(completedMembersResult.rows.map(r => r.user_id));
+
       // Отправляем уведомление о выполнении остальным участникам
       for (const member of membersResult.rows) {
-        // Проверяем, выполнил ли этот участник привычку
-        const memberCompletedResult = await db.query(
-          `SELECT 1 FROM habit_marks hm
-           JOIN habits h ON hm.habit_id = h.id
-           WHERE h.user_id = $1
-           AND (h.parent_habit_id = $2 OR h.id = $2)
-           AND hm.date = $3::date
-           AND hm.status = 'completed'
-           LIMIT 1`,
-          [member.id, parentHabitId, markDate]
-        );
-
         // Если друг уже выполнил - не отправляем ему уведомление
-        if (memberCompletedResult.rows.length > 0) continue;
+        if (completedUserIds.has(member.id)) continue;
 
         const lang = member.language || "en";
 
