@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const habitController = require('../controllers/habitController');
 const categoryController = require('../controllers/categoryController');
@@ -1250,7 +1251,7 @@ router.post('/habits/:id/share', authMiddleware, async (req, res) => {
     if (shareResult.rows.length === 0) {
       // 🔥 КРИТИЧНО: Создаём код С префиксом join_
       // Формат: join_{habitId}_{timestamp}_{random}
-      shareCode = `join_${id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      shareCode = `join_${id}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
       
       console.log('➕ Creating new share code:', shareCode);
       
