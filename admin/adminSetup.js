@@ -160,6 +160,10 @@ async function buildAdminRouter() {
     'GradientSelect',
     path.join(__dirname, 'components/GradientSelect')
   );
+  const LeaderboardComponent = componentLoader.add(
+    'Leaderboard',
+    path.join(__dirname, 'components/Leaderboard')
+  );
 
   // ── Connect DB ──────────────────────────────────────────────────────────
   const sqlDb = await new Adapter('postgresql', getConnectionOptions()).init();
@@ -717,6 +721,13 @@ async function buildAdminRouter() {
       component: DashboardComponent,
     },
 
+    pages: {
+      leaderboard: {
+        component: LeaderboardComponent,
+        icon: 'Trophy',
+      },
+    },
+
     resources,
 
     // Themes: light (default standard look) + dark (switchable via UI icon)
@@ -1073,6 +1084,115 @@ async function buildAdminRouter() {
       res.json({ success: true, successCount, failCount, total: users.length });
     } catch (err) {
       console.error('Admin broadcast error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Leaderboard API ─────────────────────────────────────────────────────
+  router.get('/api/leaderboard', async (req, res) => {
+    if (!req.session?.adminUser) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+      const page     = Math.max(1, parseInt(req.query.page) || 1);
+      const perPage  = Math.min(100, Math.max(10, parseInt(req.query.perPage) || 25));
+      const offset   = (page - 1) * perPage;
+      const filter   = req.query.filter || 'all';  // all | premium | free
+      const habitType = req.query.habitType || 'all';  // all | regular | special
+      const search   = (req.query.search || '').trim();
+
+      // Build WHERE conditions for habits
+      const habitConditions = ['h.is_active = true'];
+      if (habitType === 'regular') habitConditions.push('h.is_special = false');
+      if (habitType === 'special') habitConditions.push('h.is_special = true');
+      const habitWhere = habitConditions.join(' AND ');
+
+      // Build WHERE conditions for users
+      const userConditions = [];
+      const params = [];
+      if (filter === 'premium') userConditions.push('u.is_premium = true');
+      if (filter === 'free') userConditions.push('(u.is_premium = false OR u.is_premium IS NULL)');
+      if (search) {
+        params.push(`%${search}%`);
+        userConditions.push(`(u.first_name ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.telegram_id::text ILIKE $${params.length})`);
+      }
+      const userWhere = userConditions.length > 0 ? 'AND ' + userConditions.join(' AND ') : '';
+
+      // Count total
+      const countResult = await db.query(
+        `SELECT COUNT(DISTINCT u.id) AS total
+         FROM users u
+         LEFT JOIN habits h ON h.user_id = u.id AND ${habitWhere}
+         WHERE h.id IS NOT NULL ${userWhere}`,
+        params
+      );
+      const total = parseInt(countResult.rows[0].total);
+
+      // Get leaderboard data
+      const dataParams = [...params, perPage, offset];
+      const result = await db.query(
+        `SELECT
+           u.id,
+           u.first_name,
+           u.username,
+           u.telegram_id,
+           u.is_premium,
+           u.language,
+           u.created_at AS registered_at,
+           COUNT(h.id) AS total_habits,
+           COALESCE(MAX(h.streak_best), 0) AS best_streak,
+           COALESCE(MAX(h.streak_current), 0) AS best_current_streak,
+           COALESCE(SUM(h.streak_current), 0) AS total_current_streak
+         FROM users u
+         JOIN habits h ON h.user_id = u.id AND ${habitWhere}
+         WHERE 1=1 ${userWhere}
+         GROUP BY u.id
+         ORDER BY best_streak DESC, best_current_streak DESC, total_habits DESC
+         LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+        dataParams
+      );
+
+      // Get top habit details for each user (the habit with the best streak)
+      const userIds = result.rows.map(r => r.id);
+      let topHabits = {};
+      if (userIds.length > 0) {
+        const topResult = await db.query(
+          `SELECT DISTINCT ON (h.user_id)
+             h.user_id, h.title, h.streak_best, h.streak_current, h.is_special
+           FROM habits h
+           WHERE h.user_id = ANY($1) AND h.is_active = true
+           ORDER BY h.user_id, h.streak_best DESC, h.streak_current DESC`,
+          [userIds]
+        );
+        topResult.rows.forEach(r => { topHabits[r.user_id] = r; });
+      }
+
+      const leaderboard = result.rows.map((row, idx) => ({
+        rank: offset + idx + 1,
+        userId: row.id,
+        firstName: row.first_name,
+        username: row.username,
+        telegramId: row.telegram_id,
+        isPremium: row.is_premium,
+        language: row.language,
+        registeredAt: row.registered_at,
+        totalHabits: parseInt(row.total_habits),
+        bestStreak: parseInt(row.best_streak),
+        bestCurrentStreak: parseInt(row.best_current_streak),
+        totalCurrentStreak: parseInt(row.total_current_streak),
+        topHabit: topHabits[row.id] ? {
+          title: topHabits[row.id].title,
+          streakBest: topHabits[row.id].streak_best,
+          streakCurrent: topHabits[row.id].streak_current,
+          isSpecial: topHabits[row.id].is_special,
+        } : null,
+      }));
+
+      res.json({
+        leaderboard,
+        pagination: { page, perPage, total, totalPages: Math.ceil(total / perPage) }
+      });
+    } catch (err) {
+      console.error('Leaderboard API error:', err);
       res.status(500).json({ error: err.message });
     }
   });
