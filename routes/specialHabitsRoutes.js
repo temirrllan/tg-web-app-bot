@@ -16,6 +16,9 @@ router.post('/packs/:id/confirm-payment',  specialHabitsController.confirmPaymen
 // User's purchased packs
 router.get('/my-packs',            specialHabitsController.getMyPacks);
 
+// Hide/restore pack from Special tab (toggle)
+router.post('/packs/:id/toggle-visibility', specialHabitsController.togglePackVisibility);
+
 // Achievement progress
 router.get('/packs/:id/progress',  specialHabitsController.getPackProgress);
 

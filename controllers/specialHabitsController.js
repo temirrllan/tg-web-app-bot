@@ -188,6 +188,7 @@ const specialHabitsController = {
         `SELECT
            p.*,
            CASE WHEN shp.id IS NOT NULL THEN true ELSE false END AS is_purchased,
+           COALESCE(shp.is_hidden, false) AS is_hidden,
            shp.purchased_at
          FROM special_habit_packs p
          LEFT JOIN special_habit_purchases shp
@@ -532,10 +533,13 @@ const specialHabitsController = {
          LEFT JOIN categories c ON c.id = h.category_id
          LEFT JOIN habit_marks hm ON hm.habit_id = h.id AND hm.date = $2::date
          LEFT JOIN special_habit_packs sp ON sp.id = h.pack_id
+         LEFT JOIN special_habit_purchases shp
+           ON shp.pack_id = h.pack_id AND shp.user_id = h.user_id AND shp.payment_status = 'completed'
          WHERE h.user_id = $1
            AND h.is_active = true
            AND h.is_special = true
            AND $3 = ANY(h.schedule_days)
+           AND COALESCE(shp.is_hidden, false) = false
          ORDER BY h.pack_id, h.day_period, h.id`,
         [userId, date, dow]
       );
@@ -544,6 +548,44 @@ const specialHabitsController = {
     } catch (err) {
       console.error('getSpecialHabitsForDate error:', err);
       res.status(500).json({ success: false, error: 'Failed to get special habits' });
+    }
+  },
+
+  // POST /api/special-habits/packs/:id/toggle-visibility
+  async togglePackVisibility(req, res) {
+    try {
+      const userId = req.user.id;
+      const packId = parseInt(req.params.id);
+
+      // Check that user actually purchased this pack
+      const purchaseResult = await db.query(
+        `SELECT id, is_hidden FROM special_habit_purchases
+         WHERE user_id = $1 AND pack_id = $2 AND payment_status = 'completed'`,
+        [userId, packId]
+      );
+
+      if (purchaseResult.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Pack not purchased' });
+      }
+
+      const currentlyHidden = purchaseResult.rows[0].is_hidden || false;
+      const newHidden = !currentlyHidden;
+
+      await db.query(
+        `UPDATE special_habit_purchases SET is_hidden = $1
+         WHERE user_id = $2 AND pack_id = $3 AND payment_status = 'completed'`,
+        [newHidden, userId, packId]
+      );
+
+      console.log(`📦 Pack ${packId} ${newHidden ? 'hidden' : 'restored'} for user ${userId}`);
+
+      res.json({
+        success: true,
+        is_hidden: newHidden
+      });
+    } catch (err) {
+      console.error('togglePackVisibility error:', err);
+      res.status(500).json({ success: false, error: 'Failed to toggle pack visibility' });
     }
   },
 };
