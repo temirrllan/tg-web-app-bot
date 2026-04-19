@@ -55,16 +55,27 @@ function validateTelegramWebAppData(req, res, next) {
     }
   }
 
-  // Извлекаем user из initData и устанавливаем req.user
+  // Извлекаем user из (уже верифицированного в production) initData и устанавливаем req.user.
+  // Это единственный доверенный источник telegram_id — body клиента доверять нельзя.
+  let parsedUser = null;
   try {
     const params = new URLSearchParams(initData);
     const userParam = params.get('user');
     if (userParam) {
       const tgUser = JSON.parse(decodeURIComponent(userParam));
-      req.user = { telegram_id: String(tgUser.id), ...tgUser };
+      if (tgUser && tgUser.id) {
+        parsedUser = { telegram_id: String(tgUser.id), ...tgUser };
+        req.user = parsedUser;
+      }
     }
   } catch (e) {
-    // Не критично для этого middleware — контроллер сам валидирует данные
+    console.error('telegramAuth: failed to parse user from initData:', e.message);
+  }
+
+  // В production требуем верифицированного пользователя из initData.
+  // Без этого нельзя продолжать — иначе контроллер откатится на body.user (auth bypass).
+  if (process.env.NODE_ENV === 'production' && !parsedUser) {
+    return res.status(401).json({ success: false, error: 'No verified Telegram user in initData' });
   }
 
   next();

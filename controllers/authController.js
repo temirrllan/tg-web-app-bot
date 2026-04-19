@@ -7,7 +7,34 @@ const authController = {
     console.log('🎯 authController.telegramAuth called');
 
     try {
-      const { user, initData } = req.body;
+      const isProduction = process.env.NODE_ENV === 'production';
+
+      // ✅ Источник истины — req.user, заполненный middleware из подписанного initData.
+      // body.user может быть подделан клиентом (auth bypass) и используется только
+      // как fallback в development, где подпись не проверяется.
+      const verified = req.user;
+      const bodyUser = req.body?.user;
+
+      let user;
+      if (isProduction) {
+        if (!verified || !verified.id) {
+          console.error('❌ No verified Telegram user (production)');
+          return res.status(401).json({
+            success: false,
+            error: 'Authentication required. Please open the app through Telegram bot.'
+          });
+        }
+        // Если клиент прислал user.id отличный от верифицированного — это попытка подделки.
+        if (bodyUser && bodyUser.id && String(bodyUser.id) !== String(verified.id)) {
+          console.warn('⚠️ telegramAuth: body.user.id mismatch with verified initData', {
+            verified: verified.id,
+            body: bodyUser.id
+          });
+        }
+        user = verified;
+      } else {
+        user = (verified && verified.id) ? verified : bodyUser;
+      }
 
       if (!user || !user.id) {
         return res.status(400).json({
