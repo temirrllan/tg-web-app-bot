@@ -23,9 +23,16 @@ const BOT_SECRET = process.env.BOT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const WEBAPP_URL = process.env.WEBAPP_URL || FRONTEND_URL;
 
-const ADMIN_IDS = [
-  1313126991, // ← СЮДА ВАШ ID
-];
+const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "")
+  .split(",")
+  .map((id) => Number(id.trim()))
+  .filter((id) => Number.isFinite(id) && id > 0);
+
+if (ADMIN_IDS.length === 0 && process.env.NODE_ENV === "production") {
+  console.warn(
+    "⚠️  ADMIN_TELEGRAM_IDS is empty in production — no users will have admin access (broadcast/maintenance/stats)."
+  );
+}
 
 const broadcastState = new Map();
 
