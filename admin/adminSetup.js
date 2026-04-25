@@ -838,6 +838,7 @@ async function buildAdminRouter() {
         total_users, new_users_today, new_users_week, new_users_month,
         premium_users, users_ru, users_en, users_kk,
         dau, wau, mau,
+        avg_dau_week, avg_dau_month, avg_wau_month,
         total_habits, active_habits, special_habits, bad_habits,
         marks_today, marks_completed_today,
         avg_habits_per_user, avg_streak, max_streak,
@@ -864,6 +865,41 @@ async function buildAdminRouter() {
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at IS NOT NULL AND last_login_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at IS NOT NULL AND last_login_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '7 days'`),
         safe(`SELECT COUNT(*)::int AS val FROM users WHERE last_login_at IS NOT NULL AND last_login_at AT TIME ZONE 'Asia/Almaty' >= (NOW() AT TIME ZONE 'Asia/Almaty')::date - INTERVAL '30 days'`),
+        // Средние активности по habit_marks (last_login_at не хранит историю — только последний визит)
+        // avg_dau_week: средний DAU за последние 7 дней (по уникальным юзерам с отметками в день)
+        safe(`
+          SELECT COALESCE(ROUND(AVG(c)::numeric, 1), 0)::float AS val FROM (
+            SELECT hm.date, COUNT(DISTINCT h.user_id)::int AS c
+            FROM habit_marks hm
+            JOIN habits h ON h.id = hm.habit_id
+            WHERE hm.date > (NOW() AT TIME ZONE 'Asia/Almaty')::date - 7
+              AND hm.date <= (NOW() AT TIME ZONE 'Asia/Almaty')::date
+            GROUP BY hm.date
+          ) t
+        `),
+        // avg_dau_month: средний DAU за последние 30 дней
+        safe(`
+          SELECT COALESCE(ROUND(AVG(c)::numeric, 1), 0)::float AS val FROM (
+            SELECT hm.date, COUNT(DISTINCT h.user_id)::int AS c
+            FROM habit_marks hm
+            JOIN habits h ON h.id = hm.habit_id
+            WHERE hm.date > (NOW() AT TIME ZONE 'Asia/Almaty')::date - 30
+              AND hm.date <= (NOW() AT TIME ZONE 'Asia/Almaty')::date
+            GROUP BY hm.date
+          ) t
+        `),
+        // avg_wau_month: средний WAU по 4 неделям (4 окна по 7 дней)
+        safe(`
+          SELECT COALESCE(ROUND(AVG(c)::numeric, 0), 0)::int AS val FROM (
+            SELECT FLOOR(((NOW() AT TIME ZONE 'Asia/Almaty')::date - hm.date) / 7) AS week_idx,
+                   COUNT(DISTINCT h.user_id)::int AS c
+            FROM habit_marks hm
+            JOIN habits h ON h.id = hm.habit_id
+            WHERE hm.date > (NOW() AT TIME ZONE 'Asia/Almaty')::date - 28
+              AND hm.date <= (NOW() AT TIME ZONE 'Asia/Almaty')::date
+            GROUP BY week_idx
+          ) t
+        `),
         // Habits
         safe(`SELECT COUNT(*)::int AS val FROM habits`),
         safe(`SELECT COUNT(*)::int AS val FROM habits WHERE is_active = true`),
@@ -1005,6 +1041,7 @@ async function buildAdminRouter() {
         total_users, new_users_today, new_users_week, new_users_month,
         premium_users, premium_rate, users_ru, users_en, users_kk,
         dau, wau, mau,
+        avg_dau_week, avg_dau_month, avg_wau_month,
         // Habits
         total_habits, active_habits, special_habits, bad_habits,
         marks_today, marks_completed_today,

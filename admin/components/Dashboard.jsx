@@ -660,6 +660,15 @@ const Dashboard = () => {
                 <CardLabel>DAU (сегодня)</CardLabel>
                 <CardSub positive>WAU: {fmt(stats.wau)} · MAU: {fmt(stats.mau)}</CardSub>
               </Card>
+              <Card
+                accent={C.purple}
+                title="Средние значения посчитаны по уникальным пользователям с отметками в habit_marks (last_login_at истории не хранит)"
+              >
+                <CardIcon>📉</CardIcon>
+                <CardValue>{fmtF(stats.avg_dau_week)}</CardValue>
+                <CardLabel>Ср. DAU / неделю</CardLabel>
+                <CardSub positive>Мес: {fmtF(stats.avg_dau_month)} · Ср. WAU/мес: {fmt(stats.avg_wau_month)}</CardSub>
+              </Card>
               <Card accent={C.pink}>
                 <CardIcon>💎</CardIcon>
                 <CardValue>{fmt(stats.premium_users)}</CardValue>
