@@ -660,15 +660,6 @@ const Dashboard = () => {
                 <CardLabel>DAU (сегодня)</CardLabel>
                 <CardSub positive>WAU: {fmt(stats.wau)} · MAU: {fmt(stats.mau)}</CardSub>
               </Card>
-              <Card
-                accent={C.purple}
-                title="Средние значения посчитаны по уникальным пользователям с отметками в habit_marks (last_login_at истории не хранит)"
-              >
-                <CardIcon>📉</CardIcon>
-                <CardValue>{fmtF(stats.avg_dau_week)}</CardValue>
-                <CardLabel>Ср. DAU / неделю</CardLabel>
-                <CardSub positive>Мес: {fmtF(stats.avg_dau_month)} · Ср. WAU/мес: {fmt(stats.avg_wau_month)}</CardSub>
-              </Card>
               <Card accent={C.pink}>
                 <CardIcon>💎</CardIcon>
                 <CardValue>{fmt(stats.premium_users)}</CardValue>
@@ -680,6 +671,29 @@ const Dashboard = () => {
                 <CardValue>{fmt(stats.new_users_week)}</CardValue>
                 <CardLabel>Новых за 7 дней</CardLabel>
                 <CardSub positive>За 30 дн: {fmt(stats.new_users_month)}</CardSub>
+              </Card>
+            </Grid>
+
+            {/* ── KPI: Средняя активность ── */}
+            <SectionLabel>Средняя активность (по отметкам в привычках)</SectionLabel>
+            <Grid min={200} mb={24}>
+              <Card accent={C.green}>
+                <CardIcon>📅</CardIcon>
+                <CardValue>{fmtF(stats.avg_dau_week)}</CardValue>
+                <CardLabel>Активных пользователей в день</CardLabel>
+                <CardSub positive>в среднем за последние 7 дней</CardSub>
+              </Card>
+              <Card accent={C.indigo}>
+                <CardIcon>📆</CardIcon>
+                <CardValue>{fmtF(stats.avg_dau_month)}</CardValue>
+                <CardLabel>Активных пользователей в день</CardLabel>
+                <CardSub positive>в среднем за последние 30 дней</CardSub>
+              </Card>
+              <Card accent={C.purple}>
+                <CardIcon>🗓️</CardIcon>
+                <CardValue>{fmt(stats.avg_wau_month)}</CardValue>
+                <CardLabel>Активных пользователей в неделю</CardLabel>
+                <CardSub positive>в среднем за последние 4 недели</CardSub>
               </Card>
             </Grid>
 
