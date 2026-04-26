@@ -68,6 +68,13 @@ class ReminderService {
          AND h.reminder_time = $1
          AND h.is_active = true
          AND $2 = ANY(h.schedule_days)
+         AND NOT EXISTS (
+           SELECT 1 FROM special_habit_purchases shp
+           WHERE shp.pack_id = h.pack_id
+             AND shp.user_id = h.user_id
+             AND shp.payment_status = 'completed'
+             AND shp.is_hidden = true
+         )
          AND (
            h.parent_habit_id IS NULL
            OR EXISTS (
@@ -386,7 +393,7 @@ This is a test message. Real reminders will come at ${timeStr}.`;
          FROM habits h
          JOIN users u ON h.user_id = u.id
          LEFT JOIN habit_marks hm ON (
-           hm.habit_id = h.id 
+           hm.habit_id = h.id
            AND hm.date = $3::date
          )
          WHERE h.reminder_enabled = true
@@ -394,6 +401,13 @@ This is a test message. Real reminders will come at ${timeStr}.`;
          AND h.reminder_time > $1
          AND $2 = ANY(h.schedule_days)
          AND (hm.status IS NULL OR hm.status IN ('pending', 'skipped'))
+         AND NOT EXISTS (
+           SELECT 1 FROM special_habit_purchases shp
+           WHERE shp.pack_id = h.pack_id
+             AND shp.user_id = h.user_id
+             AND shp.payment_status = 'completed'
+             AND shp.is_hidden = true
+         )
          ORDER BY h.reminder_time
          LIMIT 1`,
         [currentTime, currentDay, today]
