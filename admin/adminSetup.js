@@ -164,6 +164,10 @@ async function buildAdminRouter() {
     'Leaderboard',
     path.join(__dirname, 'components/Leaderboard')
   );
+  const AiChatComponent = componentLoader.add(
+    'AiChat',
+    path.join(__dirname, 'components/AiChat')
+  );
 
   // ── Connect DB ──────────────────────────────────────────────────────────
   const sqlDb = await new Adapter('postgresql', getConnectionOptions()).init();
@@ -726,6 +730,10 @@ async function buildAdminRouter() {
         component: LeaderboardComponent,
         icon: 'Trophy',
       },
+      'ai-chat': {
+        component: AiChatComponent,
+        icon: 'MessageCircle',
+      },
     },
 
     resources,
@@ -1247,6 +1255,17 @@ async function buildAdminRouter() {
     const enabled = maintenanceService.toggle();
     res.json({ maintenance: enabled });
   });
+
+  // ── AI Admin Chat ────────────────────────────────────────────────────────
+  // Mounted at /admin/api/ai/* — sessions, messages, SSE chat, usage.
+  // Disabled gracefully if OPENAI_API_KEY or AI_DB_PASSWORD are missing.
+  try {
+    const { buildAiRouter } = require('./aiAdminRoutes');
+    router.use('/api/ai', buildAiRouter());
+    console.log('✅ AI admin routes mounted at /admin/api/ai');
+  } catch (err) {
+    console.error('❌ Failed to mount AI admin routes:', err.message);
+  }
 
   return { adminJs, router };
 }

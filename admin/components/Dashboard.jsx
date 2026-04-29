@@ -603,6 +603,19 @@ const Dashboard = () => {
             Пользователи, привычки, монетизация, активность —<br />
             полная статистика в реальном времени.
           </HeroSub>
+          <a href="/admin/pages/ai-chat"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 14,
+              padding: '8px 16px', borderRadius: 10,
+              background: 'rgba(99,102,241,0.25)', border: '1px solid rgba(99,102,241,0.45)',
+              color: '#fff', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+              width: 'fit-content', transition: 'background 0.15s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.4)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.25)' }}
+          >
+            🤖 Открыть AI-чат для ad-hoc отчётов →
+          </a>
         </HeroLeft>
         <HeroEmoji>📊</HeroEmoji>
       </Hero>
