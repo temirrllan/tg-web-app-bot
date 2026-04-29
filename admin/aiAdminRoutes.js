@@ -234,12 +234,19 @@ function buildAiRouter() {
 
       send({ type: 'session', sessionId, userMessageId });
 
-      // Load conversation history (excluding the just-inserted user message
-      // because we'll pass userMessage separately to streamChat)
+      // Load conversation history.
+      // We only feed plain user/assistant text turns back to OpenAI — never
+      // raw tool_calls/tool responses, because we don't persist the matching
+      // tool-response messages and OpenAI requires every tool_call to have a
+      // paired tool message. The audit trail of SQL the AI ran lives in
+      // ai_query_log; that's enough.
       const histRes = await db.query(
-        `SELECT role, content, tool_calls, tool_call_id, model
+        `SELECT role, content
            FROM ai_chat_messages
-          WHERE session_id = $1 AND id < $2
+          WHERE session_id = $1
+            AND id < $2
+            AND role IN ('user', 'assistant')
+            AND content <> ''
           ORDER BY id ASC`,
         [sessionId, userMessageId]
       );
@@ -264,15 +271,16 @@ function buildAiRouter() {
         emit: send,
       });
 
-      // Update the assistant message with final content + cost
+      // Update the assistant message with final content + cost.
+      // tool_calls is intentionally NOT persisted into history — see comment
+      // above on the SELECT. Tool execution is audited in ai_query_log instead.
       await db.query(
         `UPDATE ai_chat_messages
-            SET content = $1, tool_calls = $2, model = $3,
-                tokens_in = $4, tokens_out = $5, cost_cents = $6
-          WHERE id = $7`,
+            SET content = $1, model = $2,
+                tokens_in = $3, tokens_out = $4, cost_cents = $5
+          WHERE id = $6`,
         [
-          result.content,
-          result.toolCalls?.length ? JSON.stringify(result.toolCalls) : null,
+          result.content || '(пустой ответ)',
           result.model,
           result.tokensIn,
           result.tokensOut,

@@ -313,13 +313,13 @@ async function streamChat({ history, userMessage, adminEmail, sessionId, message
   const model = pickModel(userMessage);
   const ctx = { adminEmail, sessionId, messageId };
 
+  // History is plain user/assistant turns only — no tool_calls / tool responses.
+  // See comment in admin/aiAdminRoutes.js about why we don't replay tool turns.
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...history.slice(-MAX_HISTORY_MESSAGES).map((m) => ({
       role: m.role,
       content: m.content,
-      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
     })),
     { role: 'user', content: userMessage },
   ];
