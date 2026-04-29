@@ -523,11 +523,17 @@ const AiChat = () => {
     let currentSessionId = activeId
 
     try {
+      // AdminJS uses express-formidable which doesn't parse JSON bodies, so we
+      // send as x-www-form-urlencoded — same trick as the broadcast endpoint.
+      const formBody = new URLSearchParams()
+      if (activeId) formBody.set('sessionId', String(activeId))
+      formBody.set('message', msg)
+
       const resp = await fetch('/admin/api/ai/chat', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: activeId, message: msg }),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formBody.toString(),
       })
 
       if (!resp.ok) {

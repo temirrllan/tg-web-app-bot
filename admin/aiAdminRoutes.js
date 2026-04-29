@@ -36,9 +36,27 @@ function requireAdmin(req, res, next) {
 function buildAiRouter() {
   const router = express.Router();
 
-  // JSON parser scoped to this sub-router (AdminJS uses formidable globally,
-  // but our custom routes need plain JSON).
+  // AdminJS mounts express-formidable globally, which:
+  //   - parses multipart/form-data  → req.fields, req.files
+  //   - parses x-www-form-urlencoded → req.fields
+  //   - leaves application/json     → req.body stays empty
+  //
+  // We add express.json() and express.urlencoded() so our routes work with all
+  // three content types, then read whichever populated.
   router.use(express.json({ limit: '64kb' }));
+  router.use(express.urlencoded({ extended: false, limit: '64kb' }));
+
+  // Normalises req.body from whichever middleware populated it (json/urlencoded
+  // OR AdminJS's formidable on req.fields). Always exposes a plain object on
+  // req.body afterwards.
+  router.use((req, _res, next) => {
+    if (!req.body || Object.keys(req.body).length === 0) {
+      if (req.fields && Object.keys(req.fields).length > 0) {
+        req.body = req.fields;
+      }
+    }
+    next();
+  });
 
   // ── List sessions (shared across all admins) ──────────────────────────────
   router.get('/sessions', requireAdmin, async (req, res) => {
