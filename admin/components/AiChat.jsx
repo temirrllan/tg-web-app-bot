@@ -24,19 +24,50 @@ const QUICK_ACTIONS = [
   { icon: '⏳', label: 'Подписки истекают',   prompt: 'Сколько подписок истекает в ближайшие 7 дней? Покажи список с user_id, plan_type и датой окончания.' },
 ]
 
-// ─── Styled ───────────────────────────────────────────────────────────────────
+// ─── Styled (responsive) ─────────────────────────────────────────────────────
+// Breakpoints:
+//   - mobile:  < 768px  → sidebar становится выдвижным drawer'ом
+//   - tablet:  768–1023 → sidebar 240px, padding меньше
+//   - desktop: >= 1024  → sidebar 280px, всё как было
 const Page = styled(Box)`
   display: flex; height: calc(100vh - 60px); background: ${C.bg};
+  position: relative; overflow: hidden;
 `
 const Sidebar = styled.div`
   width: 280px; background: ${C.white}; border-right: 1px solid ${C.border};
   display: flex; flex-direction: column; flex-shrink: 0;
+  transition: transform 0.25s ease;
+  @media (max-width: 1023px) { width: 240px; }
+  @media (max-width: 767px) {
+    position: absolute; top: 0; left: 0; bottom: 0; z-index: 50;
+    width: 85%; max-width: 320px;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+    transform: translateX(${({ open }) => (open ? '0' : '-105%')});
+  }
+`
+const Backdrop = styled.div`
+  display: none;
+  @media (max-width: 767px) {
+    display: ${({ open }) => (open ? 'block' : 'none')};
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(17, 24, 39, 0.4); z-index: 40;
+  }
 `
 const SidebarHeader = styled.div`
   padding: 16px; border-bottom: 1px solid ${C.border};
+  display: flex; align-items: center; gap: 8px;
+`
+const SidebarCloseBtn = styled.button`
+  display: none;
+  @media (max-width: 767px) {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid ${C.border};
+    background: ${C.white}; color: ${C.muted}; font-size: 16px; cursor: pointer;
+    flex-shrink: 0;
+  }
 `
 const NewChatBtn = styled.button`
-  width: 100%; padding: 10px 14px; border-radius: 8px; border: none; cursor: pointer;
+  flex: 1; padding: 10px 14px; border-radius: 8px; border: none; cursor: pointer;
   background: linear-gradient(135deg, ${C.indigo}, ${C.purple});
   color: #fff; font-weight: 600; font-size: 13px;
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -70,23 +101,45 @@ const Main = styled.div`
 `
 const ChatHeader = styled.div`
   padding: 14px 24px; border-bottom: 1px solid ${C.border}; background: ${C.white};
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  @media (max-width: 767px) { padding: 12px 14px; }
+`
+const ChatHeaderLeft = styled.div`
+  display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;
+`
+const HamburgerBtn = styled.button`
+  display: none;
+  @media (max-width: 767px) {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 8px; border: 1px solid ${C.border};
+    background: ${C.white}; color: ${C.dark}; font-size: 18px; cursor: pointer;
+    flex-shrink: 0;
+  }
 `
 const ChatTitle = styled.div`
   font-size: 15px; font-weight: 700; color: ${C.dark};
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+`
+const ChatHeaderMeta = styled.div`
+  font-size: 11px; color: ${C.muted}; flex-shrink: 0;
+  @media (max-width: 767px) { display: none; }
 `
 const Messages = styled.div`
   flex: 1; overflow-y: auto; padding: 24px;
+  @media (max-width: 767px) { padding: 14px 12px; }
+  -webkit-overflow-scrolling: touch;
 `
 const MsgRow = styled.div`
   display: flex; gap: 12px; margin-bottom: 20px;
   flex-direction: ${({ isUser }) => (isUser ? 'row-reverse' : 'row')};
+  @media (max-width: 767px) { gap: 8px; margin-bottom: 14px; }
 `
 const Avatar = styled.div`
   width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; font-size: 16px;
   background: ${({ isUser }) => (isUser ? C.indigo : `linear-gradient(135deg, ${C.purple}, ${C.pink})`)};
   color: #fff;
+  @media (max-width: 767px) { width: 28px; height: 28px; font-size: 14px; }
 `
 const Bubble = styled.div`
   max-width: 720px; padding: 12px 16px; border-radius: 12px; font-size: 14px;
@@ -94,28 +147,42 @@ const Bubble = styled.div`
   background: ${({ isUser }) => (isUser ? '#EEF2FF' : C.white)};
   border: 1px solid ${({ isUser }) => (isUser ? '#C7D2FE' : C.border)};
   box-shadow: ${({ isUser }) => (isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.04)')};
+  @media (max-width: 767px) {
+    max-width: calc(100vw - 70px);
+    padding: 10px 12px;
+    font-size: 13px;
+  }
 `
 const ToolCallBadge = styled.div`
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
   background: #FEF3C7; color: #92400E; font-size: 11px; font-weight: 600;
   border-radius: 12px; margin: 4px 0;
+  @media (max-width: 767px) { font-size: 10px; }
 `
 
 const QuickActionsBar = styled.div`
   padding: 12px 24px 0; display: flex; gap: 8px; flex-wrap: wrap;
   background: ${C.bg};
+  @media (max-width: 767px) {
+    padding: 10px 12px 0;
+    flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    &::-webkit-scrollbar { display: none; }
+  }
 `
 const QuickBtn = styled.button`
   padding: 6px 12px; border-radius: 16px; border: 1px solid ${C.border};
   background: ${C.white}; font-size: 12px; color: ${C.text}; cursor: pointer;
   display: inline-flex; align-items: center; gap: 5px;
-  transition: all 0.15s;
+  transition: all 0.15s; flex-shrink: 0; white-space: nowrap;
   &:hover { background: #EEF2FF; border-color: ${C.indigo}; color: ${C.indigo}; }
+  @media (max-width: 767px) { font-size: 11px; padding: 6px 10px; }
 `
 
 const InputBox = styled.div`
   padding: 16px 24px; background: ${C.white}; border-top: 1px solid ${C.border};
   display: flex; gap: 10px; align-items: flex-end;
+  @media (max-width: 767px) { padding: 10px 12px; gap: 8px; }
 `
 const TextArea = styled.textarea`
   flex: 1; resize: none; min-height: 44px; max-height: 200px;
@@ -124,25 +191,36 @@ const TextArea = styled.textarea`
   background: ${C.white}; outline: none; color: ${C.dark};
   transition: border 0.15s;
   &:focus { border-color: ${C.indigo}; }
+  @media (max-width: 767px) {
+    /* iOS не зумит на focus если font-size >= 16 */
+    font-size: 16px; padding: 9px 12px; min-height: 40px;
+  }
 `
 const SendBtn = styled.button`
   padding: 11px 20px; border-radius: 10px; border: none; cursor: pointer;
   background: linear-gradient(135deg, ${C.indigo}, ${C.purple});
   color: #fff; font-weight: 600; font-size: 13px;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s; flex-shrink: 0;
   &:hover { opacity: 0.9; }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
+  @media (max-width: 767px) { padding: 10px 14px; font-size: 13px; }
 `
 
 const Empty = styled.div`
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 16px;
   color: ${C.muted}; padding: 40px;
+  @media (max-width: 767px) { padding: 24px 16px; gap: 12px; }
 `
 const EmptyTitle = styled.div`
   font-size: 22px; font-weight: 700; color: ${C.dark}; margin-bottom: 4px;
+  text-align: center;
+  @media (max-width: 767px) { font-size: 18px; }
 `
-const EmptySub = styled.div` font-size: 13px; max-width: 480px; text-align: center; line-height: 1.6; `
+const EmptySub = styled.div`
+  font-size: 13px; max-width: 480px; text-align: center; line-height: 1.6;
+  @media (max-width: 767px) { font-size: 12px; }
+`
 
 // ─── Markdown rendering ──────────────────────────────────────────────────────
 // Minimal markdown → HTML. Handles tables, code blocks (incl. ```chart), bold,
@@ -196,13 +274,13 @@ function ChartBlock({ spec }) {
     return (
       <div style={{ margin: '12px 0' }}>
         {spec.title && <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{spec.title}</div>}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <svg width={W / 2} height={H} viewBox={`0 0 ${W} ${H}`}>{slices}</svg>
-          <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 240, height: 'auto', flexShrink: 0 }}>{slices}</svg>
+          <div style={{ minWidth: 140, flex: 1 }}>
             {data.map((d, i) => (
               <div key={i} style={{ fontSize: 12, color: C.text, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 10, height: 10, background: colors[i % colors.length], borderRadius: 2, display: 'inline-block' }} />
-                {d.label}: <strong>{d.value}</strong>
+                <span style={{ width: 10, height: 10, background: colors[i % colors.length], borderRadius: 2, display: 'inline-block', flexShrink: 0 }} />
+                <span style={{ wordBreak: 'break-word' }}>{d.label}: <strong>{d.value}</strong></span>
               </div>
             ))}
           </div>
@@ -444,7 +522,16 @@ const AiChat = () => {
   const [toolEvents, setToolEvents] = useState([])
   const [usage, setUsage] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Sidebar open state — only meaningful on mobile (<768px); desktop always shows it
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false)
   const messagesEndRef = useRef(null)
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // Load sessions + usage on mount
   useEffect(() => {
@@ -496,6 +583,12 @@ const AiChat = () => {
     setInput('')
     setStreamText('')
     setToolEvents([])
+    if (isMobile) setSidebarOpen(false)
+  }
+
+  const selectSession = (id) => {
+    setActiveId(id)
+    if (isMobile) setSidebarOpen(false)
   }
 
   const deleteSession = async (id, e) => {
@@ -612,9 +705,11 @@ const AiChat = () => {
 
   return (
     <Page>
-      <Sidebar>
+      <Backdrop open={sidebarOpen} onClick={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen}>
         <SidebarHeader>
           <NewChatBtn onClick={newChat}>+ Новый чат</NewChatBtn>
+          <SidebarCloseBtn onClick={() => setSidebarOpen(false)} title="Закрыть">✕</SidebarCloseBtn>
         </SidebarHeader>
         <SessionList>
           {loading && <Loader />}
@@ -624,7 +719,7 @@ const AiChat = () => {
             </div>
           )}
           {sessions.map((s) => (
-            <SessionItem key={s.id} active={s.id === activeId} onClick={() => setActiveId(s.id)}>
+            <SessionItem key={s.id} active={s.id === activeId} onClick={() => selectSession(s.id)}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
                 <SessionTitle>{s.title}</SessionTitle>
                 <span onClick={(e) => deleteSession(s.id, e)}
@@ -662,12 +757,13 @@ const AiChat = () => {
 
       <Main>
         <ChatHeader>
-          <ChatTitle>
-            {activeId ? sessions.find((s) => s.id === activeId)?.title || 'Чат' : '🤖 AI Ассистент'}
-          </ChatTitle>
-          <div style={{ fontSize: 11, color: C.muted }}>
-            Read-only • Asia/Almaty • OpenAI
-          </div>
+          <ChatHeaderLeft>
+            <HamburgerBtn onClick={() => setSidebarOpen(true)} title="Меню чатов">☰</HamburgerBtn>
+            <ChatTitle>
+              {activeId ? sessions.find((s) => s.id === activeId)?.title || 'Чат' : '🤖 AI Ассистент'}
+            </ChatTitle>
+          </ChatHeaderLeft>
+          <ChatHeaderMeta>Read-only • Asia/Almaty • OpenAI</ChatHeaderMeta>
         </ChatHeader>
 
         {messages.length === 0 && !streaming ? (
