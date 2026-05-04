@@ -1,4 +1,8 @@
 const db = require('../config/database');
+const { getToday, dayOfWeekIso, minusOneDay } = require('../utils/dateHelper');
+
+// Сколько дней максимум смотрим назад при расчёте стрика
+const STREAK_LOOKBACK_DAYS = 365;
 
 class HabitMark {
   static async mark(habitId, date, status) {
@@ -121,45 +125,61 @@ class HabitMark {
   }
 
   static async recalculateStreak(habitId) {
-    console.log('Recalculating streak for habit:', habitId);
-
     try {
-      const result = await db.query(
-        `SELECT date::text AS date
-         FROM habit_marks
-         WHERE habit_id = $1 AND status = 'completed'
-         ORDER BY date DESC`,
+      // Получаем расписание привычки. Стрик считается ТОЛЬКО по запланированным
+      // дням недели — пропуск незапланированного дня не разрывает цепочку.
+      const habitResult = await db.query(
+        'SELECT schedule_days FROM habits WHERE id = $1',
         [habitId]
       );
 
-      let currentStreak = 0;
+      if (habitResult.rows.length === 0) {
+        console.warn(`Habit ${habitId} not found, skipping streak recalculation`);
+        return;
+      }
 
-      if (result.rows.length > 0) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+      const scheduleDays = habitResult.rows[0].schedule_days;
+      if (!Array.isArray(scheduleDays) || scheduleDays.length === 0) {
+        await db.query(
+          'UPDATE habits SET streak_current = 0 WHERE id = $1',
+          [habitId]
+        );
+        return;
+      }
 
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
+      // Set всех дат с completed-отметками для O(1)-проверки
+      const marksResult = await db.query(
+        `SELECT date::text AS date
+         FROM habit_marks
+         WHERE habit_id = $1 AND status = 'completed'`,
+        [habitId]
+      );
+      const completedSet = new Set(marksResult.rows.map(r => r.date));
 
-        // Берём самую последнюю выполненную дату
-        const latestMark = new Date(result.rows[0].date + 'T00:00:00');
+      let cursor = getToday(); // YYYY-MM-DD по Asia/Almaty
+      let streak = 0;
 
-        // Стрик активен только если последняя отметка — сегодня или вчера
-        // (если позавчера и раньше — стрик уже прерван)
-        if (latestMark >= yesterday) {
-          // Считаем подряд идущие дни НАЗАД от самой последней отметки
-          for (let i = 0; i < result.rows.length; i++) {
-            const markDate = new Date(result.rows[i].date + 'T00:00:00');
-            const expected = new Date(latestMark);
-            expected.setDate(latestMark.getDate() - i);
+      // Сегодня — особое правило: если запланирован, но ещё не отмечен,
+      // стрик НЕ разрывается (юзер ещё успеет). Просто стартуем со вчера.
+      const todayDow = dayOfWeekIso(cursor);
+      if (scheduleDays.includes(todayDow) && completedSet.has(cursor)) {
+        streak++;
+      }
 
-            if (markDate.toDateString() === expected.toDateString()) {
-              currentStreak++;
-            } else {
-              break; // цепочка прервалась
-            }
+      cursor = minusOneDay(cursor);
+
+      // Идём назад по календарю: запланированные без отметки — разрыв,
+      // незапланированные — просто пропуск.
+      for (let i = 0; i < STREAK_LOOKBACK_DAYS; i++) {
+        const dow = dayOfWeekIso(cursor);
+        if (scheduleDays.includes(dow)) {
+          if (completedSet.has(cursor)) {
+            streak++;
+          } else {
+            break;
           }
         }
+        cursor = minusOneDay(cursor);
       }
 
       await db.query(
@@ -167,10 +187,10 @@ class HabitMark {
          SET streak_current = $1,
              streak_best = GREATEST(streak_best, $1)
          WHERE id = $2`,
-        [currentStreak, habitId]
+        [streak, habitId]
       );
 
-      console.log(`Streak recalculated: ${currentStreak} for habit ${habitId}`);
+      console.log(`Streak recalculated: ${streak} for habit ${habitId} (schedule: ${JSON.stringify(scheduleDays)})`);
     } catch (error) {
       console.error('Error recalculating streak:', error);
     }

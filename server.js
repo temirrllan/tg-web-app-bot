@@ -13,6 +13,7 @@ const keepAliveService = require("./services/keepAlive");
 const maintenanceService = require("./services/maintenanceService");
 const db = require("./config/database");
 const subscriptionCron = require("./services/subscriptionCron");
+const streakCron = require("./services/streakCron");
 const HabitMark = require("./models/HabitMark");
 const { getToday, getYesterday, getAlmatyDate } = require("./utils/dateHelper");
 const app = express();
@@ -1643,6 +1644,7 @@ const server = app.listen(PORT, async () => {
   keepAliveService.start();
   reminderService.start();
   subscriptionCron.start();
+  streakCron.start();
 
   // АВТОМАТИЧЕСКАЯ УСТАНОВКА WEBHOOK
   if (BACKEND_PUBLIC_URL && BOT_TOKEN && BOT_SECRET) {
@@ -1709,6 +1711,7 @@ process.on("SIGTERM", () => {
   reminderService.stop();
   keepAliveService.stop();
   subscriptionCron.stop();
+  streakCron.stop();
   server.close(() => process.exit(0));
 });
 
@@ -1717,5 +1720,6 @@ process.on("SIGINT", () => {
   reminderService.stop();
   keepAliveService.stop();
   subscriptionCron.stop();
+  streakCron.stop();
   server.close(() => process.exit(0));
 });

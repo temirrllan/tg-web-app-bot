@@ -33,9 +33,35 @@ function getYesterday() {
   return getAlmatyDate(new Date(Date.now() - 86400000));
 }
 
+/**
+ * День недели по календарной дате (1=Пн … 7=Вс).
+ * Считается через UTC-парсинг — день недели у конкретной календарной даты
+ * не зависит от таймзоны сервера.
+ * @param {string} yyyymmdd - дата в формате YYYY-MM-DD
+ * @returns {number} 1-7
+ */
+function dayOfWeekIso(yyyymmdd) {
+  const d = new Date(yyyymmdd + 'T00:00:00Z');
+  const dow = d.getUTCDay();
+  return dow === 0 ? 7 : dow;
+}
+
+/**
+ * Вычитает один календарный день из YYYY-MM-DD.
+ * @param {string} yyyymmdd
+ * @returns {string} YYYY-MM-DD
+ */
+function minusOneDay(yyyymmdd) {
+  const d = new Date(yyyymmdd + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 module.exports = {
   TIMEZONE,
   getAlmatyDate,
   getToday,
   getYesterday,
+  dayOfWeekIso,
+  minusOneDay,
 };
