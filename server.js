@@ -16,6 +16,7 @@ const subscriptionCron = require("./services/subscriptionCron");
 const streakCron = require("./services/streakCron");
 const HabitMark = require("./models/HabitMark");
 const { getToday, getYesterday, getAlmatyDate } = require("./utils/dateHelper");
+const { isValidTelegramInitData } = require("./middleware/telegramAuth");
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
@@ -39,6 +40,31 @@ const broadcastState = new Map();
 
 function isAdmin(userId) {
   return ADMIN_IDS.includes(userId);
+}
+
+// Проверка прав админа из заголовка x-telegram-init-data c обязательной HMAC-валидацией.
+// Использовать только там, где нет express-роутера с validateTelegramWebAppData.
+function isAdminFromInitData(initData) {
+  if (!initData) return false;
+
+  // Dev-плейсхолдер фронта (api.js шлёт 'development' при отсутствии Telegram WebApp)
+  if (initData === "development") {
+    return process.env.NODE_ENV !== "production";
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    if (!isValidTelegramInitData(initData, BOT_TOKEN)) return false;
+  }
+
+  try {
+    const params = new URLSearchParams(initData);
+    const userParam = params.get("user");
+    if (!userParam) return false;
+    const tgUser = JSON.parse(userParam);
+    return tgUser?.id != null && ADMIN_IDS.includes(Number(tgUser.id));
+  } catch {
+    return false;
+  }
 }
 
 async function sendBroadcast(message, options = {}) {
@@ -336,25 +362,10 @@ app.get("/api/maintenance/status", (req, res) => {
 });
 
 app.post("/api/maintenance/toggle", (req, res) => {
-  // Only admins can toggle
   const initData = req.headers['x-telegram-init-data'];
-  if (initData && initData !== 'development') {
-    try {
-      const decoded = decodeURIComponent(initData);
-      const userMatch = decoded.match(/user=([^&]+)/);
-      if (userMatch) {
-        const tgUser = JSON.parse(decodeURIComponent(userMatch[1]));
-        if (!ADMIN_IDS.includes(tgUser.id)) {
-          return res.status(403).json({ error: 'Forbidden' });
-        }
-      }
-    } catch (e) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-  } else if (process.env.NODE_ENV === 'production') {
+  if (!isAdminFromInitData(initData)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
-
   const enabled = maintenanceService.toggle();
   res.json({ maintenance: enabled });
 });
@@ -369,21 +380,9 @@ app.use("/api", (req, res, next) => {
   // Allow auth endpoint (so we can identify the user)
   if (req.path === '/auth/telegram') return next();
 
-  // Check if user is admin
   const initData = req.headers['x-telegram-init-data'];
-  if (initData && initData !== 'development') {
-    try {
-      const decoded = decodeURIComponent(initData);
-      const userMatch = decoded.match(/user=([^&]+)/);
-      if (userMatch) {
-        const tgUser = JSON.parse(decodeURIComponent(userMatch[1]));
-        if (ADMIN_IDS.includes(tgUser.id)) {
-          return next(); // Admin — let through
-        }
-      }
-    } catch (e) { /* not admin */ }
-  } else if (process.env.NODE_ENV !== 'production') {
-    return next(); // Dev mode — let through
+  if (isAdminFromInitData(initData)) {
+    return next();
   }
 
   return res.status(503).json({

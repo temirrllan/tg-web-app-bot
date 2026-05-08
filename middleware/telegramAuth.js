@@ -81,4 +81,4 @@ function validateTelegramWebAppData(req, res, next) {
   next();
 }
 
-module.exports = { validateTelegramWebAppData };
+module.exports = { validateTelegramWebAppData, isValidTelegramInitData };
