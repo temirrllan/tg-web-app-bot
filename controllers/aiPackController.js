@@ -119,6 +119,7 @@ async function runGeneration(res, request, userId) {
       break;
     } catch (e) {
       lastErr = e;
+      console.error(`❌ AI generation attempt ${attempt + 1} failed [${e.code || 'ERR'}]:`, e.message);
       if (e.code === 'AI_NOT_CONFIGURED') {
         await db.query(
           `UPDATE ai_generation_requests SET status='paid', updated_at=NOW() WHERE id=$1`,

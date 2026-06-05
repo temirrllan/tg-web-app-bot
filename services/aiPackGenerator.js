@@ -256,7 +256,7 @@ async function generatePack({ prompt, survey, lang = 'ru', categories }) {
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    max_tokens: 4096,
     system: buildSystemPrompt(lang, categories),
     tools: [{
       name: 'emit_pack',
