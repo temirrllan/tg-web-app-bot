@@ -13,9 +13,13 @@ const MIN_HABITS = 5;
 const MAX_ACHIEVEMENTS = 4;
 const MIN_ACHIEVEMENTS = 3;
 
-// Палитра градиентов для bg_color пака (должна совпадать с фронтом).
+// Палитра градиентов для bg_color пака.
+// ВАЖНО: ключи должны совпадать с GRADIENT_PRESETS на фронте
+// (tg-web-app-react/src/constants/gradientPresets.js), иначе превью покажет
+// сплошной цвет вместо градиента.
 const BG_COLORS = [
-  'purple', 'blue', 'green', 'orange', 'pink', 'teal', 'indigo', 'red',
+  'aurora', 'ocean', 'forest', 'lavender', 'peach', 'sunset',
+  'mint', 'flamingo', 'berry', 'sky', 'coral', 'arctic',
 ];
 const DAY_PERIODS = ['morning', 'afternoon', 'evening'];
 
