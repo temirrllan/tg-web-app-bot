@@ -3,6 +3,7 @@ require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const TelegramBot = require("node-telegram-bot-api");
 const logger = require("./middleware/logger");
 const authRoutes = require("./routes/authRoutes");
@@ -134,6 +135,20 @@ const allowedOrigins = [
   ...(isProduction ? [] : ["http://localhost:5173", "http://localhost:5174"]),
   ...extraOrigins,
 ].filter(Boolean);
+
+// Security headers. ВНИМАНИЕ к конфигу:
+// - contentSecurityPolicy отключён: AdminJS (/admin) использует inline-скрипты/стили
+//   и внешние ресурсы — дефолтный CSP ломает его UI.
+// - crossOriginResourcePolicy: 'cross-origin' — Mini App (другой домен app.eventmate.asia)
+//   грузит /uploads и API, дефолтный 'same-origin' их заблокирует.
+// - crossOriginEmbedderPolicy отключён по той же причине (AdminJS + кросс-доменные ресурсы).
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 
 app.use(
   cors({
