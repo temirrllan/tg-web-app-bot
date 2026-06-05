@@ -7,7 +7,9 @@
 // бросает AiNotConfiguredError. Валидация/нормализация (validateAndNormalize)
 // чистая и тестируется без сети.
 
-const MODEL = process.env.AI_PACK_MODEL || 'claude-sonnet-4-20250514';
+// Модель задаётся через env AI_PACK_MODEL. Дефолт — широко доступная стабильная.
+// Если ключ не имеет доступа к указанной модели, Anthropic вернёт 404 not_found.
+const MODEL = process.env.AI_PACK_MODEL || 'claude-3-5-sonnet-latest';
 const MAX_HABITS = 8;
 const MIN_HABITS = 5;
 const MAX_ACHIEVEMENTS = 4;
