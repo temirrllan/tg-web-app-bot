@@ -259,6 +259,26 @@ app.post(WEBHOOK_PATH, async (req, res) => {
           return res.status(200).json({ success: true });
         }
 
+        // ── AI pack generation payment (ADR 0006) ──────────────────────────
+        if (invoicePayload.startsWith("aigen_")) {
+          console.log("🤖 Processing AI pack generation payment...");
+          try {
+            // payload format: aigen_REQUESTID_USERID_TIMESTAMP
+            const requestId = parseInt(invoicePayload.split("_")[1]);
+            const upd = await db.query(
+              `UPDATE ai_generation_requests
+                 SET status = 'paid', telegram_payment_charge_id = $2, updated_at = NOW()
+               WHERE id = $1 AND status = 'pending'`,
+              [requestId, payment.telegram_payment_charge_id]
+            );
+            console.log(`✅ AI gen request ${requestId} marked paid (rows=${upd.rowCount})`);
+          } catch (genErr) {
+            console.error("❌ AI gen payment processing error:", genErr);
+          }
+          bot.processUpdate(update);
+          return res.status(200).json({ success: true });
+        }
+
         // ── Subscription payment (existing flow) ───────────────────────────
         const paymentData = {
           telegram_payment_charge_id: payment.telegram_payment_charge_id,
@@ -417,6 +437,10 @@ app.use("/api/payment", paymentRoutes);
 // Special Habits routes
 const specialHabitsRoutes = require("./routes/specialHabitsRoutes");
 app.use("/api/special-habits", specialHabitsRoutes);
+
+// AI Pack Generator routes (ADR 0006)
+const aiPackRoutes = require("./routes/aiPackRoutes");
+app.use("/api/ai-packs", aiPackRoutes);
 
 // Admin panel — AdminJS (async init, ready in ~1-2s after start)
 // Note: express.urlencoded() is intentionally NOT placed here.
@@ -692,6 +716,40 @@ bot.on("pre_checkout_query", async (query) => {
       return;
     }
 
+    // --- AI PACK GENERATION (payload: aigen_{requestId}_{userId}_{timestamp}) ---
+    if (invoicePayload.startsWith('aigen_')) {
+      const parts = invoicePayload.split('_');
+      if (parts.length < 4) {
+        console.error('❌ Invalid aigen payload format:', invoicePayload);
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: 'Invalid payment data. Please try again.',
+        });
+        return;
+      }
+      const requestId = parseInt(parts[1]);
+      const reqRow = await db.query(
+        `SELECT price_paid_stars, status FROM ai_generation_requests WHERE id = $1`,
+        [requestId]
+      );
+      if (reqRow.rows.length === 0 || reqRow.rows[0].status !== 'pending') {
+        console.error('❌ AI gen request not found or not pending:', requestId);
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: 'Request not found. Please try again.',
+        });
+        return;
+      }
+      if (query.total_amount !== reqRow.rows[0].price_paid_stars) {
+        console.error('❌ AI gen amount mismatch:', { expected: reqRow.rows[0].price_paid_stars, got: query.total_amount });
+        await bot.answerPreCheckoutQuery(query.id, false, {
+          error_message: 'Invalid payment amount. Please try again.',
+        });
+        return;
+      }
+      await bot.answerPreCheckoutQuery(query.id, true);
+      console.log('✅ AI gen pre-checkout approved - request:', requestId);
+      return;
+    }
+
     // --- SUBSCRIPTION PURCHASE (payload: userId|planType|timestamp|random) ---
     let parsed;
     try {
@@ -810,6 +868,28 @@ bot.on("successful_payment", async (msg) => {
         }
       } else {
         console.error('❌ Invalid pack payload in successful_payment:', payload);
+      }
+      return;
+    }
+
+    // --- AI PACK GENERATION (payload: aigen_{requestId}_{userId}_{timestamp}) ---
+    if (payload.startsWith('aigen_')) {
+      console.log("🤖 Processing AI pack generation payment...");
+      const requestId = parseInt(payload.split('_')[1]);
+      if (Number.isFinite(requestId)) {
+        try {
+          const upd = await db.query(
+            `UPDATE ai_generation_requests
+               SET status = 'paid', telegram_payment_charge_id = $2, updated_at = NOW()
+             WHERE id = $1 AND status = 'pending'`,
+            [requestId, payment.telegram_payment_charge_id]
+          );
+          console.log(`✅ AI gen request ${requestId} marked paid (rows=${upd.rowCount})`);
+        } catch (genErr) {
+          console.error('❌ Error processing AI gen payment:', genErr);
+        }
+      } else {
+        console.error('❌ Invalid aigen payload in successful_payment:', payload);
       }
       return;
     }
